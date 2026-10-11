@@ -114,7 +114,7 @@
           BorderBrush="#343A44"
           BorderThickness="1"
           CornerRadius="4">
-        <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8">
+        <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8">
           <Grid ColumnDefinitions="*,Auto">
             <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding PreviewTitle}" />
             <Button
@@ -260,6 +260,33 @@
               Foreground="#AAB2BF"
               FontSize="12"
               Text="{Binding PaletteStatus}"
+              TextWrapping="Wrap" />
+          <TextBlock
+              Grid.Row="9"
+              Foreground="#E7EAF0"
+              FontWeight="SemiBold"
+              Text="{Binding MapObjectStatusDisplay}"
+              IsVisible="{Binding IsMapInspector}"
+              TextWrapping="Wrap" />
+          <ListBox
+              Grid.Row="10"
+              MaxHeight="120"
+              ItemsSource="{Binding MapObjectPlacements}"
+              SelectedItem="{Binding SelectedMapObject, Mode=TwoWay}"
+              IsVisible="{Binding IsMapInspector}"
+              AutomationProperties.Name="MAP object placements">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <TextBlock Text="{Binding DisplayText}" TextTrimming="CharacterEllipsis" />
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+          <TextBlock
+              Grid.Row="11"
+              Foreground="#AAB2BF"
+              FontSize="11"
+              Text="{Binding MapObjectDetailsDisplay}"
+              IsVisible="{Binding SelectedMapObject}"
               TextWrapping="Wrap" />
         </Grid>
       </Border>

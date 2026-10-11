@@ -35,12 +35,15 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private string? _gameDataDirectory;
     private byte[] _renderBuffer = [];
     private MapTileGridData? _mapTileGridData;
+    private MapObjectPlacement? _selectedMapObject;
     private int? _selectedMapElevationIndex;
     private bool _isMapInspector;
     private bool _isMapGridDataLoaded;
     private int? _selectedMapGridIndex;
     private string _mapGridCellDisplay = "Click a grid cell to keep its square-grid coordinates and raw value selected.";
     private string _mapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
+    private string _mapObjectStatusDisplay = "MAP objects have not been read.";
+    private string _mapObjectDetailsDisplay = "Select a parsed object to inspect its raw fields.";
     private string _previewMessage = "Select a .FRM or .MAP entry to inspect.";
     private string _previewDetails = "Select a .FRM or .MAP entry to inspect.";
     private string _previewTitle = "Resource Inspector";
@@ -80,6 +83,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     public ObservableCollection<int> FrameOptions { get; } = [];
 
     public ObservableCollection<int> MapElevationOptions { get; } = [];
+
+    public ObservableCollection<MapObjectPlacement> MapObjectPlacements { get; } = [];
 
     public string SearchText
     {
@@ -355,6 +360,31 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         get => _mapGridHoverDisplay;
         private set => SetProperty(ref _mapGridHoverDisplay, value);
+    }
+
+    public string MapObjectStatusDisplay
+    {
+        get => _mapObjectStatusDisplay;
+        private set => SetProperty(ref _mapObjectStatusDisplay, value);
+    }
+
+    public MapObjectPlacement? SelectedMapObject
+    {
+        get => _selectedMapObject;
+        set
+        {
+            if (SetProperty(ref _selectedMapObject, value))
+            {
+                MapObjectDetailsDisplay = value?.Details
+                    ?? "Select a parsed object to inspect its raw fields.";
+            }
+        }
+    }
+
+    public string MapObjectDetailsDisplay
+    {
+        get => _mapObjectDetailsDisplay;
+        private set => SetProperty(ref _mapObjectDetailsDisplay, value);
     }
 
     public int SelectedDirectionIndex
@@ -658,6 +688,18 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                     mapData,
                     archive.Game);
                 var tileGrids = MapTileGridDecoder.Decode(mapData, metadata);
+                MapObjectPlacementData? objectPlacements = null;
+                string? objectPlacementError = null;
+                try
+                {
+                    objectPlacements = MapObjectPlacementDecoder.Decode(mapData, metadata);
+                }
+                catch (InvalidDataException exception)
+                {
+                    System.Diagnostics.Debug.WriteLine($"MAP object decoding failed: {exception}");
+                    objectPlacementError = "MAP object data is malformed or truncated; header and grid inspection remain available.";
+                }
+
                 _mapTileGridData = tileGrids;
                 MapElevationOptions.Clear();
                 foreach (var grid in tileGrids.Grids)
@@ -670,6 +712,19 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                     : null;
 
                 _isMapGridDataLoaded = true;
+                MapObjectPlacements.Clear();
+                if (objectPlacements is not null)
+                {
+                    foreach (var placement in objectPlacements.Objects)
+                    {
+                        MapObjectPlacements.Add(placement);
+                    }
+                }
+
+                SelectedMapObject = null;
+                MapObjectStatusDisplay = objectPlacementError
+                    ?? objectPlacements?.StatusDisplay
+                    ?? "MAP object data is unavailable.";
                 OnPropertyChanged(nameof(SelectedMapElevationIndex));
                 OnPropertyChanged(nameof(SelectedMapGridValues));
                 OnPropertyChanged(nameof(HasMapGrid));
@@ -678,7 +733,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 MapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
                 PreviewMessage = selectedEntry.Path;
                 PreviewDetails = BuildMapHeaderDetails(metadata, tileGrids);
-                PaletteStatus = "Neutral diagnostic cells; values are not encoded as terrain. Coordinates are square-grid only, not hex/object positions. Scripts and objects are not parsed.";
+                PaletteStatus = "Neutral diagnostic cells; values are not encoded as terrain. Square-grid cells are separate from object hex coordinates. Object layouts requiring PRO subtype data and nested inventories may be shown as unsupported.";
                 return;
             }
 
@@ -1026,6 +1081,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private void ClearPreview()
     {
         _mapTileGridData = null;
+        MapObjectPlacements.Clear();
+        SelectedMapObject = null;
         _selectedMapElevationIndex = null;
         _selectedMapGridIndex = null;
         _isMapInspector = false;
@@ -1039,6 +1096,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         OnPropertyChanged(nameof(IsMapGridEmpty));
         MapGridCellDisplay = "Click a grid cell to keep its square-grid coordinates and raw value selected.";
         MapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
+        MapObjectStatusDisplay = "MAP objects have not been read.";
+        MapObjectDetailsDisplay = "Select a parsed object to inspect its raw fields.";
         _playbackTimer.Stop();
         _playback.SetFrameCounts([]);
         var previousBitmap = PreviewBitmap;
