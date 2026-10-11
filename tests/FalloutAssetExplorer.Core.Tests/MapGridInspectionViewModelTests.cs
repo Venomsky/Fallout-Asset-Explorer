@@ -33,4 +33,50 @@ public sealed class MapGridInspectionViewModelTests
 
         Assert.Null(viewModel.SelectedMapGridIndex);
     }
+
+    [Fact]
+    public void SelectingMapObject_SwitchesToItsElevationAndHexDiagnosticLayer()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        viewModel.MapElevationOptions.Add(0);
+        viewModel.MapElevationOptions.Add(1);
+        viewModel.SelectedMapElevationIndex = 0;
+        var placement = new MapObjectPlacement(
+            4,
+            128,
+            1,
+            0,
+            123,
+            76,
+            9,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            1,
+            0x01000001,
+            1,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            [],
+            null,
+            null);
+
+        viewModel.SelectedMapObject = placement;
+
+        Assert.Equal(1, viewModel.SelectedMapElevationIndex);
+        Assert.Equal(1, viewModel.SelectedMapDiagnosticLayerIndex);
+        Assert.Equal(placement.Details, viewModel.MapObjectDetailsDisplay);
+    }
 }

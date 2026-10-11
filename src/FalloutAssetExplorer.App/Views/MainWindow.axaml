@@ -144,15 +144,31 @@
                   CellInspected="MapGridView_CellInspected"
                   CellSelected="MapGridView_CellSelected"
                   IsHitTestVisible="True"
-                  IsVisible="{Binding HasMapGrid}"
+                  IsVisible="{Binding IsMapSquareGridVisible}"
                   AutomationProperties.Name="MAP raw tile-grid diagnostic" />
+              <local:MapHexGridDiagnosticView
+                  x:Name="MapHexGridView"
+                  MinHeight="260"
+                  Placements="{Binding MapObjectPlacements}"
+                  Elevation="{Binding SelectedMapElevationIndex}"
+                  SelectedObject="{Binding SelectedMapObject, Mode=TwoWay}"
+                  IsHitTestVisible="True"
+                  IsVisible="{Binding IsMapHexGridVisible}"
+                  AutomationProperties.Name="MAP object hex-grid diagnostic" />
               <TextBlock
                   Margin="12"
                   HorizontalAlignment="Center"
                   VerticalAlignment="Center"
-                  Text="This MAP has no present elevation grids."
+                  Text="This MAP has no square-grid data for this elevation."
                   TextWrapping="Wrap"
                   IsVisible="{Binding IsMapGridEmpty}" />
+              <TextBlock
+                  Margin="12"
+                  HorizontalAlignment="Center"
+                  VerticalAlignment="Center"
+                  Text="No placed objects are available on this elevation."
+                  TextWrapping="Wrap"
+                  IsVisible="{Binding IsMapHexGridEmpty}" />
             </Grid>
           </Border>
           <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" IsVisible="{Binding HasPreview}">
@@ -179,18 +195,31 @@
                 AutomationProperties.Name="Checkerboard transparency background" />
           </StackPanel>
           <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="8" IsVisible="{Binding IsMapInspector}">
-            <TextBlock VerticalAlignment="Center" Text="Elevation slot" />
+            <TextBlock VerticalAlignment="Center" Text="Layer" />
             <ComboBox
-                Width="100"
+                Width="175"
+                ItemsSource="{Binding MapDiagnosticLayerOptions}"
+                SelectedIndex="{Binding SelectedMapDiagnosticLayerIndex}"
+                AutomationProperties.Name="MAP diagnostic layer" />
+            <TextBlock VerticalAlignment="Center" Text="Elevation" />
+            <ComboBox
+                Width="75"
                 ItemsSource="{Binding MapElevationOptions}"
                 SelectedItem="{Binding SelectedMapElevationIndex}"
-                IsEnabled="{Binding HasMapGrid}"
+                IsEnabled="{Binding IsMapInspector}"
                 AutomationProperties.Name="MAP elevation slot" />
-            <TextBlock
-                VerticalAlignment="Center"
-                Foreground="#AAB2BF"
-                Text="Neutral diagnostic cells; no terrain/value encoding"
-                TextWrapping="Wrap" />
+            <Button
+                Content="Fit"
+                Click="MapHexFit_Click"
+                IsVisible="{Binding IsMapHexGridVisible}"
+                ToolTip.Tip="Fit placed objects of this elevation (wheel: zoom, right/middle drag: pan)"
+                AutomationProperties.Name="Fit hex view" />
+            <Button
+                Content="Center"
+                Click="MapHexCenter_Click"
+                IsVisible="{Binding IsMapHexGridVisible}"
+                ToolTip.Tip="Center the selected object"
+                AutomationProperties.Name="Center on selected object" />
           </StackPanel>
           <Grid Grid.Row="4" ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" ColumnSpacing="8" IsVisible="{Binding HasPreview}">
             <Button
@@ -239,7 +268,7 @@
               Foreground="#E7EAF0"
               FontSize="12"
               Text="{Binding MapGridCellDisplay}"
-              IsVisible="{Binding IsMapInspector}"
+              IsVisible="{Binding IsMapSquareGridVisible}"
               TextWrapping="Wrap" />
           <TextBlock
               Grid.Row="6"
@@ -253,7 +282,14 @@
               Foreground="#AAB2BF"
               FontSize="12"
               Text="{Binding MapGridHoverDisplay}"
-              IsVisible="{Binding IsMapInspector}"
+              IsVisible="{Binding IsMapSquareGridVisible}"
+              TextWrapping="Wrap" />
+          <TextBlock
+              Grid.Row="7"
+              Foreground="#AAB2BF"
+              FontSize="12"
+              Text="Hex markers are diagnostic only; repeat-click stacked markers to cycle records."
+              IsVisible="{Binding IsMapHexGridVisible}"
               TextWrapping="Wrap" />
           <TextBlock
               Grid.Row="8"

@@ -105,6 +105,10 @@ public partial class MainWindow : Window
         }
     }
 
+    private void MapHexFit_Click(object? sender, RoutedEventArgs e) => MapHexGridView.FitToView();
+
+    private void MapHexCenter_Click(object? sender, RoutedEventArgs e) => MapHexGridView.CenterOnSelection();
+
     private async void ExtractSelected_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is not ArchiveBrowserViewModel viewModel)
