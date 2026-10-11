@@ -67,6 +67,18 @@ public sealed class FrmDecoderTests
         Assert.Equal((short)1, document.ActionFrame);
     }
 
+    [Fact]
+    public void Decode_ParsesFalloutTwoVersionFourFrame()
+    {
+        var data = FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [42])]]);
+        BinaryPrimitives.WriteUInt32BigEndian(data.AsSpan(0, 4), 4);
+
+        var document = FrmDecoder.Decode(data);
+
+        Assert.Equal(4u, document.Version);
+        Assert.Equal([42], document.Directions[0].Frames[0].Pixels);
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]

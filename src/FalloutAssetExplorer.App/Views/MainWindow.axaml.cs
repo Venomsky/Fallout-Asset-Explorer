@@ -227,7 +227,7 @@ public partial class MainWindow : Window
     {
         if (DataContext is ArchiveBrowserViewModel viewModel)
         {
-            viewModel.ReportError("Fallout Asset Explorer — DAT1 and DAT2 browsing, entry reading, and safe archive extraction are implemented. Fallout 2 graphics preview remains unsupported.");
+            viewModel.ReportError("Fallout Asset Explorer — DAT1 and DAT2 browsing, entry reading, safe archive extraction, and combined FRM previews are supported. Fallout 2 preview colors have not been visually verified against the game.");
         }
     }
 }

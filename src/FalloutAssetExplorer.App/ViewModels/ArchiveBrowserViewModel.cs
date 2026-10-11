@@ -567,19 +567,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 return;
             }
 
-            if (archive.Game != FalloutGame.Fallout1)
-            {
-                PreviewMessage = "Fallout 2 FRM preview is not supported yet. DAT2 browsing and entry reading are available.";
-                PaletteStatus = "Fallout 2 palette and FRM rendering have not been verified; no Fallout 1 palette is applied.";
-                return;
-            }
-
-            if (archive is not Dat1Archive dat1Archive)
-            {
-                PreviewMessage = "FRM preview is unavailable for this Fallout 1 archive implementation.";
-                return;
-            }
-
             if (selectedEntry.UncompressedSize > FrmDecoder.MaximumFileSize)
             {
                 PreviewMessage = $"FRM preview is limited to {FrmDecoder.MaximumFileSize / (1024 * 1024)} MiB per file.";
@@ -596,7 +583,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 cancellation.Token);
             cancellation.Token.ThrowIfCancellationRequested();
 
-            var paletteResolution = await ResolvePaletteAsync(dat1Archive, cancellation.Token);
+            var paletteResolution = await ResolvePaletteAsync(archive, cancellation.Token);
             cancellation.Token.ThrowIfCancellationRequested();
             _previewDocument = document;
             _falloutPalette = paletteResolution.Palette;
@@ -616,7 +603,9 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             PreviewMessage = selectedEntry.Path;
             PaletteStatus = paletteResolution.Palette is null
                 ? paletteResolution.Diagnostic ?? "No valid Fallout palette is available; showing diagnostic grayscale."
-                : $"Full-color Fallout palette: {paletteResolution.Source}";
+                : archive.Game == FalloutGame.Fallout2
+                    ? "Fallout 2 COLOR.PAL applied; visual color match is not verified."
+                    : $"Full-color Fallout 1 palette: {paletteResolution.Source}";
             NotifyPlaybackState();
             OnPropertyChanged(nameof(CanExportPng));
             OnPropertyChanged(nameof(SuggestedPngFileName));
@@ -839,7 +828,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         TimeSpan.FromMilliseconds(1000d / _playback.FramesPerSecond);
 
     private async Task<FalloutPaletteResolution> ResolvePaletteAsync(
-        Dat1Archive archive,
+        IGameArchive archive,
         CancellationToken cancellationToken) =>
         await _paletteResolver.ResolveAsync(archive, _gameDataDirectory, cancellationToken);
 

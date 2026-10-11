@@ -112,6 +112,43 @@ public sealed class Dat2ArchiveTests
     }
 
     [Fact]
+    public async Task PaletteResolver_UsesRootColorPaletteFromOpenDat2Archive()
+    {
+        var paletteBytes = CreatePalette();
+        paletteBytes[3] = 21;
+        using var archiveFile = new TemporaryArchive(Dat2Fixture.Create(
+            new Dat2FixtureEntry("color.pal", false, paletteBytes)));
+        var archive = Dat2Archive.Open(archiveFile.Path);
+
+        var result = await new FalloutPaletteResolver().ResolveAsync(archive);
+
+        Assert.NotNull(result.Palette);
+        Assert.Equal(new RgbaColor(84, 0, 0, 255), result.Palette.GetColor(1));
+        Assert.Equal("COLOR.PAL in " + Path.GetFileName(archiveFile.Path), result.Source);
+    }
+
+    [Fact]
+    public async Task PaletteResolver_UsesAdjacentDat2MasterForCritterArchive()
+    {
+        using var gameDirectory = new TemporaryDirectory();
+        var paletteBytes = CreatePalette();
+        paletteBytes[3] = 29;
+        File.WriteAllBytes(
+            Path.Combine(gameDirectory.Path, "master.dat"),
+            Dat2Fixture.Create(new Dat2FixtureEntry("color.pal", false, paletteBytes)));
+        File.WriteAllBytes(
+            Path.Combine(gameDirectory.Path, "critter.dat"),
+            Dat2Fixture.Create(new Dat2FixtureEntry("art/critters/hero.frm", false, [1])));
+        var archive = Dat2Archive.Open(Path.Combine(gameDirectory.Path, "critter.dat"));
+
+        var result = await new FalloutPaletteResolver().ResolveAsync(archive);
+
+        Assert.NotNull(result.Palette);
+        Assert.Equal(new RgbaColor(116, 0, 0, 255), result.Palette.GetColor(1));
+        Assert.Equal("COLOR.PAL in master.dat", result.Source);
+    }
+
+    [Fact]
     public void Open_PreservesPermittedSpecialAsciiPathCharacters()
     {
         using var archiveFile = new TemporaryArchive(Dat2Fixture.Create(
@@ -347,6 +384,8 @@ public sealed class Dat2ArchiveTests
         Assert.Contains("DAT2 validation failed", exception.Message);
     }
 
+    private static byte[] CreatePalette() => new byte[FalloutPalette.MinimalFileSize];
+
     private static byte[] Compress(byte[] value)
     {
         using var output = new MemoryStream();
@@ -377,6 +416,21 @@ public sealed class Dat2ArchiveTests
         public string Path { get; }
 
         public void Dispose() => File.Delete(Path);
+    }
+
+    private sealed class TemporaryDirectory : IDisposable
+    {
+        public TemporaryDirectory()
+        {
+            Path = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                $"fae-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(Path);
+        }
+
+        public string Path { get; }
+
+        public void Dispose() => Directory.Delete(Path, recursive: true);
     }
 
     private sealed record Dat2FixtureEntry(

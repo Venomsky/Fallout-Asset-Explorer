@@ -7,10 +7,10 @@ public sealed class FalloutPaletteResolver
 
     private readonly SemaphoreSlim _resolutionGate = new(1, 1);
     private readonly Dictionary<string, FalloutPalette> _paletteCache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, Dat1Archive> _archiveCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IGameArchive> _archiveCache = new(StringComparer.OrdinalIgnoreCase);
 
     public async Task<FalloutPaletteResolution> ResolveAsync(
-        Dat1Archive? openArchive,
+        IGameArchive? openArchive,
         string? gameDataDirectory = null,
         CancellationToken cancellationToken = default)
     {
@@ -38,7 +38,7 @@ public sealed class FalloutPaletteResolver
     }
 
     private async Task<FalloutPaletteResolution> ResolveCoreAsync(
-        Dat1Archive? openArchive,
+        IGameArchive? openArchive,
         string? gameDataDirectory,
         CancellationToken cancellationToken)
     {
@@ -68,17 +68,29 @@ public sealed class FalloutPaletteResolver
                 throw new DirectoryNotFoundException($"Game data directory '{gameDataDirectory}' does not exist.");
             }
 
-            var configuredPalette = FindRootPaletteFile(gameDataDirectory);
+            var configuredMaster = FindMasterArchive(gameDataDirectory, openArchive);
+            var configuredDirectoryMatchesGame = openArchive is null || configuredMaster is null;
+            if (configuredMaster is not null && openArchive is not null)
+            {
+                var configuredMasterArchive = await OpenArchiveAsync(configuredMaster, cancellationToken);
+                configuredDirectoryMatchesGame = configuredMasterArchive.Game == openArchive.Game;
+            }
+
+            var configuredPalette = configuredDirectoryMatchesGame
+                ? FindRootPaletteFile(gameDataDirectory)
+                : null;
             if (configuredPalette is not null)
             {
                 var palette = await ReadPaletteFileAsync(configuredPalette, cancellationToken);
                 return new FalloutPaletteResolution(palette, Path.GetFullPath(configuredPalette), null);
             }
 
-            var configuredMaster = FindMasterArchive(gameDataDirectory, openArchive);
             if (configuredMaster is not null)
             {
-                var palette = await ReadPaletteFromMasterArchiveAsync(configuredMaster, cancellationToken);
+                var palette = await ReadPaletteFromMasterArchiveAsync(
+                    configuredMaster,
+                    openArchive?.Game,
+                    cancellationToken);
                 if (palette is not null)
                 {
                     return new FalloutPaletteResolution(
@@ -98,7 +110,10 @@ public sealed class FalloutPaletteResolver
                 var adjacentMaster = FindMasterArchive(archiveDirectory, openArchive);
                 if (adjacentMaster is not null)
                 {
-                    var palette = await ReadPaletteFromMasterArchiveAsync(adjacentMaster, cancellationToken);
+                    var palette = await ReadPaletteFromMasterArchiveAsync(
+                        adjacentMaster,
+                        openArchive.Game,
+                        cancellationToken);
                     if (palette is not null)
                     {
                         return new FalloutPaletteResolution(
@@ -117,11 +132,11 @@ public sealed class FalloutPaletteResolver
     }
 
     private async Task<FalloutPalette> ReadPaletteEntryAsync(
-        Dat1Archive archive,
-        Dat1ArchiveEntry entry,
+        IGameArchive archive,
+        ArchiveEntry entry,
         CancellationToken cancellationToken)
     {
-        var key = CreateSourceKey(archive.Path, entry);
+        var key = CreateSourceKey(archive, entry);
         if (_paletteCache.TryGetValue(key, out var cached))
         {
             return cached;
@@ -143,17 +158,14 @@ public sealed class FalloutPaletteResolver
 
     private async Task<FalloutPalette?> ReadPaletteFromMasterArchiveAsync(
         string path,
+        FalloutGame? requiredGame,
         CancellationToken cancellationToken)
     {
-        var fullPath = Path.GetFullPath(path);
-        var archiveKey = CreateFileSourceKey(fullPath);
-        if (!_archiveCache.TryGetValue(archiveKey, out var archive))
+        var archive = await OpenArchiveAsync(path, cancellationToken);
+
+        if (requiredGame is not null && archive.Game != requiredGame)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            archive = await Task.Run(
-                () => Dat1Archive.Open(fullPath, cancellationToken),
-                cancellationToken);
-            _archiveCache[archiveKey] = archive;
+            return null;
         }
 
         var entries = FindDefaultPaletteEntries(archive);
@@ -166,6 +178,25 @@ public sealed class FalloutPaletteResolver
         return entries.Count == 0
             ? null
             : await ReadPaletteEntryAsync(archive, entries[0], cancellationToken);
+    }
+
+    private async Task<IGameArchive> OpenArchiveAsync(
+        string path,
+        CancellationToken cancellationToken)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var archiveKey = CreateFileSourceKey(fullPath);
+        if (_archiveCache.TryGetValue(archiveKey, out var archive))
+        {
+            return archive;
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        archive = await Task.Run(
+            () => FalloutArchive.Open(fullPath, cancellationToken),
+            cancellationToken);
+        _archiveCache[archiveKey] = archive;
+        return archive;
     }
 
     private async Task<FalloutPalette> ReadPaletteFileAsync(
@@ -222,7 +253,7 @@ public sealed class FalloutPaletteResolver
         return matches.SingleOrDefault();
     }
 
-    private static string? FindMasterArchive(string directory, Dat1Archive? openArchive)
+    private static string? FindMasterArchive(string directory, IGameArchive? openArchive)
     {
         var matches = Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
             .Where(path => string.Equals(Path.GetFileName(path), "MASTER.DAT", StringComparison.OrdinalIgnoreCase))
@@ -241,16 +272,16 @@ public sealed class FalloutPaletteResolver
         return matches.SingleOrDefault();
     }
 
-    private static List<Dat1ArchiveEntry> FindDefaultPaletteEntries(Dat1Archive archive) =>
-        archive.Entries
+    private static List<ArchiveEntry> FindDefaultPaletteEntries(IGameArchive archive) =>
+        archive.BrowserEntries
             .Where(entry => string.Equals(
                 entry.Path,
                 DefaultPaletteEntryPath,
                 StringComparison.OrdinalIgnoreCase))
             .ToList();
 
-    private static string CreateSourceKey(string archivePath, Dat1ArchiveEntry entry) =>
-        $"{CreateFileSourceKey(Path.GetFullPath(archivePath))}|{entry.Offset}|{entry.UncompressedSize}|{entry.PackedSize}";
+    private static string CreateSourceKey(IGameArchive archive, ArchiveEntry entry) =>
+        $"{CreateFileSourceKey(Path.GetFullPath(archive.Path))}|{archive.Format}|{entry.Path}|{entry.UncompressedSize}|{entry.CompressedSize}";
 
     private static string CreateFileSourceKey(string path)
     {
