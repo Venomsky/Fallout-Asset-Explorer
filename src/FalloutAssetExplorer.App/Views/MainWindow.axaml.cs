@@ -89,6 +89,22 @@ public partial class MainWindow : Window
         }
     }
 
+    private void MapGridView_CellInspected(object? sender, MapGridCellInspectedEventArgs e)
+    {
+        if (DataContext is ArchiveBrowserViewModel viewModel)
+        {
+            viewModel.InspectMapGridCell(e.X, e.Y, e.SerializedIndex, e.RawValue);
+        }
+    }
+
+    private void MapGridView_CellSelected(object? sender, MapGridCellInspectedEventArgs e)
+    {
+        if (DataContext is ArchiveBrowserViewModel viewModel)
+        {
+            viewModel.SelectMapGridCell(e.SerializedIndex);
+        }
+    }
+
     private async void ExtractSelected_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is not ArchiveBrowserViewModel viewModel)

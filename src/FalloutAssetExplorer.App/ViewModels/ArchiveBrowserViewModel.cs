@@ -34,8 +34,16 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private FalloutPalette? _falloutPalette;
     private string? _gameDataDirectory;
     private byte[] _renderBuffer = [];
-    private string _previewMessage = "Select a .FRM entry to preview.";
-    private string _previewDetails = "Select a .FRM entry to preview.";
+    private MapTileGridData? _mapTileGridData;
+    private int? _selectedMapElevationIndex;
+    private bool _isMapInspector;
+    private bool _isMapGridDataLoaded;
+    private int? _selectedMapGridIndex;
+    private string _mapGridCellDisplay = "Click a grid cell to keep its square-grid coordinates and raw value selected.";
+    private string _mapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
+    private string _previewMessage = "Select a .FRM or .MAP entry to inspect.";
+    private string _previewDetails = "Select a .FRM or .MAP entry to inspect.";
+    private string _previewTitle = "Resource Inspector";
     private string _paletteStatus = "Palette discovery uses the open archive or a configured game-data folder.";
     private int _selectedDirectionIndex;
     private int _selectedFrameIndex;
@@ -70,6 +78,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         ["Skip existing", "Overwrite existing", "Cancel operation"];
 
     public ObservableCollection<int> FrameOptions { get; } = [];
+
+    public ObservableCollection<int> MapElevationOptions { get; } = [];
 
     public string SearchText
     {
@@ -274,10 +284,77 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         private set => SetProperty(ref _previewDetails, value);
     }
 
+    public string PreviewTitle
+    {
+        get => _previewTitle;
+        private set => SetProperty(ref _previewTitle, value);
+    }
+
     public string PaletteStatus
     {
         get => _paletteStatus;
         private set => SetProperty(ref _paletteStatus, value);
+    }
+
+    public bool IsMapInspector => _isMapInspector;
+
+    public int? SelectedMapElevationIndex
+    {
+        get => _selectedMapElevationIndex;
+        set
+        {
+            if (value is not null && !MapElevationOptions.Contains(value.Value))
+            {
+                return;
+            }
+
+            if (SetProperty(ref _selectedMapElevationIndex, value))
+            {
+                OnPropertyChanged(nameof(SelectedMapGridValues));
+                OnPropertyChanged(nameof(HasMapGrid));
+                OnPropertyChanged(nameof(IsMapGridEmpty));
+                UpdateSelectedMapGridDisplay();
+                MapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
+            }
+        }
+    }
+
+    public int? SelectedMapGridIndex
+    {
+        get => _selectedMapGridIndex;
+        set
+        {
+            if (value is int index && (uint)index >= MapTileGridDecoder.ValuesPerGrid)
+            {
+                return;
+            }
+
+            if (SetProperty(ref _selectedMapGridIndex, value))
+            {
+                UpdateSelectedMapGridDisplay();
+            }
+        }
+    }
+
+    public uint[]? SelectedMapGridValues =>
+        _selectedMapElevationIndex is int elevationIndex
+            ? _mapTileGridData?.GetElevation(elevationIndex)?.RawValues
+            : null;
+
+    public bool HasMapGrid => SelectedMapGridValues is not null;
+
+    public bool IsMapGridEmpty => _isMapInspector && _isMapGridDataLoaded && !HasMapGrid;
+
+    public string MapGridCellDisplay
+    {
+        get => _mapGridCellDisplay;
+        private set => SetProperty(ref _mapGridCellDisplay, value);
+    }
+
+    public string MapGridHoverDisplay
+    {
+        get => _mapGridHoverDisplay;
+        private set => SetProperty(ref _mapGridHoverDisplay, value);
     }
 
     public int SelectedDirectionIndex
@@ -550,23 +627,68 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             var selectedEntry = SelectedEntry;
             if (selectedEntry is null)
             {
-                PreviewMessage = "Select a .FRM entry to preview.";
-                return;
-            }
-
-            if (!string.Equals(selectedEntry.Extension, ".FRM", StringComparison.OrdinalIgnoreCase))
-            {
-                PreviewMessage = "Preview is available for .FRM entries.";
+                PreviewMessage = "Select a .FRM or .MAP entry to inspect.";
                 return;
             }
 
             var archive = _archive;
             if (archive is null)
             {
-                PreviewMessage = "The selected FRM entry is not available in the loaded archive.";
+                PreviewMessage = "The selected entry is not available in the loaded archive.";
                 return;
             }
 
+            if (string.Equals(selectedEntry.Extension, ".MAP", StringComparison.OrdinalIgnoreCase))
+            {
+                _isMapInspector = true;
+                OnPropertyChanged(nameof(IsMapInspector));
+                PreviewTitle = "MAP Inspector";
+                PreviewMessage = "Reading MAP header and tile-grid metadata...";
+                using var mapBuffer = new MemoryStream();
+                await archive.CopyEntryToAsync(selectedEntry, mapBuffer, cancellation.Token);
+                cancellation.Token.ThrowIfCancellationRequested();
+                if (mapBuffer.Length != selectedEntry.UncompressedSize)
+                {
+                    throw new InvalidDataException(
+                        $"MAP entry declares {selectedEntry.UncompressedSize} bytes but {mapBuffer.Length} bytes were read.");
+                }
+
+                var mapData = mapBuffer.GetBuffer().AsMemory(0, checked((int)mapBuffer.Length));
+                var metadata = MapHeaderDecoder.Decode(
+                    mapData,
+                    archive.Game);
+                var tileGrids = MapTileGridDecoder.Decode(mapData, metadata);
+                _mapTileGridData = tileGrids;
+                MapElevationOptions.Clear();
+                foreach (var grid in tileGrids.Grids)
+                {
+                    MapElevationOptions.Add(grid.ElevationIndex);
+                }
+
+                _selectedMapElevationIndex = MapElevationOptions.Count > 0
+                    ? MapElevationOptions[0]
+                    : null;
+
+                _isMapGridDataLoaded = true;
+                OnPropertyChanged(nameof(SelectedMapElevationIndex));
+                OnPropertyChanged(nameof(SelectedMapGridValues));
+                OnPropertyChanged(nameof(HasMapGrid));
+                OnPropertyChanged(nameof(IsMapGridEmpty));
+                UpdateSelectedMapGridDisplay();
+                MapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
+                PreviewMessage = selectedEntry.Path;
+                PreviewDetails = BuildMapHeaderDetails(metadata, tileGrids);
+                PaletteStatus = "Neutral diagnostic cells; values are not encoded as terrain. Coordinates are square-grid only, not hex/object positions. Scripts and objects are not parsed.";
+                return;
+            }
+
+            if (!string.Equals(selectedEntry.Extension, ".FRM", StringComparison.OrdinalIgnoreCase))
+            {
+                PreviewMessage = "Select a .FRM or .MAP entry to inspect.";
+                return;
+            }
+
+            PreviewTitle = "FRM Preview";
             if (selectedEntry.UncompressedSize > FrmDecoder.MaximumFileSize)
             {
                 PreviewMessage = $"FRM preview is limited to {FrmDecoder.MaximumFileSize / (1024 * 1024)} MiB per file.";
@@ -623,7 +745,9 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         {
             if (!cancellation.IsCancellationRequested)
             {
-                PreviewMessage = $"Could not preview FRM: {exception.Message}";
+                PreviewMessage = string.Equals(SelectedEntry?.Extension, ".MAP", StringComparison.OrdinalIgnoreCase)
+                    ? $"Could not inspect MAP: {exception.Message}"
+                    : $"Could not preview FRM: {exception.Message}";
             }
         }
         finally
@@ -664,6 +788,18 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         StatusMessage = message;
+    }
+
+    public void InspectMapGridCell(int? x, int? y, int? serializedIndex, uint? rawValue)
+    {
+        MapGridHoverDisplay = rawValue is uint value
+            ? $"Elevation slot {_selectedMapElevationIndex} | Square-grid ({x}, {y}) | Serialized index {serializedIndex} | Raw value 0x{value:X8}"
+            : "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
+    }
+
+    public void SelectMapGridCell(int? serializedIndex)
+    {
+        SelectedMapGridIndex = serializedIndex;
     }
 
     public void UpdateSelectionCount(int count)
@@ -845,6 +981,40 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             + $"Direction shift ({direction.ShiftX}, {direction.ShiftY})";
     }
 
+    private static string BuildMapHeaderDetails(
+        MapHeaderMetadata metadata,
+        MapTileGridData tileGrids)
+    {
+        var name = string.Concat(metadata.RawName.Select(value =>
+            value is >= 0x20 and <= 0x7e ? (char)value : '.'));
+        var elevationSlots = tileGrids.Grids.Count == 0
+            ? "none"
+            : string.Join(", ", tileGrids.Grids.Select(grid => grid.ElevationIndex));
+        return $"Fallout {(metadata.Game == FalloutGame.Fallout1 ? 1 : 2)} | MAP version {metadata.Version} | Header {MapHeaderDecoder.HeaderSize} bytes"
+            + Environment.NewLine
+            + $"Name bytes: {name} | {Convert.ToHexString(metadata.RawName)}"
+            + Environment.NewLine
+            + $"Entry length: {metadata.EntryLength} bytes"
+            + Environment.NewLine
+            + $"Entering tile/elevation/rotation: {metadata.EnteringTile} / {metadata.EnteringElevation} / {metadata.EnteringRotation}"
+            + Environment.NewLine
+            + $"Flags: 0x{metadata.Flags:X8} | Present elevations: {metadata.PresentElevationCount}/3"
+            + Environment.NewLine
+            + $"Global variables: {metadata.GlobalVariableCount} at {metadata.GlobalVariablesOffset} (length {metadata.GlobalVariablesLength})"
+            + Environment.NewLine
+            + $"Local variables: {metadata.LocalVariableCount} at {metadata.LocalVariablesOffset} (length {metadata.LocalVariablesLength})"
+            + Environment.NewLine
+            + $"Tile section: {metadata.TileDataOffset} (length {metadata.TileDataLength})"
+            + Environment.NewLine
+            + $"Decoded grids: {tileGrids.Grids.Count} | Grid dimensions: {MapTileGridDecoder.GridWidth} x {MapTileGridDecoder.GridHeight} serialized values"
+            + Environment.NewLine
+            + $"Values decoded: {tileGrids.Grids.Sum(grid => grid.RawValues.Length)} | Present elevation slots: {elevationSlots}"
+            + Environment.NewLine
+            + $"Script index: {metadata.ScriptIndex} | Darkness: {metadata.Darkness} | Map index: {metadata.MapIndex} | Last-visit field (raw): {metadata.LastVisitTimeRaw}"
+            + Environment.NewLine
+            + $"Reserved header bytes preserved: {metadata.ReservedHeaderData.Length}";
+    }
+
     private static string GetArchiveFormatDisplay(IGameArchive archive) =>
         (archive.Game, archive.Format) switch
         {
@@ -855,6 +1025,20 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     private void ClearPreview()
     {
+        _mapTileGridData = null;
+        _selectedMapElevationIndex = null;
+        _selectedMapGridIndex = null;
+        _isMapInspector = false;
+        _isMapGridDataLoaded = false;
+        MapElevationOptions.Clear();
+        OnPropertyChanged(nameof(IsMapInspector));
+        OnPropertyChanged(nameof(SelectedMapElevationIndex));
+        OnPropertyChanged(nameof(SelectedMapGridIndex));
+        OnPropertyChanged(nameof(SelectedMapGridValues));
+        OnPropertyChanged(nameof(HasMapGrid));
+        OnPropertyChanged(nameof(IsMapGridEmpty));
+        MapGridCellDisplay = "Click a grid cell to keep its square-grid coordinates and raw value selected.";
+        MapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
         _playbackTimer.Stop();
         _playback.SetFrameCounts([]);
         var previousBitmap = PreviewBitmap;
@@ -867,11 +1051,26 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         _selectedDirectionIndex = 0;
         OnPropertyChanged(nameof(SelectedFrameIndex));
         OnPropertyChanged(nameof(SelectedDirectionIndex));
-        PreviewDetails = "Select a .FRM entry to preview.";
+        PreviewDetails = "Select a .FRM or .MAP entry to inspect.";
+        PreviewTitle = "Resource Inspector";
         PaletteStatus = "Palette discovery uses the open archive or a configured game-data folder.";
         NotifyPlaybackState();
         OnPropertyChanged(nameof(CanExportPng));
         OnPropertyChanged(nameof(SuggestedPngFileName));
+    }
+
+    private void UpdateSelectedMapGridDisplay()
+    {
+        if (_selectedMapGridIndex is not int index
+            || SelectedMapGridValues is not { Length: MapTileGridDecoder.ValuesPerGrid } values)
+        {
+            MapGridCellDisplay = "Click a grid cell to keep its square-grid coordinates and raw value selected.";
+            return;
+        }
+
+        var (x, y) = MapTileGridDecoder.GetSquareGridCoordinates(index);
+        MapGridCellDisplay =
+            $"Selected | Elevation slot {_selectedMapElevationIndex} | Square-grid ({x}, {y}) | Serialized index {index} | Raw value 0x{values[index]:X8}";
     }
 
     private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
