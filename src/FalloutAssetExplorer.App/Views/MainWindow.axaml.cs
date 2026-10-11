@@ -2,6 +2,7 @@ using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
 using FalloutAssetExplorer.App.ViewModels;
+using FalloutAssetExplorer.Core;
 
 namespace FalloutAssetExplorer.App.Views;
 
@@ -88,6 +89,45 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void ExtractSelected_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ArchiveBrowserViewModel viewModel)
+        {
+            return;
+        }
+
+        await TryExtractAsync(
+            viewModel,
+            EntriesGrid.SelectedItems.OfType<ArchiveEntry>().ToList(),
+            "selected entries");
+    }
+
+    private async void ExtractVisible_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ArchiveBrowserViewModel viewModel)
+        {
+            return;
+        }
+
+        await TryExtractAsync(
+            viewModel,
+            viewModel.VisibleEntries.ToList(),
+            "visible entries");
+    }
+
+    private async void ExtractAll_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ArchiveBrowserViewModel viewModel)
+        {
+            return;
+        }
+
+        await TryExtractAsync(
+            viewModel,
+            viewModel.Entries.ToList(),
+            "all archive entries");
+    }
+
     private void TogglePlayback_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is ArchiveBrowserViewModel viewModel)
@@ -140,6 +180,43 @@ public partial class MainWindow : Window
         }
     }
 
+    private async Task TryExtractAsync(
+        ArchiveBrowserViewModel viewModel,
+        IReadOnlyList<ArchiveEntry> entries,
+        string scopeLabel)
+    {
+        if (entries.Count == 0)
+        {
+            viewModel.ReportError($"No {scopeLabel} are available to extract.");
+            return;
+        }
+
+        try
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = $"Select destination for {scopeLabel}",
+                AllowMultiple = false
+            });
+
+            if (folders.Count == 0)
+            {
+                return;
+            }
+
+            await viewModel.ExtractEntriesAsync(entries, folders[0].Path.LocalPath, scopeLabel);
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or InvalidOperationException
+            or NotSupportedException
+            or ArgumentException)
+        {
+            viewModel.ReportError($"Could not extract {scopeLabel}: {exception.Message}");
+        }
+    }
+
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
         Closed -= MainWindow_Closed;
@@ -150,7 +227,7 @@ public partial class MainWindow : Window
     {
         if (DataContext is ArchiveBrowserViewModel viewModel)
         {
-            viewModel.ReportError("Fallout Asset Explorer — read-only Fallout 1 DAT1 and Fallout 2 DAT2 browsing and entry reading are implemented. Safe file extraction is not yet available; Fallout 2 graphics preview is not supported.");
+            viewModel.ReportError("Fallout Asset Explorer — DAT1 and DAT2 browsing, entry reading, and safe archive extraction are implemented. Fallout 2 graphics preview remains unsupported.");
         }
     }
 }

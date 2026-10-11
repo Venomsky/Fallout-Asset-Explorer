@@ -16,6 +16,9 @@
       <MenuItem Header="_File">
         <MenuItem Header="_Open Archive..." Click="OpenArchive_Click" IsEnabled="{Binding CanOpenArchive}" />
         <MenuItem Header="Set _Game Data Folder..." Click="SetGameDataFolder_Click" />
+        <MenuItem Header="_Extract Selected..." Click="ExtractSelected_Click" IsEnabled="{Binding CanExtractSelected}" />
+        <MenuItem Header="Extract _Visible..." Click="ExtractVisible_Click" IsEnabled="{Binding CanExtractVisible}" />
+        <MenuItem Header="Extract _All..." Click="ExtractAll_Click" IsEnabled="{Binding CanExtractAll}" />
         <Separator />
         <MenuItem Header="Export _Selected..." IsEnabled="False" ToolTip.Tip="Available after archive reading and safe extraction are implemented." />
       </MenuItem>
@@ -27,7 +30,15 @@
     <Border DockPanel.Dock="Top" Padding="12,10" Background="#20242B">
       <StackPanel Orientation="Horizontal" Spacing="10">
         <Button Content="Open Archive" Click="OpenArchive_Click" IsDefault="True" IsEnabled="{Binding CanOpenArchive}" />
-        <Button Content="Export Selected" IsEnabled="False" ToolTip.Tip="Available after archive reading and safe extraction are implemented." />
+        <Button Content="Extract Selected" Click="ExtractSelected_Click" IsEnabled="{Binding CanExtractSelected}" />
+        <Button Content="Extract Visible" Click="ExtractVisible_Click" IsEnabled="{Binding CanExtractVisible}" />
+        <Button Content="Extract All" Click="ExtractAll_Click" IsEnabled="{Binding CanExtractAll}" />
+        <TextBlock VerticalAlignment="Center" Text="Overwrite" />
+        <ComboBox
+            Width="150"
+            ItemsSource="{Binding OverwritePolicyOptions}"
+            SelectedIndex="{Binding SelectedOverwritePolicyIndex}"
+            AutomationProperties.Name="Extraction overwrite policy" />
         <Border Width="1" Margin="2,0" Background="#3A414C" />
         <TextBlock VerticalAlignment="Center" Text="Search" />
         <TextBox

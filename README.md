@@ -1,6 +1,6 @@
 # Fallout Asset Explorer
 
-Fallout Asset Explorer (FAE) is a standalone Windows desktop application for browsing Fallout 1 DAT1 and Fallout 2 DAT2 archives. Both readers are read-only and can stream individual entries to a caller-provided destination. Safe user-facing file extraction is not implemented yet.
+Fallout Asset Explorer (FAE) is a standalone Windows desktop application for browsing Fallout 1 DAT1 and Fallout 2 DAT2 archives. The archive readers remain read-only and can stream individual entries to a caller-provided destination. Safe user-facing extraction is implemented for selected, visible, or all entries with path validation, overwrite choices, and cancellation support.
 
 ## Requirements
 
@@ -35,13 +35,15 @@ The UI uses Avalonia and its Fluent theme/DataGrid packages. The core and app do
 
 - The app can start without game files and browse supported Fallout 1 DAT1 and Fallout 2 DAT2 archives selected locally.
 - DAT2 support is read-only. The reader validates the footer, flat directory, entry paths, compression flags, offsets and sizes; zlib output is streamed with a 512 MiB per-entry cap. The two archive formats are selected by structural validation, not `.dat` filenames.
+- Safe extraction is available through the archive browser: choose a destination folder, select entries or all visible/all entries, and use the overwrite policy chooser to skip existing files, overwrite them, or cancel the operation. Each extracted file preserves its relative path under the chosen output folder; archive-supplied paths are revalidated to block rooted, drive-qualified, UNC, traversal, malformed, and reserved-device paths. Cancellation returns a summary, removes incomplete temporary output where possible, and retains per-entry failure diagnostics for programmatic callers.
+- Extraction rejects symbolic links and filesystem junctions found below the selected destination, including the temporary staging folder. This is a best-effort check using .NET filesystem attributes; it is not race-resistant if another process changes directory entries concurrently. The selected destination root itself may be a user-chosen link.
 - Fallout 2 graphics preview, Fallout 2 palette resolution, and game-specific rendering are not supported; opening a DAT2 FRM does not silently reuse Fallout 1's palette.
 - The FRM decoder validates header/record boundaries and provides full-color previews using Fallout 1 `COLOR.PAL` for supported `.FRM` entries.
 - The palette parser validates minimal and extended Fallout PAL resource layouts; the resolver only selects the root standard palette, never an arbitrary `.PAL` file.
 - `MASTER.DAT` `ART/BACKGRND/BACK1.FRM` and `CRITTER.DAT` `ART/CRITTERS/HAPOWRAA.FRM` have been checked with the local master palette; see the format investigation for the real palette source and limitations.
 - DAT1 enforces a 4 GiB archive/address limit, a 65,536-folder limit, a 250,000-entry limit, and 512 MiB per-entry packed/unpacked limits. DAT2 caps its directory at 128 MiB, entries at 250,000, paths at 4,096 bytes, and stored/uncompressed entry sizes at 512 MiB.
 - Synthetic tests exercise DAT1 and DAT2 directory parsing, raw/LZSS/zlib data, empty entries, path normalization, truncation, invalid counts and offsets, size limits, unsupported types, and corrupt compression.
-- Safe archive extraction, overwrite handling for extracted entries, path traversal defenses, and extraction progress are not implemented. PNG export uses Avalonia's save picker with its overwrite prompt enabled.
+- PNG export uses Avalonia's save picker with its overwrite prompt enabled.
 - Special cinematic/interface palettes, palette cycling, game-accurate animation timing, and split `.FR0`–`.FR5` critter animation files are not implemented. The game selects some special palettes by runtime context; FAE does not guess that context from an FRM filename.
 - Local Fallout 1 archives were previously opened read-only: `CRITTER.DAT` enumerated 5,459 entries and `MASTER.DAT`'s `ART/SCENERY/TEMP.REF` raw payload was read successfully. Local Fallout 2 `master.dat`, `critter.dat`, `patch000.dat`, and `f2_res.dat` were also opened and sampled by the DAT2 reader. These checks do not establish compatibility with every game release or every archive variant.
 

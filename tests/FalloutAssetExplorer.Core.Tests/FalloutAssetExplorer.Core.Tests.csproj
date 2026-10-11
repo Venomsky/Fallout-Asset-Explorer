@@ -18,5 +18,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FalloutAssetExplorer.Core\FalloutAssetExplorer.Core.csproj" />
+    <ProjectReference Include="..\..\src\FalloutAssetExplorer.App\FalloutAssetExplorer.App.csproj" />
   </ItemGroup>
 </Project>

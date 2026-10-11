@@ -83,7 +83,7 @@ Synthetic coverage in `tests\FalloutAssetExplorer.Core.Tests\Dat1ArchiveTests.cs
 
 After the fix, both local archives were opened read-only through the FAE parser. `CRITTER.DAT` enumerated 5,459 entries. `MASTER.DAT` parsed successfully, and the `ART/SCENERY/TEMP.REF` entry with packed size zero was read to a temporary stream as four bytes. The archives' recorded file lengths and modification timestamps were unchanged by testing. This confirms directory parsing for these local copies and raw reading of the regression entry; it does not validate every compressed entry or establish compatibility with every release. Keep copyrighted game files out of the repository and test fixtures.
 
-The UI enumerates entries from both formats and the core readers support copying individual entries to a caller-provided stream. User-facing safe extraction is still deferred; path traversal prevention, overwrite policy, total extraction limits, and progress/cancellation UX must be implemented before enabling archive export.
+The UI enumerates entries from both formats and the core readers support copying individual entries to a caller-provided stream. The user-facing extraction service reuses that streaming contract, preserves the existing reader size/decompression bounds, validates archive paths at the filesystem boundary, and stages writes through temporary files. Filesystem links beneath the selected destination are rejected by checking reparse-point attributes; this is best-effort rather than race-resistant against concurrent external changes.
 
 ## Fallout FRM format investigation
 

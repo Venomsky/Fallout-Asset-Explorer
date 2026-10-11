@@ -23,6 +23,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private int _selectedEntryCount;
     private ArchiveEntry? _selectedEntry;
     private bool _isLoading;
+    private bool _isExtracting;
     private IGameArchive? _archive;
     private readonly FalloutPaletteResolver _paletteResolver = new();
     private readonly FrmPlaybackController _playback = new();
@@ -64,6 +65,9 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     public ObservableCollection<string> ExtensionOptions { get; }
 
     public ObservableCollection<string> DirectionOptions { get; }
+
+    public ObservableCollection<string> OverwritePolicyOptions { get; } =
+        ["Skip existing", "Overwrite existing", "Cancel operation"];
 
     public ObservableCollection<int> FrameOptions { get; } = [];
 
@@ -118,11 +122,36 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             if (SetProperty(ref _isLoading, value))
             {
                 OnPropertyChanged(nameof(CanOpenArchive));
+                NotifyExtractionAvailability();
             }
         }
     }
 
     public bool CanOpenArchive => !IsLoading;
+
+    public bool IsExtracting
+    {
+        get => _isExtracting;
+        private set
+        {
+            if (SetProperty(ref _isExtracting, value))
+            {
+                OnPropertyChanged(nameof(CanExtractSelected));
+                OnPropertyChanged(nameof(CanExtractVisible));
+                OnPropertyChanged(nameof(CanExtractAll));
+            }
+        }
+    }
+
+    public bool CanExtractSelected => !IsLoading && !IsExtracting && _archive is not null && _selectedEntryCount > 0;
+
+    public bool CanExtractVisible => !IsLoading && !IsExtracting && _archive is not null && VisibleEntries.Count > 0;
+
+    public bool CanExtractAll => !IsLoading && !IsExtracting && _archive is not null && Entries.Count > 0;
+
+    public int SelectedOverwritePolicyIndex { get; set; } = (int)OverwritePolicy.SkipExisting;
+
+    public OverwritePolicy SelectedOverwritePolicy => (OverwritePolicy)SelectedOverwritePolicyIndex;
 
     public ArchiveEntry? SelectedEntry
     {
@@ -344,6 +373,115 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
     }
 
+    public async Task ExtractSelectedEntriesAsync(
+        string destinationDirectory,
+        IEnumerable<ArchiveEntry>? selectedEntries = null,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(destinationDirectory))
+        {
+            throw new ArgumentException("A destination directory is required before extracting entries.", nameof(destinationDirectory));
+        }
+
+        var entries = (selectedEntries ?? Entries).ToList();
+        if (entries.Count == 0)
+        {
+            StatusMessage = "No selected entries are available to extract.";
+            return;
+        }
+
+        await ExtractEntriesAsync(entries, destinationDirectory, "selected entries", cancellationToken);
+    }
+
+    public async Task ExtractVisibleEntriesAsync(string destinationDirectory, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(destinationDirectory))
+        {
+            throw new ArgumentException("A destination directory is required before extracting visible entries.", nameof(destinationDirectory));
+        }
+
+        if (VisibleEntries.Count == 0)
+        {
+            StatusMessage = "No visible entries are available to extract.";
+            return;
+        }
+
+        await ExtractEntriesAsync(VisibleEntries.ToList(), destinationDirectory, "visible entries", cancellationToken);
+    }
+
+    public async Task ExtractAllEntriesAsync(string destinationDirectory, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(destinationDirectory))
+        {
+            throw new ArgumentException("A destination directory is required before extracting all entries.", nameof(destinationDirectory));
+        }
+
+        if (Entries.Count == 0)
+        {
+            StatusMessage = "This archive contains no entries to extract.";
+            return;
+        }
+
+        await ExtractEntriesAsync(Entries.ToList(), destinationDirectory, "all archive entries", cancellationToken);
+    }
+
+    public async Task ExtractEntriesAsync(
+        IReadOnlyList<ArchiveEntry> entries,
+        string destinationDirectory,
+        string scopeLabel,
+        CancellationToken cancellationToken = default)
+    {
+        if (_archive is null)
+        {
+            throw new InvalidOperationException("No archive is loaded, so no entries can be extracted.");
+        }
+
+        if (entries.Count == 0)
+        {
+            StatusMessage = $"No {scopeLabel} are available to extract.";
+            return;
+        }
+
+        var service = new ArchiveExtractionService();
+        IsExtracting = true;
+        StatusMessage = $"Preparing to extract {scopeLabel} to {destinationDirectory}...";
+
+        try
+        {
+            var summary = await service.ExtractAsync(
+                _archive,
+                entries,
+                destinationDirectory,
+                new ExtractionOptions(SelectedOverwritePolicy),
+                new Progress<ExtractionProgress>(progress =>
+                {
+                    var current = progress.CurrentEntryPath is null
+                        ? $"{progress.CompletedEntries}/{progress.TotalEntries}"
+                        : $"{progress.CurrentEntryPath} ({progress.CompletedEntries}/{progress.TotalEntries})";
+
+                    StatusMessage = progress.Message is null
+                        ? $"Extracting {scopeLabel}: {current}"
+                        : $"Extracting {scopeLabel}: {progress.Message} ({current})";
+                }),
+                cancellationToken);
+
+            var finalStatus = summary.WasCancelled ? "Cancelled" : summary.HasFailures ? "Completed with warnings" : "Completed";
+            StatusMessage = $"{finalStatus}: {summary.Successful} extracted, {summary.Skipped} skipped, {summary.Failed} failed, {summary.Cancelled} cancelled.";
+        }
+        catch (OperationCanceledException)
+        {
+            StatusMessage = $"Extraction of {scopeLabel} was cancelled.";
+        }
+        catch (Exception exception)
+        {
+            StatusMessage = $"Extraction of {scopeLabel} failed: {exception.Message}";
+        }
+        finally
+        {
+            IsExtracting = false;
+        }
+    }
+
     public void Dispose()
     {
         if (_isDisposed)
@@ -554,6 +692,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         _selectedEntryCount = count;
         OnPropertyChanged(nameof(SelectionDisplay));
         OnPropertyChanged(nameof(HasSelection));
+        OnPropertyChanged(nameof(CanExtractSelected));
     }
 
     public void SetEntries(IEnumerable<ArchiveEntry> entries)
@@ -572,6 +711,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         OnPropertyChanged(nameof(EntryCountDisplay));
         OnPropertyChanged(nameof(SelectionDisplay));
         OnPropertyChanged(nameof(HasSelection));
+        OnPropertyChanged(nameof(CanExtractAll));
+        OnPropertyChanged(nameof(CanExtractSelected));
     }
 
     private void RefreshVisibleEntries()
@@ -582,6 +723,15 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         {
             VisibleEntries.Add(entry);
         }
+
+        OnPropertyChanged(nameof(CanExtractVisible));
+    }
+
+    private void NotifyExtractionAvailability()
+    {
+        OnPropertyChanged(nameof(CanExtractSelected));
+        OnPropertyChanged(nameof(CanExtractVisible));
+        OnPropertyChanged(nameof(CanExtractAll));
     }
 
     private void RefreshPreviewFrame()
