@@ -8,6 +8,15 @@ namespace FalloutAssetExplorer.App.Views;
 
 public partial class MainWindow : Window
 {
+    private GridLength[]? _normalWorkspaceRowHeights;
+    private GridLength? _mapWorkspaceHeightBeforeCollapse;
+    private GridLength? _mapWorkspaceSplitterHeightBeforeCollapse;
+    private GridLength? _mapRecordsHeightBeforeCollapse;
+    private GridLength? _mapRecordsSplitterHeightBeforeCollapse;
+    private bool _isMapWorkspaceCollapsed;
+    private bool _isMapRecordsCollapsed;
+    private bool _isMapMaximized;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -131,6 +140,94 @@ public partial class MainWindow : Window
         {
             viewModel.MapObjectSearchText = string.Empty;
         }
+    }
+
+    private void ToggleMapWorkspace_Click(object? sender, RoutedEventArgs e)
+    {
+        var workspaceRow = PreviewLayoutGrid.RowDefinitions[4];
+        var workspaceSplitterRow = PreviewLayoutGrid.RowDefinitions[3];
+        if (_isMapWorkspaceCollapsed)
+        {
+            workspaceRow.Height = _mapWorkspaceHeightBeforeCollapse
+                ?? new GridLength(1, GridUnitType.Star);
+            workspaceSplitterRow.Height = _mapWorkspaceSplitterHeightBeforeCollapse
+                ?? new GridLength(6);
+            _mapWorkspaceHeightBeforeCollapse = null;
+            _mapWorkspaceSplitterHeightBeforeCollapse = null;
+            MapWorkspaceToggleButton.Content = "Hide workspace";
+            _isMapWorkspaceCollapsed = false;
+            return;
+        }
+
+        _mapWorkspaceHeightBeforeCollapse = workspaceRow.Height;
+        _mapWorkspaceSplitterHeightBeforeCollapse = workspaceSplitterRow.Height;
+        workspaceRow.Height = new GridLength(0);
+        workspaceSplitterRow.Height = new GridLength(0);
+        MapWorkspaceToggleButton.Content = "Show workspace";
+        _isMapWorkspaceCollapsed = true;
+    }
+
+    private void ToggleMapRecords_Click(object? sender, RoutedEventArgs e)
+    {
+        var recordsRow = RecordPrototypeGrid.RowDefinitions[0];
+        var recordsSplitterRow = RecordPrototypeGrid.RowDefinitions[1];
+        if (_isMapRecordsCollapsed)
+        {
+            recordsRow.Height = _mapRecordsHeightBeforeCollapse
+                ?? new GridLength(1, GridUnitType.Star);
+            recordsSplitterRow.Height = _mapRecordsSplitterHeightBeforeCollapse
+                ?? new GridLength(6);
+            _mapRecordsHeightBeforeCollapse = null;
+            _mapRecordsSplitterHeightBeforeCollapse = null;
+            MapRecordsToggleButton.Content = "Hide records";
+            _isMapRecordsCollapsed = false;
+            return;
+        }
+
+        _mapRecordsHeightBeforeCollapse = recordsRow.Height;
+        _mapRecordsSplitterHeightBeforeCollapse = recordsSplitterRow.Height;
+        recordsRow.Height = new GridLength(0);
+        recordsSplitterRow.Height = new GridLength(0);
+        MapRecordsToggleButton.Content = "Show records";
+        _isMapRecordsCollapsed = true;
+    }
+
+    private void ToggleMapMaximized_Click(object? sender, RoutedEventArgs e)
+    {
+        if (!_isMapMaximized)
+        {
+            _normalWorkspaceRowHeights = PreviewLayoutGrid.RowDefinitions
+                .Select(row => row.Height)
+                .ToArray();
+            EntriesGrid.IsVisible = false;
+            Grid.SetColumnSpan(PreviewPane, 2);
+            MapWorkspaceToggleButton.IsEnabled = false;
+            MapRecordsToggleButton.IsEnabled = false;
+            for (var rowIndex = 3; rowIndex < PreviewLayoutGrid.RowDefinitions.Count; rowIndex++)
+            {
+                PreviewLayoutGrid.RowDefinitions[rowIndex].Height = new GridLength(0);
+            }
+
+            MapMaximizeButton.Content = "Restore workspace";
+            _isMapMaximized = true;
+            return;
+        }
+
+        EntriesGrid.IsVisible = true;
+        Grid.SetColumnSpan(PreviewPane, 1);
+        MapWorkspaceToggleButton.IsEnabled = true;
+        MapRecordsToggleButton.IsEnabled = true;
+        if (_normalWorkspaceRowHeights is { } rowHeights)
+        {
+            for (var rowIndex = 0; rowIndex < rowHeights.Length; rowIndex++)
+            {
+                PreviewLayoutGrid.RowDefinitions[rowIndex].Height = rowHeights[rowIndex];
+            }
+        }
+
+        _normalWorkspaceRowHeights = null;
+        MapMaximizeButton.Content = "Maximize map";
+        _isMapMaximized = false;
     }
 
     private async void MapDiagnosticLayer_SelectionChanged(object? sender, SelectionChangedEventArgs e)
