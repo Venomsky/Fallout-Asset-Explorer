@@ -628,7 +628,9 @@ public sealed record MapObjectPlacement(
     public string FormatHexPosition() =>
         HexX is int x && HexY is int y
             ? $"({x}, {y}) [{RawHexIndex}]"
-            : $"{RawHexIndex} (unplaced/invalid)";
+            : RawHexIndex == -1
+                ? "-1 (no tile assigned)"
+                : $"{RawHexIndex} (invalid tile index)";
 
     public string Details =>
         $"Record #{RecordIndex} at byte {RecordOffset}"

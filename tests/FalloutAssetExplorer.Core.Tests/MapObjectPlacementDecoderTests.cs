@@ -1023,7 +1023,25 @@ public sealed class MapObjectPlacementDecoderTests
         Assert.Equal(40000, placement.RawHexIndex);
         Assert.Null(placement.HexX);
         Assert.Null(placement.HexY);
+        Assert.Equal("40000 (invalid tile index)", placement.FormatHexPosition());
         Assert.Contains("outside", placement.Warning);
+    }
+
+    [Fact]
+    public void Decode_PreservesNoTileSentinelAndLabelsItSeparatelyFromInvalidIndices()
+    {
+        var map = MapFixture.Create(19, [
+            MapFixture.ObjectRecord(pid: 0x03000001, tile: -1, elevation: 0)
+        ], [1, 0, 0]);
+        var header = MapHeaderDecoder.Decode(map, FalloutGame.Fallout1);
+
+        var placement = Assert.Single(MapObjectPlacementDecoder.Decode(map, header).Objects);
+
+        Assert.Equal(-1, placement.RawHexIndex);
+        Assert.Null(placement.HexX);
+        Assert.Null(placement.HexY);
+        Assert.Equal("-1 (no tile assigned)", placement.FormatHexPosition());
+        Assert.Contains("No hex-grid tile is assigned", placement.Warning);
     }
 
     [Fact]
