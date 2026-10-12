@@ -1,6 +1,4 @@
 using System.Buffers.Binary;
-using System.Text;
-
 namespace FalloutAssetExplorer.Core;
 
 public static class MapObjectPlacementDecoder
@@ -20,10 +18,6 @@ public static class MapObjectPlacementDecoder
     private const int MaximumDecodedObjects = 100_000;
     private const int MaxInventoryDepth = 8;
     private const int MaxInventoryLengthPerObject = 1_000;
-    private const int MaximumPrototypeListSize = 16 * 1024 * 1024;
-    private const int MaximumPrototypeSize = 1024 * 1024;
-    private const int MinimumPrototypeSize = 36;
-
     public static (int X, int Y) GetHexCoordinates(int serializedIndex)
     {
         if ((uint)serializedIndex >= HexGridTileCount)
@@ -41,18 +35,20 @@ public static class MapObjectPlacementDecoder
         ReadOnlyMemory<byte> data,
         MapHeaderMetadata header,
         IGameArchive? archive = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Fallout2PrototypeResolver? prototypeResolver = null)
     {
         ArgumentNullException.ThrowIfNull(header);
 
-        return DecodeCoreAsync(data, header, archive, cancellationToken);
+        return DecodeCoreAsync(data, header, archive, cancellationToken, prototypeResolver);
     }
 
     private static async Task<MapObjectPlacementData> DecodeCoreAsync(
         ReadOnlyMemory<byte> data,
         MapHeaderMetadata header,
         IGameArchive? archive,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Fallout2PrototypeResolver? prototypeResolver)
     {
         var validatedHeader = MapHeaderDecoder.Decode(data, header.Game);
         if (header.Version != validatedHeader.Version
@@ -93,8 +89,7 @@ public static class MapObjectPlacementDecoder
         }
 
         var objects = new List<MapObjectPlacement>(totalObjectCount);
-        var sceneryResolver = new PrototypeTypeResolver(archive, "scenery", "scenery.lst", 2, 5, "scenery");
-        var itemResolver = new PrototypeTypeResolver(archive, "items", "items.lst", 0, 6, "item");
+        var resolver = prototypeResolver ?? new Fallout2PrototypeResolver(archive);
         string? unsupportedReason = null;
         for (var elevation = 0; elevation < objectCountsByElevation.Length; elevation++)
         {
@@ -133,8 +128,7 @@ public static class MapObjectPlacementDecoder
                     data,
                     elevation,
                     validatedHeader,
-                    sceneryResolver,
-                    itemResolver,
+                    resolver,
                     objects,
                     0,
                     null,
@@ -225,8 +219,7 @@ public static class MapObjectPlacementDecoder
         ReadOnlyMemory<byte> data,
         int elevationGroup,
         MapHeaderMetadata header,
-        PrototypeTypeResolver sceneryResolver,
-        PrototypeTypeResolver itemResolver,
+        Fallout2PrototypeResolver prototypeResolver,
         List<MapObjectPlacement> objects,
         int inventoryDepth,
         int? parentRecordIndex,
@@ -270,10 +263,10 @@ public static class MapObjectPlacementDecoder
                     }
                     else
                     {
-                        var itemType = await itemResolver.ResolveAsync(rawPid, cancellationToken);
-                        if (itemType.Type is int resolvedType)
+                        var itemType = await prototypeResolver.ResolveAsync(rawPid, cancellationToken);
+                        if (itemType.HasSupportedSubtype && itemType.Subtype is int resolvedType)
                         {
-                            prototypeFileName = itemType.PrototypeFileName;
+                            prototypeFileName = itemType.VerifiedFileName;
                             var payloadWordCount = resolvedType switch
                             {
                                 0 or 1 or 2 => 0,
@@ -290,7 +283,7 @@ public static class MapObjectPlacementDecoder
                         }
                         else
                         {
-                            unsupportedReason = $"Object record {recordIndex} item PRO metadata is unavailable: {itemType.Error}";
+                            unsupportedReason = $"Object record {recordIndex} item PRO metadata is unavailable: {itemType.Status}";
                         }
                     }
                 }
@@ -300,13 +293,11 @@ public static class MapObjectPlacementDecoder
                 }
                 else if (pidType == 2)
                 {
-                    var sceneryType = await sceneryResolver.ResolveAsync(rawPid, cancellationToken);
-                    if (sceneryType.Type is not null)
-                    {
-                        prototypeFileName = sceneryType.PrototypeFileName;
-                    }
+                    var sceneryType = await prototypeResolver.ResolveAsync(rawPid, cancellationToken);
+                    var resolvedSceneryType = sceneryType.HasSupportedSubtype ? sceneryType.Subtype : null;
+                    prototypeFileName = sceneryType.HasSupportedSubtype ? sceneryType.VerifiedFileName : null;
 
-                    if (sceneryType.Type == 0)
+                    if (resolvedSceneryType == 0)
                     {
                         ReadInt32Words(
                             data.Span,
@@ -315,7 +306,7 @@ public static class MapObjectPlacementDecoder
                             1,
                             $"object record {recordIndex} scenery subtype 0 payload");
                     }
-                    else if (sceneryType.Type == 1)
+                    else if (resolvedSceneryType == 1)
                     {
                         ReadInt32Words(
                             data.Span,
@@ -324,7 +315,7 @@ public static class MapObjectPlacementDecoder
                             2,
                             $"object record {recordIndex} scenery subtype 1 payload");
                     }
-                    else if (sceneryType.Type == 2)
+                    else if (resolvedSceneryType == 2)
                     {
                         ReadInt32Words(
                             data.Span,
@@ -333,7 +324,7 @@ public static class MapObjectPlacementDecoder
                             2,
                             $"object record {recordIndex} scenery subtype 2 payload");
                     }
-                    else if (sceneryType.Type is 3 or 4)
+                    else if (resolvedSceneryType is 3 or 4)
                     {
                         var payloadWordCount = header.Version == 19 ? 1 : 2;
                         ReadInt32Words(
@@ -341,19 +332,19 @@ public static class MapObjectPlacementDecoder
                             cursor,
                             payloadWords,
                             payloadWordCount,
-                            $"object record {recordIndex} scenery subtype {sceneryType.Type} payload");
+                            $"object record {recordIndex} scenery subtype {resolvedSceneryType} payload");
                     }
-                    else if (sceneryType.Type == 5)
+                    else if (resolvedSceneryType == 5)
                     {
                         // GENERIC scenery has no subtype-specific MAP payload.
                     }
-                    else if (sceneryType.Type is not null)
+                    else if (sceneryType.HasSupportedSubtype)
                     {
-                        unsupportedReason = $"Object record {recordIndex} scenery subtype {sceneryType.Type} is not supported.";
+                        unsupportedReason = $"Object record {recordIndex} scenery subtype {resolvedSceneryType} is not supported.";
                     }
                     else
                     {
-                        unsupportedReason = $"Object record {recordIndex} scenery PRO metadata is unavailable: {sceneryType.Error}";
+                        unsupportedReason = $"Object record {recordIndex} scenery PRO metadata is unavailable: {sceneryType.Status}";
                     }
                 }
                 else if (pidType == 5 && rawPid is >= 0x05000010 and <= 0x05000017)
@@ -487,8 +478,7 @@ public static class MapObjectPlacementDecoder
                     data,
                     elevationGroup,
                     header,
-                    sceneryResolver,
-                    itemResolver,
+                    prototypeResolver,
                     objects,
                     inventoryDepth + 1,
                     recordIndex,
@@ -511,231 +501,6 @@ public static class MapObjectPlacementDecoder
         }
 
         return (unsupportedReason, cursor.Offset);
-    }
-
-    private sealed class PrototypeTypeResolver(
-        IGameArchive? archive,
-        string prototypeDirectory,
-        string listFileName,
-        int expectedPidType,
-        int maximumSubtype,
-        string prototypeCategory)
-    {
-        private Task<(byte[]? Bytes, string? Error)>? _listTask;
-        private readonly Dictionary<int, Task<(int? Type, string? PrototypeFileName, string? Error)>> _results = [];
-
-        public Task<(int? Type, string? PrototypeFileName, string? Error)> ResolveAsync(
-            int pid,
-            CancellationToken cancellationToken)
-        {
-            if (_results.TryGetValue(pid, out var result))
-            {
-                return result;
-            }
-
-            result = ResolveCoreAsync(pid, cancellationToken);
-            _results.Add(pid, result);
-            return result;
-        }
-
-        private async Task<(int? Type, string? PrototypeFileName, string? Error)> ResolveCoreAsync(
-            int pid,
-            CancellationToken cancellationToken)
-        {
-            if (archive is null
-                || archive.Game != FalloutGame.Fallout2
-                || archive.Format != ArchiveFormat.Dat2)
-            {
-                return (null, null, "the active Fallout 2 DAT2 archive is unavailable");
-            }
-
-            _listTask ??= ReadPrototypeListAsync(
-                archive,
-                prototypeDirectory,
-                listFileName,
-                prototypeCategory,
-                cancellationToken);
-            var listResult = await _listTask;
-            if (listResult.Bytes is null)
-            {
-                return (null, null, listResult.Error);
-            }
-
-            var listIndex = pid & 0x00ffffff;
-            if (listIndex == 0)
-            {
-                return (null, null, $"the {prototypeCategory} PID has an invalid zero list index");
-            }
-
-            var lineIndex = 0;
-            string? prototypeName = null;
-            using (var reader = new StringReader(Encoding.ASCII.GetString(listResult.Bytes)))
-            {
-                while (reader.ReadLine() is { } line)
-                {
-                    lineIndex++;
-                    if (lineIndex == listIndex)
-                    {
-                        prototypeName = line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-                        break;
-                    }
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(prototypeName))
-            {
-                return (null, null, $"{prototypeCategory} PID list index {listIndex} is outside the prototype list");
-            }
-
-            if (prototypeName.IndexOfAny(['/', '\\', ':']) >= 0
-                || prototypeName is "." or ".."
-                || !string.Equals(Path.GetExtension(prototypeName), ".PRO", StringComparison.OrdinalIgnoreCase))
-            {
-                return (null, null, $"the {prototypeCategory} prototype list contains an unsafe or invalid filename");
-            }
-
-            var prototypeEntry = FindArchiveEntry(archive, $"proto/{prototypeDirectory}/{prototypeName}");
-            if (prototypeEntry is null)
-            {
-                return (null, null, $"the {prototypeCategory} prototype '{prototypeName}' is missing");
-            }
-
-            if (!TryReadEntrySize(prototypeEntry, MaximumPrototypeSize, out var prototypeSize, out var sizeError))
-            {
-                return (null, null, $"the {prototypeCategory} prototype {sizeError}");
-            }
-
-            if (prototypeSize < MinimumPrototypeSize)
-            {
-                return (null, null, $"the {prototypeCategory} prototype is shorter than {MinimumPrototypeSize} bytes");
-            }
-
-            byte[] prototypeBytes;
-            try
-            {
-                prototypeBytes = await ReadArchiveEntryAsync(archive, prototypeEntry, prototypeSize, cancellationToken);
-            }
-            catch (InvalidDataException exception)
-            {
-                System.Diagnostics.Debug.WriteLine($"MAP {prototypeCategory} prototype read failed: {exception}");
-                return (null, null, $"the {prototypeCategory} prototype could not be read");
-            }
-            catch (IOException exception)
-            {
-                System.Diagnostics.Debug.WriteLine($"MAP {prototypeCategory} prototype read failed: {exception}");
-                return (null, null, $"the {prototypeCategory} prototype could not be read");
-            }
-
-            var prototypePid = BinaryPrimitives.ReadInt32BigEndian(prototypeBytes.AsSpan(0, sizeof(int)));
-            if (prototypePid != pid || (uint)prototypePid >> 24 != expectedPidType)
-            {
-                return (null, null, $"the {prototypeCategory} prototype PID 0x{prototypePid:X8} does not match MAP PID 0x{pid:X8}");
-            }
-
-            var prototypeType = BinaryPrimitives.ReadInt32BigEndian(prototypeBytes.AsSpan(32, sizeof(int)));
-            return prototypeType is >= 0 && prototypeType <= maximumSubtype
-                ? (prototypeType, prototypeName, null)
-                : (null, null, $"the {prototypeCategory} prototype has unsupported subtype {prototypeType}");
-        }
-
-        private static async Task<(byte[]? Bytes, string? Error)> ReadPrototypeListAsync(
-            IGameArchive archive,
-            string prototypeDirectory,
-            string listFileName,
-            string prototypeCategory,
-            CancellationToken cancellationToken)
-        {
-            var listPath = $"proto/{prototypeDirectory}/{listFileName}";
-            var listEntry = FindArchiveEntry(archive, listPath);
-            if (listEntry is null)
-            {
-                return (null, $"{listPath} is missing");
-            }
-
-            if (!TryReadEntrySize(listEntry, MaximumPrototypeListSize, out var listSize, out var sizeError))
-            {
-                return (null, $"the {prototypeCategory} prototype list {sizeError}");
-            }
-
-            byte[] listBytes;
-            try
-            {
-                listBytes = await ReadArchiveEntryAsync(archive, listEntry, listSize, cancellationToken);
-            }
-            catch (InvalidDataException exception)
-            {
-                System.Diagnostics.Debug.WriteLine($"MAP {prototypeCategory} prototype list read failed: {exception}");
-                return (null, $"the {prototypeCategory} prototype list could not be read");
-            }
-            catch (IOException exception)
-            {
-                System.Diagnostics.Debug.WriteLine($"MAP {prototypeCategory} prototype list read failed: {exception}");
-                return (null, $"the {prototypeCategory} prototype list could not be read");
-            }
-
-            return listBytes.Any(value => value > 0x7f)
-                ? (null, $"the {prototypeCategory} prototype list contains non-ASCII data")
-                : (listBytes, null);
-        }
-    }
-
-    private static ArchiveEntry? FindArchiveEntry(IGameArchive archive, string expectedPath)
-    {
-        ArchiveEntry? match = null;
-        foreach (var entry in archive.BrowserEntries)
-        {
-            if (!string.Equals(
-                    entry.Path.Replace('\\', '/'),
-                    expectedPath,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            if (match is not null)
-            {
-                return null;
-            }
-
-            match = entry;
-        }
-
-        return match;
-    }
-
-    private static bool TryReadEntrySize(
-        ArchiveEntry entry,
-        int maximumSize,
-        out int size,
-        out string error)
-    {
-        if (entry.UncompressedSize < 0 || entry.UncompressedSize > maximumSize)
-        {
-            size = 0;
-            error = $"has an invalid size of {entry.UncompressedSize} bytes";
-            return false;
-        }
-
-        size = (int)entry.UncompressedSize;
-        error = string.Empty;
-        return true;
-    }
-
-    private static async Task<byte[]> ReadArchiveEntryAsync(
-        IGameArchive archive,
-        ArchiveEntry entry,
-        int expectedSize,
-        CancellationToken cancellationToken)
-    {
-        await using var stream = new MemoryStream(expectedSize);
-        await archive.CopyEntryToAsync(entry, stream, cancellationToken);
-        if (stream.Length != expectedSize)
-        {
-            throw new InvalidDataException(
-                $"Archive entry '{entry.Path}' declared {expectedSize} bytes but yielded {stream.Length}.");
-        }
-
-        return stream.ToArray();
     }
 
     private static void ReadInt32Words(

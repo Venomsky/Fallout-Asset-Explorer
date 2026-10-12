@@ -114,7 +114,7 @@
           BorderBrush="#343A44"
           BorderThickness="1"
           CornerRadius="4">
-        <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8">
+        <Grid RowDefinitions="Auto,Auto,*,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="8">
           <Grid ColumnDefinitions="*,Auto">
             <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding PreviewTitle}" />
             <Button
@@ -492,6 +492,45 @@
                   Text="No matching objects" />
             </Border>
           </Grid>
+          <Expander
+              Grid.Row="13"
+              Header="Fallout 2 prototype (.PRO)"
+              IsVisible="{Binding IsMapInspector}"
+              AutomationProperties.Name="Selected object's Fallout 2 prototype diagnostics">
+            <StackPanel Spacing="4">
+              <TextBlock
+                  Foreground="#AAB1BE"
+                  FontSize="11"
+                  Text="{Binding MapObjectPrototypeDiagnosticStatus}"
+                  TextWrapping="Wrap" />
+              <TextBlock
+                  Foreground="#E7EAF0"
+                  FontFamily="Consolas"
+                  FontSize="10"
+                  Text="{Binding MapObjectPrototypeDiagnosticDetails}"
+                  TextWrapping="Wrap" />
+              <ListBox
+                  Height="112"
+                  ItemsSource="{Binding MapObjectPrototypeRawByteLines}"
+                  IsVisible="{Binding HasMapObjectPrototypeRawBytes}"
+                  AutomationProperties.Name="Raw selected prototype bytes">
+                <ListBox.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <VirtualizingStackPanel />
+                  </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock
+                        FontFamily="Consolas"
+                        FontSize="9"
+                        Text="{Binding}"
+                        TextWrapping="NoWrap" />
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </StackPanel>
+          </Expander>
         </Grid>
       </Border>
     </Grid>

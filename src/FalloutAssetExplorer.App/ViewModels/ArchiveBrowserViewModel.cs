@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Threading;
 using Avalonia;
 using Avalonia.Media.Imaging;
@@ -45,6 +46,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private readonly DispatcherTimer _playbackTimer;
     private CancellationTokenSource? _previewCancellation;
     private CancellationTokenSource? _mapFloorTileCancellation;
+    private CancellationTokenSource? _mapObjectPrototypeDiagnosticCancellation;
     private FrmDocument? _previewDocument;
     private Bitmap? _previewBitmap;
     private FalloutPalette? _falloutPalette;
@@ -56,6 +58,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private readonly Dictionary<uint, Bitmap> _mapFloorTileBitmaps = [];
     private readonly HashSet<uint> _unavailableMapFloorIds = [];
     private MapObjectPlacement? _selectedMapObject;
+    private Fallout2PrototypeResolver? _mapPrototypeResolver;
     private int? _selectedMapElevationIndex;
     private int _selectedMapDiagnosticLayerIndex;
     private bool _isMapInspector;
@@ -67,6 +70,9 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private string _mapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
     private string _mapObjectStatusDisplay = "MAP objects have not been read.";
     private string _mapObjectDetailsDisplay = "Select a parsed object to inspect its raw fields.";
+    private string _mapObjectPrototypeDiagnosticStatus = "Select an Item or Scenery object to inspect its Fallout 2 prototype.";
+    private string _mapObjectPrototypeDiagnosticDetails = string.Empty;
+    private IReadOnlyList<string> _mapObjectPrototypeRawByteLines = [];
     private string _mapFloorTilesStatusDisplay = "Select the floor-tile diagnostic layer to load this map's tiles.";
     private string _previewMessage = "Select a .FRM or .MAP entry to inspect.";
     private string _previewDetails = "Select a .FRM or .MAP entry to inspect.";
@@ -682,6 +688,32 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         private set => SetProperty(ref _mapObjectDetailsDisplay, value);
     }
 
+    public string MapObjectPrototypeDiagnosticStatus
+    {
+        get => _mapObjectPrototypeDiagnosticStatus;
+        private set => SetProperty(ref _mapObjectPrototypeDiagnosticStatus, value);
+    }
+
+    public string MapObjectPrototypeDiagnosticDetails
+    {
+        get => _mapObjectPrototypeDiagnosticDetails;
+        private set => SetProperty(ref _mapObjectPrototypeDiagnosticDetails, value);
+    }
+
+    public IReadOnlyList<string> MapObjectPrototypeRawByteLines
+    {
+        get => _mapObjectPrototypeRawByteLines;
+        private set
+        {
+            if (SetProperty(ref _mapObjectPrototypeRawByteLines, value))
+            {
+                OnPropertyChanged(nameof(HasMapObjectPrototypeRawBytes));
+            }
+        }
+    }
+
+    public bool HasMapObjectPrototypeRawBytes => MapObjectPrototypeRawByteLines.Count > 0;
+
     public int SelectedDirectionIndex
     {
         get => _selectedDirectionIndex;
@@ -986,13 +1018,16 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 var tileGrids = MapTileGridDecoder.Decode(mapData, metadata);
                 MapObjectPlacementData? objectPlacements = null;
                 string? objectPlacementError = null;
+                var prototypeResolver = new Fallout2PrototypeResolver(archive);
+                _mapPrototypeResolver = prototypeResolver;
                 try
                 {
                     objectPlacements = await MapObjectPlacementDecoder.DecodeAsync(
                         mapData,
                         metadata,
                         archive,
-                        cancellation.Token);
+                        cancellation.Token,
+                        prototypeResolver);
                 }
                 catch (InvalidDataException exception)
                 {
@@ -1632,6 +1667,9 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         _mapFloorTileCancellation?.Cancel();
         _mapFloorTileCancellation = null;
+        _mapObjectPrototypeDiagnosticCancellation?.Cancel();
+        _mapObjectPrototypeDiagnosticCancellation = null;
+        _mapPrototypeResolver = null;
         _mapFloorBitmapCache.Dispose();
         if (!_isDisposed)
         {
@@ -1674,6 +1712,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
         MapObjectStatusDisplay = "MAP objects have not been read.";
         MapObjectDetailsDisplay = "Select a parsed object to inspect its raw fields.";
+        MapObjectPrototypeDiagnosticStatus =
+            "Select an Item or Scenery object to inspect its Fallout 2 prototype.";
+        MapObjectPrototypeDiagnosticDetails = string.Empty;
+        MapObjectPrototypeRawByteLines = [];
         _playbackTimer.Stop();
         _playback.SetFrameCounts([]);
         var previousBitmap = PreviewBitmap;
@@ -1747,7 +1789,155 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             OnPropertyChanged(nameof(SelectedMapObjectRecordIndex));
             MapObjectDetailsDisplay = placement?.Details
                 ?? "Select a parsed object to inspect its raw fields.";
+            UpdateMapObjectPrototypeDiagnostic(placement);
         }
+    }
+
+    private void UpdateMapObjectPrototypeDiagnostic(MapObjectPlacement? placement)
+    {
+        _mapObjectPrototypeDiagnosticCancellation?.Cancel();
+        _mapObjectPrototypeDiagnosticCancellation = null;
+        MapObjectPrototypeDiagnosticDetails = string.Empty;
+        MapObjectPrototypeRawByteLines = [];
+
+        if (placement is null)
+        {
+            MapObjectPrototypeDiagnosticStatus =
+                "Select an Item or Scenery object to inspect its Fallout 2 prototype.";
+            return;
+        }
+
+        MapObjectPrototypeDiagnosticDetails =
+            $"Selected object PID: 0x{unchecked((uint)placement.RawPid):X8}";
+        if (placement.PidTypeIdentifier is not (0 or 2))
+        {
+            MapObjectPrototypeDiagnosticStatus =
+                "Prototype diagnostics are supported only for Fallout 2 Item and Scenery objects.";
+            return;
+        }
+
+        var resolver = _mapPrototypeResolver;
+        if (resolver is null)
+        {
+            MapObjectPrototypeDiagnosticStatus =
+                "Prototype diagnostics require an open Fallout 2 DAT2 archive.";
+            return;
+        }
+
+        var cancellation = new CancellationTokenSource();
+        _mapObjectPrototypeDiagnosticCancellation = cancellation;
+        MapObjectPrototypeDiagnosticStatus = "Loading prototype diagnostics...";
+        _ = LoadMapObjectPrototypeDiagnosticAsync(
+            placement,
+            resolver,
+            cancellation);
+    }
+
+    private async Task LoadMapObjectPrototypeDiagnosticAsync(
+        MapObjectPlacement placement,
+        Fallout2PrototypeResolver resolver,
+        CancellationTokenSource cancellation)
+    {
+        var cancellationToken = cancellation.Token;
+        try
+        {
+            var diagnostic = await resolver.ResolveAsync(
+                placement.RawPid,
+                cancellationToken);
+            var byteLines = await Task.Run(
+                () => FormatPrototypeBytes(diagnostic.RawBytes, cancellationToken),
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!ReferenceEquals(_selectedMapObject, placement)
+                || !ReferenceEquals(_mapPrototypeResolver, resolver))
+            {
+                return;
+            }
+
+            MapObjectPrototypeDiagnosticStatus = diagnostic.Status;
+            MapObjectPrototypeDiagnosticDetails = FormatPrototypeDiagnosticDetails(diagnostic);
+            MapObjectPrototypeRawByteLines = byteLines;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (
+            exception is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            if (ReferenceEquals(_selectedMapObject, placement)
+                && ReferenceEquals(_mapPrototypeResolver, resolver))
+            {
+                MapObjectPrototypeDiagnosticStatus =
+                    $"Could not load prototype diagnostics: {exception.Message}";
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_mapObjectPrototypeDiagnosticCancellation, cancellation))
+            {
+                _mapObjectPrototypeDiagnosticCancellation = null;
+            }
+
+            cancellation.Dispose();
+        }
+    }
+
+    private static string FormatPrototypeDiagnosticDetails(Fallout2PrototypeDiagnostic diagnostic)
+    {
+        var fileName = diagnostic.VerifiedFileName is not null
+            ? $"Verified file: {diagnostic.VerifiedFileName}"
+            : diagnostic.ListedFileName is not null
+                ? $"Listed file (unverified): {diagnostic.ListedFileName}"
+                : "File: unavailable";
+        var prototypePid = diagnostic.PrototypePid is int pid
+            ? $"Prototype PID: 0x{unchecked((uint)pid):X8}"
+            : "Prototype PID: unavailable";
+        var subtype = diagnostic.Subtype is int value
+            ? $"Subtype at 0x20: {value}"
+            : "Subtype at 0x20: unavailable";
+        var fileSize = diagnostic.FileSize is long size
+            ? $"File size: {size:N0} bytes"
+            : "File size: unavailable";
+
+        return string.Join(
+            Environment.NewLine,
+            $"Selected object PID: 0x{unchecked((uint)diagnostic.RequestedPid):X8}",
+            fileName,
+            prototypePid,
+            subtype,
+            fileSize);
+    }
+
+    private static string[] FormatPrototypeBytes(
+        ReadOnlyMemory<byte> rawBytes,
+        CancellationToken cancellationToken)
+    {
+        const int bytesPerLine = 16;
+        var lineCount = (rawBytes.Length + bytesPerLine - 1) / bytesPerLine;
+        var lines = new string[lineCount];
+        for (var lineIndex = 0; lineIndex < lineCount; lineIndex++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var byteOffset = lineIndex * bytesPerLine;
+            var byteCount = Math.Min(bytesPerLine, rawBytes.Length - byteOffset);
+            var line = new StringBuilder(10 + byteCount * 3);
+            line.Append(byteOffset.ToString("X8", CultureInfo.InvariantCulture));
+            line.Append("  ");
+            for (var index = 0; index < byteCount; index++)
+            {
+                if (index > 0)
+                {
+                    line.Append(' ');
+                }
+
+                line.Append(rawBytes.Span[byteOffset + index].ToString("X2", CultureInfo.InvariantCulture));
+            }
+
+            lines[lineIndex] = line.ToString();
+        }
+
+        return lines;
     }
 
     private void MapObjectPlacements_CollectionChanged(

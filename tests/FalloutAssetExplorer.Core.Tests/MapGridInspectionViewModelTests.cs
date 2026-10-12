@@ -81,6 +81,43 @@ public sealed class MapGridInspectionViewModelTests
     }
 
     [Fact]
+    public void PrototypeDiagnostics_FollowSelectionChangesAndClearWhenDeselected()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var item = CreateMarkerPlacement(1, elevation: 0) with
+        {
+            RawPid = 0x00000023,
+            PidTypeIdentifier = 0
+        };
+        var scenery = CreateMarkerPlacement(2, elevation: 0) with
+        {
+            RawPid = 0x02000045,
+            PidTypeIdentifier = 2
+        };
+
+        viewModel.SelectedMapObject = item;
+
+        Assert.Contains("0x00000023", viewModel.MapObjectPrototypeDiagnosticDetails);
+        Assert.Equal(
+            "Prototype diagnostics require an open Fallout 2 DAT2 archive.",
+            viewModel.MapObjectPrototypeDiagnosticStatus);
+
+        viewModel.SelectedMapObject = scenery;
+
+        Assert.Contains("0x02000045", viewModel.MapObjectPrototypeDiagnosticDetails);
+        Assert.DoesNotContain("0x00000023", viewModel.MapObjectPrototypeDiagnosticDetails);
+        Assert.Empty(viewModel.MapObjectPrototypeRawByteLines);
+
+        viewModel.SelectedMapObject = null;
+
+        Assert.Equal(
+            "Select an Item or Scenery object to inspect its Fallout 2 prototype.",
+            viewModel.MapObjectPrototypeDiagnosticStatus);
+        Assert.Empty(viewModel.MapObjectPrototypeDiagnosticDetails);
+        Assert.Empty(viewModel.MapObjectPrototypeRawByteLines);
+    }
+
+    [Fact]
     public void FloorTileLayer_IsAddedWithoutChangingExistingDiagnosticLayerOrder()
     {
         using var viewModel = new ArchiveBrowserViewModel();
