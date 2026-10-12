@@ -146,6 +146,36 @@
                   IsHitTestVisible="True"
                   IsVisible="{Binding IsMapSquareGridVisible}"
                   AutomationProperties.Name="MAP raw tile-grid diagnostic" />
+              <local:MapFloorTileDiagnosticView
+                  x:Name="MapFloorTileView"
+                  MinHeight="260"
+                  Values="{Binding SelectedMapGridValues}"
+                  TileBitmaps="{Binding MapFloorTileBitmaps}"
+                  UnavailableFloorIds="{Binding UnavailableMapFloorIds}"
+                  Placements="{Binding MapObjectPlacements}"
+                  Elevation="{Binding SelectedMapElevationIndex}"
+                  SelectedObject="{Binding SelectedMapObject, Mode=OneWay}"
+                  SelectedIndex="{Binding SelectedMapGridIndex, Mode=TwoWay}"
+                  CellInspected="MapGridView_CellInspected"
+                  CellSelected="MapGridView_CellSelected"
+                  ObjectSelected="MapFloorTileView_ObjectSelected"
+                  RenderOptions.BitmapInterpolationMode="None"
+                  IsHitTestVisible="True"
+                  IsVisible="{Binding IsMapFloorTileLayerVisible}"
+                  AutomationProperties.Name="MAP floor tiles 100 by 100 diagnostic" />
+              <local:MapIsometricFloorView
+                  x:Name="MapIsometricFloorView"
+                  MinHeight="260"
+                  Values="{Binding SelectedMapGridValues}"
+                  TileBitmaps="{Binding MapFloorTileBitmaps}"
+                  AssetRevision="{Binding MapFloorTilesRevision}"
+                  Placements="{Binding MapObjectPlacements}"
+                  Elevation="{Binding SelectedMapElevationIndex}"
+                  ShowObjectMarkers="{Binding IsMapIsometricObjectMarkerLayerVisible}"
+                  RenderOptions.BitmapInterpolationMode="None"
+                  IsHitTestVisible="True"
+                  IsVisible="{Binding IsMapIsometricViewVisible}"
+                  AutomationProperties.Name="Isometric MAP floor tiles and object markers" />
               <local:MapHexGridDiagnosticView
                   x:Name="MapHexGridView"
                   MinHeight="260"
@@ -162,6 +192,20 @@
                   Text="This MAP has no square-grid data for this elevation."
                   TextWrapping="Wrap"
                   IsVisible="{Binding IsMapGridEmpty}" />
+              <TextBlock
+                  Margin="12"
+                  HorizontalAlignment="Center"
+                  VerticalAlignment="Center"
+                  Text="This MAP has no square-grid data for this elevation."
+                  TextWrapping="Wrap"
+                  IsVisible="{Binding IsMapFloorTileLayerEmpty}" />
+              <TextBlock
+                  Margin="12"
+                  HorizontalAlignment="Center"
+                  VerticalAlignment="Center"
+                  Text="This MAP has no square-grid data for this elevation."
+                  TextWrapping="Wrap"
+                  IsVisible="{Binding IsMapIsometricFloorLayerEmpty}" />
               <TextBlock
                   Margin="12"
                   HorizontalAlignment="Center"
@@ -200,6 +244,7 @@
                 Width="175"
                 ItemsSource="{Binding MapDiagnosticLayerOptions}"
                 SelectedIndex="{Binding SelectedMapDiagnosticLayerIndex}"
+                SelectionChanged="MapDiagnosticLayer_SelectionChanged"
                 AutomationProperties.Name="MAP diagnostic layer" />
             <TextBlock VerticalAlignment="Center" Text="Elevation" />
             <ComboBox
@@ -214,6 +259,18 @@
                 IsVisible="{Binding IsMapHexGridVisible}"
                 ToolTip.Tip="Fit placed objects of this elevation (wheel: zoom, right/middle drag: pan)"
                 AutomationProperties.Name="Fit hex view" />
+            <Button
+                Content="Fit"
+                Click="MapFloorFit_Click"
+                IsVisible="{Binding IsMapFloorTileLayerVisible}"
+                ToolTip.Tip="Fit the complete 100 by 100 floor grid (wheel: zoom, right/middle drag: pan)"
+                AutomationProperties.Name="Fit floor tile grid" />
+            <Button
+                Content="Fit"
+                Click="MapIsometricFloorFit_Click"
+                IsVisible="{Binding IsMapIsometricViewVisible}"
+                ToolTip.Tip="Fit the isometric floor tiles and object markers (wheel: zoom, right/middle drag: pan)"
+                AutomationProperties.Name="Fit isometric view" />
             <Button
                 Content="Center"
                 Click="MapHexCenter_Click"
@@ -271,6 +328,13 @@
               IsVisible="{Binding IsMapSquareGridVisible}"
               TextWrapping="Wrap" />
           <TextBlock
+              Grid.Row="5"
+              Foreground="#E7EAF0"
+              FontSize="12"
+              Text="{Binding MapGridCellDisplay}"
+              IsVisible="{Binding IsMapFloorTileLayerVisible}"
+              TextWrapping="Wrap" />
+          <TextBlock
               Grid.Row="6"
               Foreground="#AAB2BF"
               FontSize="12"
@@ -291,6 +355,28 @@
               Text="Hex markers are diagnostic only; repeat-click stacked markers to cycle records."
               IsVisible="{Binding IsMapHexGridVisible}"
               TextWrapping="Wrap" />
+          <StackPanel
+              Grid.Row="7"
+              IsVisible="{Binding IsMapFloorTileLayerVisible}"
+              Spacing="2">
+            <TextBlock
+                Foreground="#AAB2BF"
+                FontSize="12"
+                Text="{Binding MapFloorTilesStatusDisplay}"
+                TextWrapping="Wrap" />
+            <TextBlock
+                Foreground="#AAB2BF"
+                FontSize="11"
+                Text="Colored markers show the square floor cell sampled by CE gravity; click to select, repeat-click to cycle stacked objects."
+                TextWrapping="Wrap" />
+          </StackPanel>
+          <TextBlock
+            Grid.Row="7"
+            Foreground="#AAB2BF"
+            FontSize="12"
+            Text="{Binding MapFloorTilesStatusDisplay}"
+            IsVisible="{Binding IsMapIsometricFloorLayerVisible}"
+            TextWrapping="Wrap" />
           <TextBlock
               Grid.Row="8"
               Foreground="#AAB2BF"

@@ -25,6 +25,47 @@ public sealed class MapHexGridDiagnosticViewTests
     }
 
     [Theory]
+    [InlineData(100, 100, 99, 100, -16, 12)]
+    [InlineData(100, 100, 101, 100, 32, 0)]
+    [InlineData(101, 100, 100, 100, -32, 0)]
+    [InlineData(101, 100, 102, 100, 16, -12)]
+    [InlineData(0, 0, 199, 199, 7968, 1200)]
+    [InlineData(199, 199, 0, 0, -7968, -1200)]
+    public void CenteredTransform_MatchesTileSetCenterParityAndBoundaryOffsets(
+        int centerX,
+        int centerY,
+        int targetX,
+        int targetY,
+        double expectedOffsetX,
+        double expectedOffsetY)
+    {
+        var current = new MapHexViewTransform(1, 0, 0);
+
+        Assert.True(MapHexGridDiagnosticGeometry.TryGetCenteredTransform(
+            current,
+            centerX,
+            centerY,
+            800,
+            500,
+            out var centered));
+        Assert.True(MapHexGridDiagnosticGeometry.TryGetScreenPosition(
+            centerX,
+            centerY,
+            centered,
+            out var centerPosition));
+        Assert.True(MapHexGridDiagnosticGeometry.TryGetScreenPosition(
+            targetX,
+            targetY,
+            centered,
+            out var targetPosition));
+
+        Assert.Equal(new Point(400, 250), centerPosition);
+        Assert.Equal(expectedOffsetX, targetPosition.X - centerPosition.X);
+        Assert.Equal(expectedOffsetY, targetPosition.Y - centerPosition.Y);
+        Assert.Equal(current.Scale, centered.Scale);
+    }
+
+    [Theory]
     [InlineData(0, 0)]
     [InlineData(199, 199)]
     public void TryGetScreenPosition_AcceptsGridBoundaries(int hexX, int hexY)
@@ -101,11 +142,15 @@ public sealed class MapHexGridDiagnosticViewTests
             CreatePlacement(recordIndex: 0, elevation: 0, hexX: 10, hexY: 20),
             CreatePlacement(recordIndex: 1, elevation: 1, hexX: 10, hexY: 20),
             CreatePlacement(recordIndex: 2, elevation: 0, hexX: null, hexY: null)
+                with { RawHexIndex = -1 }
         };
 
         var visible = MapHexGridDiagnosticGeometry.GetPlacedPlacements(placements, 0);
 
         Assert.Equal(new[] { 0 }, visible.Select(placement => placement.RecordIndex));
+        Assert.Null(placements[2].HexX);
+        Assert.Null(placements[2].HexY);
+        Assert.Equal(-1, placements[2].RawHexIndex);
         Assert.Empty(MapHexGridDiagnosticGeometry.GetPlacedPlacements(placements, null));
     }
 

@@ -8,6 +8,8 @@ namespace FalloutAssetExplorer.Core.Tests;
 public sealed class Fallout2MapArchiveDiagnosticTests(ITestOutputHelper output)
 {
     private const int MaximumReportedStopReasons = 10;
+    private const int HiddenObjectFlag = 0x00000001;
+    private const int FlatObjectFlag = 0x00000008;
 
     [Fallout2MasterDatFact]
     public async Task DecodeKnownMapsFromFallout2MasterArchive()
@@ -74,6 +76,11 @@ public sealed class Fallout2MapArchiveDiagnosticTests(ITestOutputHelper output)
             .ToArray();
         var results = new List<MapAuditResult>();
         var excludedEntryCount = 0;
+        long decodedObjectCount = 0;
+        long hiddenObjectCount = 0;
+        long flatObjectCount = 0;
+        var flagCountsByPidType =
+            new Dictionary<int, (string TypeName, long ObjectCount, long HiddenCount, long FlatCount)>();
 
         foreach (var entry in mapEntries)
         {
@@ -134,6 +141,27 @@ public sealed class Fallout2MapArchiveDiagnosticTests(ITestOutputHelper output)
             try
             {
                 var decoded = await MapObjectPlacementDecoder.DecodeAsync(mapBytes, header, archive);
+                WriteObjectDiagnostics(normalizedPath, decoded.Objects);
+                decodedObjectCount += decoded.Objects.Count;
+                hiddenObjectCount += decoded.Objects.LongCount(
+                    placement => (placement.RawObjectFlags & HiddenObjectFlag) != 0);
+                flatObjectCount += decoded.Objects.LongCount(
+                    placement => (placement.RawObjectFlags & FlatObjectFlag) != 0);
+                foreach (var typeGroup in decoded.Objects.GroupBy(placement => placement.PidTypeIdentifier))
+                {
+                    var typeName = typeGroup.First().ObjectTypeDisplay;
+                    var current = flagCountsByPidType.GetValueOrDefault(
+                        typeGroup.Key,
+                        (typeName, 0, 0, 0));
+                    flagCountsByPidType[typeGroup.Key] = (
+                        typeName,
+                        current.ObjectCount + typeGroup.LongCount(),
+                        current.HiddenCount + typeGroup.LongCount(
+                            placement => (placement.RawObjectFlags & HiddenObjectFlag) != 0),
+                        current.FlatCount + typeGroup.LongCount(
+                            placement => (placement.RawObjectFlags & FlatObjectFlag) != 0));
+                }
+
                 var stoppingRecord = decoded.Objects.FirstOrDefault(
                     placement => placement.UnsupportedReason is not null);
                 results.Add(MapAuditResult.Decoded(
@@ -202,6 +230,144 @@ public sealed class Fallout2MapArchiveDiagnosticTests(ITestOutputHelper output)
 
         output.WriteLine(
             "The DAT2 copy API rejects entries larger than 512 MiB; MAP decoding requires the current entry in memory.");
+
+        var decodedMapCount = results.Count(result => result.Outcome == MapAuditOutcome.Decoded);
+        output.WriteLine("Global object flag summary");
+        output.WriteLine($"MAP entries found: {mapEntries.Length}");
+        output.WriteLine(
+            $"MAPs successfully decoded (complete + incomplete): {FormatRate(decodedMapCount, mapEntries.Length)}");
+        output.WriteLine(
+            $"Complete MAP decodings: {FormatRate(completeCount, mapEntries.Length)}");
+        output.WriteLine(
+            $"Incomplete MAP decodings: {FormatRate(incompleteCount, mapEntries.Length)}");
+        output.WriteLine(
+            $"MAPs not successfully decoded: {FormatRate(mapEntries.Length - decodedMapCount, mapEntries.Length)}");
+        output.WriteLine($"Successfully decoded objects (including partial MAPs): {decodedObjectCount}");
+        output.WriteLine(
+            $"OBJECT_HIDDEN (0x{HiddenObjectFlag:X2}): {FormatRate(hiddenObjectCount, decodedObjectCount)}");
+        output.WriteLine(
+            $"OBJECT_FLAT (0x{FlatObjectFlag:X2}): {FormatRate(flatObjectCount, decodedObjectCount)}");
+        output.WriteLine("OBJECT_HIDDEN/OBJECT_FLAT by PID type (object count and flag rates):");
+        if (flagCountsByPidType.Count == 0)
+        {
+            output.WriteLine("  none (no decoded objects)");
+        }
+        else
+        {
+            foreach (var type in flagCountsByPidType.OrderBy(pair => pair.Key))
+            {
+                output.WriteLine(
+                    $"  {type.Value.TypeName} (PID type {type.Key}), objects {type.Value.ObjectCount}: "
+                    + $"OBJECT_HIDDEN {FormatRate(type.Value.HiddenCount, type.Value.ObjectCount)}, "
+                    + $"OBJECT_FLAT {FormatRate(type.Value.FlatCount, type.Value.ObjectCount)}");
+            }
+        }
+    }
+
+    private void WriteObjectDiagnostics(
+        string mapPath,
+        IReadOnlyList<MapObjectPlacement> placements)
+    {
+        var objectCount = placements.Count;
+        var elevationPairs = placements
+            .GroupBy(placement => (placement.ElevationGroup, placement.StoredElevation))
+            .OrderBy(group => group.Key.ElevationGroup)
+            .ThenBy(group => group.Key.StoredElevation)
+            .ToArray();
+        var nonzeroOffsetCount = placements.Count(
+            placement => placement.RawOffsetX != 0 || placement.RawOffsetY != 0);
+        var hiddenCount = placements.Count(
+            placement => (placement.RawObjectFlags & HiddenObjectFlag) != 0);
+        var flatCount = placements.Count(
+            placement => (placement.RawObjectFlags & FlatObjectFlag) != 0);
+        var unassignedTileCount = placements.Count(placement => placement.RawHexIndex == -1);
+        var outOfRangeTileIndices = placements
+            .Where(placement => placement.RawHexIndex != -1
+                && (uint)placement.RawHexIndex >= MapObjectPlacementDecoder.HexGridTileCount)
+            .GroupBy(placement => placement.RawHexIndex)
+            .OrderBy(group => group.Key)
+            .ToArray();
+        var outOfRangeTileCount = outOfRangeTileIndices.Sum(group => group.Count());
+
+        output.WriteLine($"Object diagnostics: {mapPath}");
+        output.WriteLine(
+            $"Decoded object records: {objectCount} (denominator for record statistics; includes inventory records)");
+        output.WriteLine(
+            $"ElevationGroup/StoredElevation mismatches: "
+            + $"{FormatRate(placements.Count(placement => placement.ElevationGroup != placement.StoredElevation), objectCount)}");
+        output.WriteLine("ElevationGroup/StoredElevation pairs (count / all decoded records):");
+        if (elevationPairs.Length == 0)
+        {
+            output.WriteLine("  none");
+        }
+        else
+        {
+            foreach (var pair in elevationPairs)
+            {
+                output.WriteLine(
+                    $"  {pair.Key.ElevationGroup}/{pair.Key.StoredElevation}: "
+                    + $"{FormatRate(pair.Count(), objectCount)}");
+            }
+        }
+
+        WriteDistribution("RawOffsetX", placements.Select(placement => placement.RawOffsetX), objectCount);
+        WriteDistribution("RawOffsetY", placements.Select(placement => placement.RawOffsetY), objectCount);
+        output.WriteLine(
+            $"Objects with either nonzero raw offset: {FormatRate(nonzeroOffsetCount, objectCount)}");
+        output.WriteLine(
+            $"OBJECT_HIDDEN (RawObjectFlags & 0x{HiddenObjectFlag:X8}): {FormatRate(hiddenCount, objectCount)}");
+        output.WriteLine(
+            $"OBJECT_FLAT (RawObjectFlags & 0x{FlatObjectFlag:X8}): {FormatRate(flatCount, objectCount)}");
+        output.WriteLine("OBJECT_HIDDEN/OBJECT_FLAT by PID type (count / records of that type):");
+        foreach (var typeGroup in placements
+            .GroupBy(placement => placement.PidTypeIdentifier)
+            .OrderBy(group => group.Key))
+        {
+            var typeName = typeGroup.First().ObjectTypeDisplay;
+            var typeCount = typeGroup.Count();
+            var typeHiddenCount = typeGroup.Count(
+                placement => (placement.RawObjectFlags & HiddenObjectFlag) != 0);
+            var typeFlatCount = typeGroup.Count(
+                placement => (placement.RawObjectFlags & FlatObjectFlag) != 0);
+            output.WriteLine(
+                $"  {typeName} (PID type {typeGroup.Key}): "
+                + $"OBJECT_HIDDEN {FormatRate(typeHiddenCount, typeCount)}, "
+                + $"OBJECT_FLAT {FormatRate(typeFlatCount, typeCount)}");
+        }
+
+        output.WriteLine(
+            $"RawHexIndex == -1 (no tile assigned): {FormatRate(unassignedTileCount, objectCount)}");
+        output.WriteLine(
+            $"Out-of-range RawHexIndex values (excluding -1): {FormatRate(outOfRangeTileCount, objectCount)}");
+        foreach (var invalidIndex in outOfRangeTileIndices)
+        {
+            output.WriteLine($"  RawHexIndex {invalidIndex.Key}: {invalidIndex.Count()}");
+        }
+    }
+
+    private void WriteDistribution(string fieldName, IEnumerable<int> values, int denominator)
+    {
+        output.WriteLine($"{fieldName} distribution (count / all decoded records):");
+        var distribution = values
+            .GroupBy(value => value)
+            .OrderBy(group => group.Key)
+            .ToArray();
+        if (distribution.Length == 0)
+        {
+            output.WriteLine("  none");
+            return;
+        }
+
+        foreach (var value in distribution)
+        {
+            output.WriteLine($"  {value.Key}: {FormatRate(value.Count(), denominator)}");
+        }
+    }
+
+    private static string FormatRate(long count, long denominator)
+    {
+        var percentage = denominator == 0 ? 0 : (double)count * 100 / denominator;
+        return $"{count}/{denominator} ({percentage:F2}%)";
     }
 
     private void WriteMapAuditResult(MapAuditResult result)

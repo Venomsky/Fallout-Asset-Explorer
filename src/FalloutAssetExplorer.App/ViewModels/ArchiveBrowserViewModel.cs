@@ -7,6 +7,7 @@ using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
 using Avalonia.Threading;
+using FalloutAssetExplorer.App.Views;
 using FalloutAssetExplorer.Core;
 
 namespace FalloutAssetExplorer.App.ViewModels;
@@ -15,6 +16,9 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 {
     private static readonly string[] SupportedExtensions = [".FRM", ".MAP", ".PRO", ".LST", ".INT"];
     private static readonly string[] DirectionNames = ["NE", "E", "SE", "SW", "W", "NW"];
+    private const int MapFloorTilesDiagnosticLayerIndex = 2;
+    private const int MapIsometricFloorTilesDiagnosticLayerIndex = 3;
+    private const int MapIsometricObjectMarkersDiagnosticLayerIndex = 4;
 
     private string _searchText = string.Empty;
     private string _selectedExtension = ArchiveEntryFilter.AllExtensions;
@@ -29,22 +33,30 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private readonly FrmPlaybackController _playback = new();
     private readonly DispatcherTimer _playbackTimer;
     private CancellationTokenSource? _previewCancellation;
+    private CancellationTokenSource? _mapFloorTileCancellation;
     private FrmDocument? _previewDocument;
     private Bitmap? _previewBitmap;
     private FalloutPalette? _falloutPalette;
     private string? _gameDataDirectory;
     private byte[] _renderBuffer = [];
     private MapTileGridData? _mapTileGridData;
+    private MapScopedAssetCache<Bitmap> _mapFloorBitmapCache =
+        new(MapScopedAssetCache<Bitmap>.DefaultByteLimit, bitmap => bitmap.Dispose());
+    private readonly Dictionary<uint, Bitmap> _mapFloorTileBitmaps = [];
+    private readonly HashSet<uint> _unavailableMapFloorIds = [];
     private MapObjectPlacement? _selectedMapObject;
     private int? _selectedMapElevationIndex;
     private int _selectedMapDiagnosticLayerIndex;
     private bool _isMapInspector;
     private bool _isMapGridDataLoaded;
+    private bool _mapFloorTilesLoaded;
+    private int _mapFloorTilesRevision;
     private int? _selectedMapGridIndex;
     private string _mapGridCellDisplay = "Click a grid cell to keep its square-grid coordinates and raw value selected.";
     private string _mapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
     private string _mapObjectStatusDisplay = "MAP objects have not been read.";
     private string _mapObjectDetailsDisplay = "Select a parsed object to inspect its raw fields.";
+    private string _mapFloorTilesStatusDisplay = "Select the floor-tile diagnostic layer to load this map's tiles.";
     private string _previewMessage = "Select a .FRM or .MAP entry to inspect.";
     private string _previewDetails = "Select a .FRM or .MAP entry to inspect.";
     private string _previewTitle = "Resource Inspector";
@@ -86,7 +98,13 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     public ObservableCollection<int> MapElevationOptions { get; } = [];
 
     public ObservableCollection<string> MapDiagnosticLayerOptions { get; } =
-        ["Square tiles 100 x 100", "Object hexes 200 x 200"];
+        [
+            "Square tiles 100 x 100",
+            "Object hexes 200 x 200",
+            "Floor tiles 100 x 100",
+            "Floor tiles isometric (experimental)",
+            "Object markers isometric"
+        ];
 
     public ObservableCollection<MapObjectPlacement> MapObjectPlacements { get; } = [];
 
@@ -323,6 +341,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 OnPropertyChanged(nameof(HasMapGrid));
                 OnPropertyChanged(nameof(IsMapGridEmpty));
                 OnPropertyChanged(nameof(IsMapHexGridEmpty));
+                OnPropertyChanged(nameof(IsMapFloorTileLayerVisible));
+                OnPropertyChanged(nameof(IsMapFloorTileLayerEmpty));
+                OnPropertyChanged(nameof(IsMapIsometricFloorLayerVisible));
+                OnPropertyChanged(nameof(IsMapIsometricFloorLayerEmpty));
+                OnPropertyChanged(nameof(IsMapIsometricObjectMarkerLayerVisible));
+                OnPropertyChanged(nameof(IsMapIsometricViewVisible));
                 UpdateSelectedMapGridDisplay();
                 MapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
             }
@@ -345,6 +369,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 OnPropertyChanged(nameof(IsMapSquareGridVisible));
                 OnPropertyChanged(nameof(IsMapHexGridVisible));
                 OnPropertyChanged(nameof(IsMapHexGridEmpty));
+                OnPropertyChanged(nameof(IsMapFloorTileLayerVisible));
+                OnPropertyChanged(nameof(IsMapFloorTileLayerEmpty));
+                OnPropertyChanged(nameof(IsMapIsometricFloorLayerVisible));
+                OnPropertyChanged(nameof(IsMapIsometricFloorLayerEmpty));
+                OnPropertyChanged(nameof(IsMapIsometricObjectMarkerLayerVisible));
+                OnPropertyChanged(nameof(IsMapIsometricViewVisible));
             }
         }
     }
@@ -384,6 +414,45 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     public bool IsMapHexGridVisible =>
         _isMapInspector && _selectedMapDiagnosticLayerIndex == 1;
+
+    public bool IsMapFloorTileLayerVisible =>
+        _isMapInspector && _selectedMapDiagnosticLayerIndex == MapFloorTilesDiagnosticLayerIndex && HasMapGrid;
+
+    public bool IsMapFloorTileLayerEmpty =>
+        _isMapInspector
+        && _selectedMapDiagnosticLayerIndex == MapFloorTilesDiagnosticLayerIndex
+        && _isMapGridDataLoaded
+        && !HasMapGrid;
+
+    public bool IsMapIsometricFloorLayerVisible =>
+        _isMapInspector
+        && _selectedMapDiagnosticLayerIndex == MapIsometricFloorTilesDiagnosticLayerIndex
+        && HasMapGrid;
+
+    public bool IsMapIsometricFloorLayerEmpty =>
+        _isMapInspector
+        && _selectedMapDiagnosticLayerIndex == MapIsometricFloorTilesDiagnosticLayerIndex
+        && _isMapGridDataLoaded
+        && !HasMapGrid;
+
+    public bool IsMapIsometricObjectMarkerLayerVisible =>
+        _isMapInspector
+        && _selectedMapDiagnosticLayerIndex == MapIsometricObjectMarkersDiagnosticLayerIndex;
+
+    public bool IsMapIsometricViewVisible =>
+        IsMapIsometricFloorLayerVisible || IsMapIsometricObjectMarkerLayerVisible;
+
+    public IReadOnlyDictionary<uint, Bitmap> MapFloorTileBitmaps => _mapFloorTileBitmaps;
+
+    public int MapFloorTilesRevision => _mapFloorTilesRevision;
+
+    public IReadOnlySet<uint> UnavailableMapFloorIds => _unavailableMapFloorIds;
+
+    public string MapFloorTilesStatusDisplay
+    {
+        get => _mapFloorTilesStatusDisplay;
+        private set => SetProperty(ref _mapFloorTilesStatusDisplay, value);
+    }
 
     public bool IsMapHexGridEmpty =>
         IsMapHexGridVisible
@@ -427,12 +496,14 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 SelectedMapDiagnosticLayerIndex = 1;
             }
 
-            if (SetProperty(ref _selectedMapObject, value))
-            {
-                MapObjectDetailsDisplay = value?.Details
-                    ?? "Select a parsed object to inspect its raw fields.";
-            }
+            SetSelectedMapObject(value);
         }
+    }
+
+    public void SelectMapObjectFromFloorMarker(MapObjectPlacement placement)
+    {
+        ArgumentNullException.ThrowIfNull(placement);
+        SetSelectedMapObject(placement);
     }
 
     public string MapObjectDetailsDisplay
@@ -655,6 +726,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         _playbackTimer.Tick -= PlaybackTimer_Tick;
         _previewCancellation?.Cancel();
         _previewCancellation = null;
+        _mapFloorTileCancellation?.Cancel();
         ClearPreview();
     }
 
@@ -799,6 +871,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 OnPropertyChanged(nameof(IsMapSquareGridVisible));
                 OnPropertyChanged(nameof(IsMapHexGridVisible));
                 OnPropertyChanged(nameof(IsMapHexGridEmpty));
+                OnPropertyChanged(nameof(IsMapFloorTileLayerVisible));
+                OnPropertyChanged(nameof(IsMapFloorTileLayerEmpty));
+                OnPropertyChanged(nameof(IsMapIsometricFloorLayerVisible));
+                OnPropertyChanged(nameof(IsMapIsometricFloorLayerEmpty));
+                OnPropertyChanged(nameof(IsMapIsometricObjectMarkerLayerVisible));
+                OnPropertyChanged(nameof(IsMapIsometricViewVisible));
                 UpdateSelectedMapGridDisplay();
                 MapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
                 PreviewMessage = selectedEntry.Path;
@@ -927,6 +1005,196 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         SelectedMapGridIndex = serializedIndex;
     }
 
+    public async Task PrepareMapFloorTilesAsync()
+    {
+        if (_isDisposed
+            || !IsMapInspector
+            || _selectedMapDiagnosticLayerIndex is not (
+                MapFloorTilesDiagnosticLayerIndex
+                or MapIsometricFloorTilesDiagnosticLayerIndex
+                or MapIsometricObjectMarkersDiagnosticLayerIndex)
+            || _mapFloorTilesLoaded
+            || _mapFloorTileCancellation is not null)
+        {
+            return;
+        }
+
+        var archive = _archive;
+        var mapTileGridData = _mapTileGridData;
+        if (archive is null || mapTileGridData is null)
+        {
+            MapFloorTilesStatusDisplay = "No decoded MAP tile grids are available.";
+            return;
+        }
+
+        using var cancellation = new CancellationTokenSource();
+        _mapFloorTileCancellation = cancellation;
+        MapFloorTilesStatusDisplay = "Resolving floor tile IDs and loading unique FRM assets...";
+        var cancellationToken = cancellation.Token;
+
+        try
+        {
+            if (archive.Game != FalloutGame.Fallout2 || archive.Format != ArchiveFormat.Dat2)
+            {
+                _mapFloorTilesLoaded = true;
+                MapFloorTilesStatusDisplay = "Floor tile asset resolution requires a Fallout 2 DAT2 archive.";
+                return;
+            }
+
+            var floorIds = MapFloorTileDiagnosticGeometry.GetDrawableFloorIds(
+                mapTileGridData.Grids.SelectMany(grid => grid.RawValues));
+            if (floorIds.Count == 0)
+            {
+                _mapFloorTilesLoaded = true;
+                MapFloorTilesStatusDisplay = "This map has no drawable floor IDs (render-suppressed cells and CE empty-grid IDs are excluded).";
+                return;
+            }
+
+            var resolutions = await Fallout2TileAssetResolver.ResolveFloorsAsync(
+                archive,
+                floorIds,
+                cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var paletteResolution = await ResolvePaletteAsync(archive, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var palette = paletteResolution.Palette;
+            if (palette is null)
+            {
+                foreach (var floorId in floorIds)
+                {
+                    _unavailableMapFloorIds.Add(checked((uint)floorId));
+                }
+
+                _mapFloorTilesLoaded = true;
+                PaletteStatus = paletteResolution.Diagnostic
+                    ?? "No Fallout palette is available; floor tiles cannot be color-decoded.";
+                MapFloorTilesStatusDisplay =
+                    $"Could not render {floorIds.Count} distinct floor IDs because no Fallout palette is available.";
+                return;
+            }
+
+            _falloutPalette = palette;
+            PaletteStatus = archive.Game == FalloutGame.Fallout2
+                ? $"Fallout 2 palette applied from {paletteResolution.Source ?? "the available game data"}; visual color match is not verified."
+                : $"Fallout palette applied from {paletteResolution.Source ?? "the available game data"}.";
+
+            var failures = new List<string>();
+            foreach (var floorId in floorIds)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var floorIdKey = checked((uint)floorId);
+                if (!resolutions.TryGetValue(floorId, out var resolution) || !resolution.Success)
+                {
+                    _unavailableMapFloorIds.Add(floorIdKey);
+                    failures.Add($"ID {floorId}: {resolution?.Error ?? "no resolver result"}");
+                    continue;
+                }
+
+                if (_mapFloorBitmapCache.TryGet(resolution.ResourcePath!, out var cachedBitmap)
+                    && cachedBitmap is not null)
+                {
+                    _mapFloorTileBitmaps[floorIdKey] = cachedBitmap;
+                    continue;
+                }
+
+                if (resolution.Entry!.UncompressedSize is <= 0 or > FrmDecoder.MaximumFileSize)
+                {
+                    _unavailableMapFloorIds.Add(floorIdKey);
+                    failures.Add($"ID {floorId}: FRM size is outside the supported preview limit.");
+                    continue;
+                }
+
+                try
+                {
+                    using var buffer = new MemoryStream(checked((int)resolution.Entry.UncompressedSize));
+                    await archive.CopyEntryToAsync(resolution.Entry, buffer, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (buffer.Length != resolution.Entry.UncompressedSize)
+                    {
+                        throw new InvalidDataException(
+                            $"FRM entry declares {resolution.Entry.UncompressedSize} bytes but {buffer.Length} bytes were read.");
+                    }
+
+                    var document = await Task.Run(
+                        () => FrmDecoder.Decode(buffer.GetBuffer().AsMemory(0, checked((int)buffer.Length))),
+                        cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (document.Directions.Count == 0 || document.Directions[0].Frames.Count == 0)
+                    {
+                        throw new InvalidDataException("FRM has no frame in its first direction.");
+                    }
+
+                    var frame = document.Directions[0].Frames[0];
+                    var bitmap = CreateTileBitmap(frame, palette);
+                    var bitmapSize = checked((long)frame.Width * frame.Height * 4);
+                    if (!_mapFloorBitmapCache.TryAdd(
+                            resolution.ResourcePath!,
+                            bitmap,
+                            bitmapSize,
+                            out var cacheError))
+                    {
+                        bitmap.Dispose();
+                        _unavailableMapFloorIds.Add(floorIdKey);
+                        failures.Add($"ID {floorId}: {cacheError}");
+                        continue;
+                    }
+
+                    _mapFloorTileBitmaps[floorIdKey] = bitmap;
+                }
+                catch (Exception exception) when (
+                    exception is InvalidDataException
+                    or IOException
+                    or UnauthorizedAccessException
+                    or ArgumentException
+                    or NotSupportedException
+                    or OverflowException
+                    or InvalidOperationException)
+                {
+                    _unavailableMapFloorIds.Add(floorIdKey);
+                    failures.Add($"ID {floorId}: {exception.Message}");
+                }
+            }
+
+            _mapFloorTilesLoaded = true;
+            MapFloorTilesStatusDisplay = failures.Count == 0
+                ? $"Loaded {_mapFloorTileBitmaps.Count:N0} of {floorIds.Count:N0} distinct drawable floor IDs; bitmap cache uses {_mapFloorBitmapCache.CachedBytes / (1024 * 1024):N0} MiB. Visual match is not verified."
+                : $"Loaded {_mapFloorTileBitmaps.Count:N0} of {floorIds.Count:N0} distinct drawable floor IDs; {_unavailableMapFloorIds.Count:N0} unavailable. {string.Join(" | ", failures.Take(3))}";
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception exception) when (
+            exception is InvalidDataException
+            or IOException
+            or UnauthorizedAccessException
+            or ArgumentException
+            or NotSupportedException
+            or InvalidOperationException)
+        {
+            _mapFloorTilesLoaded = true;
+            if (_mapTileGridData is not null)
+            {
+                foreach (var floorId in MapFloorTileDiagnosticGeometry.GetDrawableFloorIds(
+                             _mapTileGridData.Grids.SelectMany(grid => grid.RawValues)))
+                {
+                    _unavailableMapFloorIds.Add(checked((uint)floorId));
+                }
+            }
+
+            MapFloorTilesStatusDisplay = $"Could not load floor tiles: {exception.Message}";
+        }
+        finally
+        {
+            if (ReferenceEquals(_mapFloorTileCancellation, cancellation))
+            {
+                _mapFloorTileCancellation = null;
+            }
+
+            NotifyMapFloorTileAssetsChanged();
+        }
+    }
+
     public void UpdateSelectionCount(int count)
     {
         if (count < 0)
@@ -1050,6 +1318,38 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         OnPropertyChanged(nameof(SuggestedPngFileName));
     }
 
+    private static Bitmap CreateTileBitmap(FrmFrame frame, FalloutPalette palette)
+    {
+        var byteCount = checked(frame.Pixels.Length * 4);
+        var rgba = new byte[byteCount];
+        palette.CopyRgba(frame, rgba);
+        var bitmap = new WriteableBitmap(
+            new PixelSize(frame.Width, frame.Height),
+            new Vector(96, 96),
+            PixelFormat.Rgba8888,
+            AlphaFormat.Premul);
+
+        try
+        {
+            using var framebuffer = bitmap.Lock();
+            for (var row = 0; row < frame.Height; row++)
+            {
+                System.Runtime.InteropServices.Marshal.Copy(
+                    rgba,
+                    row * frame.Width * 4,
+                    framebuffer.Address + row * framebuffer.RowBytes,
+                    frame.Width * 4);
+            }
+
+            return bitmap;
+        }
+        catch
+        {
+            bitmap.Dispose();
+            throw;
+        }
+    }
+
     private void PlaybackTimer_Tick(object? sender, EventArgs e)
     {
         if (_isDisposed)
@@ -1150,6 +1450,21 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     private void ClearPreview()
     {
+        _mapFloorTileCancellation?.Cancel();
+        _mapFloorTileCancellation = null;
+        _mapFloorBitmapCache.Dispose();
+        if (!_isDisposed)
+        {
+            _mapFloorBitmapCache = new MapScopedAssetCache<Bitmap>(
+                MapScopedAssetCache<Bitmap>.DefaultByteLimit,
+                bitmap => bitmap.Dispose());
+        }
+
+        _mapFloorTileBitmaps.Clear();
+        _unavailableMapFloorIds.Clear();
+        _mapFloorTilesLoaded = false;
+        MapFloorTilesStatusDisplay = "Select the floor-tile diagnostic layer to load this map's tiles.";
+        NotifyMapFloorTileAssetsChanged();
         _mapTileGridData = null;
         MapObjectPlacements.Clear();
         SelectedMapObject = null;
@@ -1169,6 +1484,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         OnPropertyChanged(nameof(IsMapSquareGridVisible));
         OnPropertyChanged(nameof(IsMapHexGridVisible));
         OnPropertyChanged(nameof(IsMapHexGridEmpty));
+        OnPropertyChanged(nameof(IsMapFloorTileLayerVisible));
+        OnPropertyChanged(nameof(IsMapFloorTileLayerEmpty));
+        OnPropertyChanged(nameof(IsMapIsometricFloorLayerVisible));
+        OnPropertyChanged(nameof(IsMapIsometricFloorLayerEmpty));
+        OnPropertyChanged(nameof(IsMapIsometricObjectMarkerLayerVisible));
+        OnPropertyChanged(nameof(IsMapIsometricViewVisible));
         MapGridCellDisplay = "Click a grid cell to keep its square-grid coordinates and raw value selected.";
         MapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
         MapObjectStatusDisplay = "MAP objects have not been read.";
@@ -1203,8 +1524,22 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
 
         var (x, y) = MapTileGridDecoder.GetSquareGridCoordinates(index);
+        var rawValue = values[index];
+        var fields = new MapGridCellValueFields(rawValue);
+        var floorIdNote = fields.FloorArtId == 1
+            ? " (CE empty-grid check treats ID 1 as no tile)"
+            : string.Empty;
+        var roofIdNote = fields.RoofArtId == 1
+            ? " (CE roof renderer skips ID 1)"
+            : string.Empty;
         MapGridCellDisplay =
-            $"Selected | Elevation slot {_selectedMapElevationIndex} | Square-grid ({x}, {y}) | Serialized index {index} | Raw value 0x{values[index]:X8}";
+            $"Selected | Elevation slot {_selectedMapElevationIndex} | Square-grid ({x}, {y}) | Serialized index {index} | Raw value 0x{rawValue:X8}"
+            + Environment.NewLine
+            + $"Floor tile ID 0x{fields.FloorArtId:X3}{floorIdNote}; flag nibble 0x{fields.FloorFlagNibble:X1}; bit 12 "
+            + (fields.FloorRenderSuppressionBitIsSet ? "set (CE skips floor draw)" : "clear (CE allows floor draw)")
+            + Environment.NewLine
+            + $"Roof tile ID 0x{fields.RoofArtId:X3}{roofIdNote}; flag nibble 0x{fields.RoofFlagNibble:X1}; bit 28 "
+            + (fields.RoofRenderSuppressionBitIsSet ? "set (CE skips roof draw)" : "clear (CE allows roof draw)");
     }
 
     private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
@@ -1217,6 +1552,27 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         field = value;
         OnPropertyChanged(propertyName);
         return true;
+    }
+
+    private void SetSelectedMapObject(MapObjectPlacement? placement)
+    {
+        if (SetProperty(ref _selectedMapObject, placement, nameof(SelectedMapObject)))
+        {
+            MapObjectDetailsDisplay = placement?.Details
+                ?? "Select a parsed object to inspect its raw fields.";
+        }
+    }
+
+    private void NotifyMapFloorTileAssetsChanged()
+    {
+        unchecked
+        {
+            _mapFloorTilesRevision++;
+        }
+
+        OnPropertyChanged(nameof(MapFloorTileBitmaps));
+        OnPropertyChanged(nameof(UnavailableMapFloorIds));
+        OnPropertyChanged(nameof(MapFloorTilesRevision));
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>

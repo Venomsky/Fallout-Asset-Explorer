@@ -105,9 +105,35 @@ public partial class MainWindow : Window
         }
     }
 
+    private void MapFloorTileView_ObjectSelected(
+        object? sender,
+        MapObjectPlacementSelectedEventArgs e)
+    {
+        if (DataContext is ArchiveBrowserViewModel viewModel)
+        {
+            viewModel.SelectMapObjectFromFloorMarker(e.Placement);
+        }
+    }
+
+    private async void MapDiagnosticLayer_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ComboBox combo
+            && combo.SelectedIndex is 2 or 3 or 4
+            && DataContext is ArchiveBrowserViewModel viewModel)
+        {
+            viewModel.SelectedMapDiagnosticLayerIndex = combo.SelectedIndex;
+            await viewModel.PrepareMapFloorTilesAsync();
+        }
+    }
+
     private void MapHexFit_Click(object? sender, RoutedEventArgs e) => MapHexGridView.FitToView();
 
     private void MapHexCenter_Click(object? sender, RoutedEventArgs e) => MapHexGridView.CenterOnSelection();
+
+    private void MapFloorFit_Click(object? sender, RoutedEventArgs e) => MapFloorTileView.FitToView();
+
+    private void MapIsometricFloorFit_Click(object? sender, RoutedEventArgs e) =>
+        MapIsometricFloorView.FitToView();
 
     private async void ExtractSelected_Click(object? sender, RoutedEventArgs e)
     {

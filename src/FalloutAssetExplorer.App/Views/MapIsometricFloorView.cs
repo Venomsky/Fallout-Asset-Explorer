@@ -1,0 +1,510 @@
+using System.Collections.Specialized;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using FalloutAssetExplorer.Core;
+
+namespace FalloutAssetExplorer.App.Views;
+
+public sealed class MapIsometricFloorView : Control
+{
+    private const int ProjectionCenterHexX = 100;
+    private const int ProjectionCenterHexY = 100;
+    private const int ProjectionViewportWidth = 640;
+    private const int ProjectionViewportHeight = 480;
+    private const double ZoomStep = 1.2;
+
+    private static readonly IBrush BackgroundBrush = new SolidColorBrush(Color.Parse("#171A1F"));
+    private static readonly IPen ObjectMarkerOutlinePen =
+        new Pen(new SolidColorBrush(Color.Parse("#171A1F")), 1);
+    private static readonly IBrush ItemMarkerBrush = new SolidColorBrush(Color.Parse("#F2C14E"));
+    private static readonly IBrush CritterMarkerBrush = new SolidColorBrush(Color.Parse("#6FCF97"));
+    private static readonly IBrush SceneryMarkerBrush = new SolidColorBrush(Color.Parse("#57CC99"));
+    private static readonly IBrush WallMarkerBrush = new SolidColorBrush(Color.Parse("#B8A98A"));
+    private static readonly IBrush TileMarkerBrush = new SolidColorBrush(Color.Parse("#C792EA"));
+    private static readonly IBrush MiscMarkerBrush = new SolidColorBrush(Color.Parse("#5BC0EB"));
+    private static readonly IBrush InterfaceMarkerBrush = new SolidColorBrush(Color.Parse("#F78C6B"));
+    private static readonly IBrush InventoryMarkerBrush = new SolidColorBrush(Color.Parse("#E76F9A"));
+    private static readonly IBrush HeadMarkerBrush = new SolidColorBrush(Color.Parse("#A7C957"));
+    private static readonly IBrush BackgroundMarkerBrush = new SolidColorBrush(Color.Parse("#8892A0"));
+    private static readonly IBrush SkilldexMarkerBrush = new SolidColorBrush(Color.Parse("#FFD166"));
+    private static readonly IBrush DefaultObjectMarkerBrush = new SolidColorBrush(Color.Parse("#E7EAF0"));
+
+    public static readonly StyledProperty<uint[]?> ValuesProperty =
+        AvaloniaProperty.Register<MapIsometricFloorView, uint[]?>(nameof(Values));
+
+    public static readonly StyledProperty<IReadOnlyDictionary<uint, Bitmap>?> TileBitmapsProperty =
+        AvaloniaProperty.Register<MapIsometricFloorView, IReadOnlyDictionary<uint, Bitmap>?>(nameof(TileBitmaps));
+
+    public static readonly StyledProperty<int> AssetRevisionProperty =
+        AvaloniaProperty.Register<MapIsometricFloorView, int>(nameof(AssetRevision));
+
+    public static readonly StyledProperty<IReadOnlyList<MapObjectPlacement>?> PlacementsProperty =
+        AvaloniaProperty.Register<MapIsometricFloorView, IReadOnlyList<MapObjectPlacement>?>(
+            nameof(Placements));
+
+    public static readonly StyledProperty<int?> ElevationProperty =
+        AvaloniaProperty.Register<MapIsometricFloorView, int?>(nameof(Elevation));
+
+    public static readonly StyledProperty<bool> ShowObjectMarkersProperty =
+        AvaloniaProperty.Register<MapIsometricFloorView, bool>(nameof(ShowObjectMarkers));
+
+    private MapIsometricFloorCameraTransform? _cameraTransform;
+    private IReadOnlyList<MapIsometricObjectMarker>? _objectMarkers;
+    private MapIsometricFloorViewTransform? _objectMarkersProjection;
+    private int? _objectMarkersElevation;
+    private Point? _panLastPosition;
+    private bool _isFitToView = true;
+
+    public uint[]? Values
+    {
+        get => GetValue(ValuesProperty);
+        set => SetValue(ValuesProperty, value);
+    }
+
+    public IReadOnlyDictionary<uint, Bitmap>? TileBitmaps
+    {
+        get => GetValue(TileBitmapsProperty);
+        set => SetValue(TileBitmapsProperty, value);
+    }
+
+    public int AssetRevision
+    {
+        get => GetValue(AssetRevisionProperty);
+        set => SetValue(AssetRevisionProperty, value);
+    }
+
+    public IReadOnlyList<MapObjectPlacement>? Placements
+    {
+        get => GetValue(PlacementsProperty);
+        set => SetValue(PlacementsProperty, value);
+    }
+
+    public int? Elevation
+    {
+        get => GetValue(ElevationProperty);
+        set => SetValue(ElevationProperty, value);
+    }
+
+    public bool ShowObjectMarkers
+    {
+        get => GetValue(ShowObjectMarkersProperty);
+        set => SetValue(ShowObjectMarkersProperty, value);
+    }
+
+    public void FitToView()
+    {
+        UpdateFitCamera();
+        InvalidateVisual();
+    }
+
+    private void UpdateFitCamera()
+    {
+        _isFitToView = true;
+        _cameraTransform = TryGetContentBounds(out var contentBounds)
+            && MapIsometricFloorViewportGeometry.TryGetFitTransform(
+                contentBounds,
+                Bounds.Width,
+                Bounds.Height,
+                out var fit)
+                ? fit
+                : null;
+    }
+
+    protected override void OnSizeChanged(SizeChangedEventArgs e)
+    {
+        base.OnSizeChanged(e);
+        if (_isFitToView)
+        {
+            UpdateFitCamera();
+            InvalidateVisual();
+            return;
+        }
+
+        if (_cameraTransform is MapIsometricFloorCameraTransform current
+            && TryGetContentBounds(out var contentBounds)
+            && MapIsometricFloorViewportGeometry.TryGetResizedTransform(
+                current,
+                e.PreviousSize.Width,
+                e.PreviousSize.Height,
+                e.NewSize.Width,
+                e.NewSize.Height,
+                contentBounds,
+                out var resized))
+        {
+            _cameraTransform = resized;
+        }
+        else
+        {
+            UpdateFitCamera();
+        }
+
+        InvalidateVisual();
+    }
+
+    protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
+    {
+        base.OnPropertyChanged(change);
+        if (change.Property == ValuesProperty)
+        {
+            UpdateFitCamera();
+        }
+        else if (change.Property == TileBitmapsProperty || change.Property == AssetRevisionProperty)
+        {
+            UpdateCameraForAssetChange();
+        }
+        else if (change.Property == PlacementsProperty)
+        {
+            if (change.OldValue is INotifyCollectionChanged oldPlacements)
+            {
+                oldPlacements.CollectionChanged -= Placements_CollectionChanged;
+            }
+
+            if (change.NewValue is INotifyCollectionChanged newPlacements)
+            {
+                newPlacements.CollectionChanged += Placements_CollectionChanged;
+            }
+
+            InvalidateObjectMarkers();
+            PrepareCameraForMarkersIfNeeded();
+        }
+        else if (change.Property == ElevationProperty)
+        {
+            InvalidateObjectMarkers();
+            PrepareCameraForMarkersIfNeeded();
+        }
+        else if (change.Property == ShowObjectMarkersProperty)
+        {
+            PrepareCameraForMarkersIfNeeded();
+        }
+
+        if (change.Property == ValuesProperty
+            || change.Property == TileBitmapsProperty
+            || change.Property == AssetRevisionProperty
+            || change.Property == PlacementsProperty
+            || change.Property == ElevationProperty
+            || change.Property == ShowObjectMarkersProperty)
+        {
+            InvalidateVisual();
+        }
+    }
+
+    public override void Render(DrawingContext context)
+    {
+        base.Render(context);
+        context.FillRectangle(BackgroundBrush, new Rect(Bounds.Size));
+
+        if (!TryGetProjectionTransform(out var projection)
+            || !TryGetCurrentCamera(out var camera))
+        {
+            return;
+        }
+
+        using var clip = context.PushClip(new Rect(Bounds.Size));
+        if (Values is { Length: MapTileGridDecoder.ValuesPerGrid } values
+            && TileBitmaps is { Count: > 0 } tileBitmaps)
+        {
+            // CE iterates y first and then the serialized square-grid column, i.e. increasing MAP index.
+            for (var serializedIndex = 0; serializedIndex < values.Length; serializedIndex++)
+            {
+                var cell = MapFloorTileDiagnosticGeometry.GetCellInfo(serializedIndex, values[serializedIndex]);
+                if (cell.IsRenderSkipped
+                    || cell.FloorArtId == MapFloorTileDiagnosticGeometry.CeEmptyFloorArtId
+                    || !tileBitmaps.TryGetValue(cell.FloorArtId, out var bitmap))
+                {
+                    continue;
+                }
+
+                var (x, y) = MapTileGridDecoder.GetSquareGridCoordinates(serializedIndex);
+                if (!MapIsometricFloorGeometry.TryProjectSquareCoordinates(
+                        x,
+                        y,
+                        projection,
+                        out var worldAnchor))
+                {
+                    continue;
+                }
+
+                var imageBounds = MapIsometricFloorViewportGeometry.GetImageBounds(
+                    camera,
+                    worldAnchor,
+                    bitmap.PixelSize.Width,
+                    bitmap.PixelSize.Height);
+                if (!MapIsometricFloorViewportGeometry.IntersectsViewport(
+                        imageBounds,
+                        Bounds.Width,
+                        Bounds.Height))
+                {
+                    continue;
+                }
+
+                context.DrawImage(
+                    bitmap,
+                    new Rect(0, 0, bitmap.PixelSize.Width, bitmap.PixelSize.Height),
+                    imageBounds);
+            }
+        }
+
+        if (ShowObjectMarkers)
+        {
+            var markerRadius = Math.Clamp(camera.Scale * 3, 2.5, 6);
+            foreach (var marker in GetObjectMarkers(projection))
+            {
+                var center = camera.ToScreen(marker.WorldPosition);
+                var markerBounds = new Rect(
+                    center.X - markerRadius,
+                    center.Y - markerRadius,
+                    markerRadius * 2,
+                    markerRadius * 2);
+                if (!MapIsometricFloorViewportGeometry.IntersectsViewport(
+                        markerBounds,
+                        Bounds.Width,
+                        Bounds.Height))
+                {
+                    continue;
+                }
+
+                context.DrawEllipse(
+                    GetObjectMarkerBrush(marker.Placement.PidTypeIdentifier),
+                    ObjectMarkerOutlinePen,
+                    center,
+                    markerRadius,
+                    markerRadius);
+            }
+        }
+    }
+
+    protected override void OnPointerMoved(PointerEventArgs e)
+    {
+        base.OnPointerMoved(e);
+        if (_panLastPosition is not Point last
+            || !TryGetCurrentCamera(out var current)
+            || !TryGetContentBounds(out var contentBounds))
+        {
+            return;
+        }
+
+        var position = e.GetPosition(this);
+        _cameraTransform = MapIsometricFloorViewportGeometry.Pan(
+            current,
+            position.X - last.X,
+            position.Y - last.Y,
+            contentBounds,
+            Bounds.Width,
+            Bounds.Height);
+        _panLastPosition = position;
+        _isFitToView = false;
+        InvalidateVisual();
+        e.Handled = true;
+    }
+
+    protected override void OnPointerPressed(PointerPressedEventArgs e)
+    {
+        base.OnPointerPressed(e);
+        var properties = e.GetCurrentPoint(this).Properties;
+        if (!properties.IsRightButtonPressed && !properties.IsMiddleButtonPressed)
+        {
+            return;
+        }
+
+        if (!TryGetCurrentCamera(out var current))
+        {
+            return;
+        }
+
+        _cameraTransform = current;
+        _panLastPosition = e.GetPosition(this);
+        _isFitToView = false;
+        e.Pointer.Capture(this);
+        e.Handled = true;
+    }
+
+    protected override void OnPointerReleased(PointerReleasedEventArgs e)
+    {
+        base.OnPointerReleased(e);
+        if (_panLastPosition is null)
+        {
+            return;
+        }
+
+        _panLastPosition = null;
+        e.Pointer.Capture(null);
+        e.Handled = true;
+    }
+
+    protected override void OnPointerCaptureLost(PointerCaptureLostEventArgs e)
+    {
+        base.OnPointerCaptureLost(e);
+        _panLastPosition = null;
+    }
+
+    protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
+    {
+        base.OnPointerWheelChanged(e);
+        if (e.Delta.Y == 0
+            || !TryGetCurrentCamera(out var current)
+            || !TryGetContentBounds(out var contentBounds))
+        {
+            return;
+        }
+
+        var position = e.GetPosition(this);
+        _cameraTransform = MapIsometricFloorViewportGeometry.ZoomAt(
+            current,
+            position.X,
+            position.Y,
+            Math.Pow(ZoomStep, e.Delta.Y),
+            contentBounds,
+            Bounds.Width,
+            Bounds.Height);
+        _isFitToView = false;
+        InvalidateVisual();
+        e.Handled = true;
+    }
+
+    private void UpdateCameraForAssetChange()
+    {
+        if (_isFitToView)
+        {
+            FitToView();
+            return;
+        }
+
+        if (_cameraTransform is MapIsometricFloorCameraTransform current
+            && TryGetContentBounds(out var contentBounds)
+            && MapIsometricFloorViewportGeometry.TryGetResizedTransform(
+                current,
+                Bounds.Width,
+                Bounds.Height,
+                Bounds.Width,
+                Bounds.Height,
+                contentBounds,
+                out var adjusted))
+        {
+            _cameraTransform = adjusted;
+        }
+    }
+
+    private void PrepareCameraForMarkersIfNeeded()
+    {
+        if (ShowObjectMarkers && !TryGetCurrentCamera(out _))
+        {
+            UpdateFitCamera();
+        }
+    }
+
+    private IReadOnlyList<MapIsometricObjectMarker> GetObjectMarkers(
+        MapIsometricFloorViewTransform projection)
+    {
+        if (_objectMarkers is not null
+            && _objectMarkersProjection == projection
+            && _objectMarkersElevation == Elevation)
+        {
+            return _objectMarkers;
+        }
+
+        _objectMarkers = MapIsometricObjectMarkerFilter.GetMarkers(
+            Placements,
+            Elevation,
+            projection);
+        _objectMarkersProjection = projection;
+        _objectMarkersElevation = Elevation;
+        return _objectMarkers;
+    }
+
+    private void Placements_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    {
+        InvalidateObjectMarkers();
+        PrepareCameraForMarkersIfNeeded();
+        InvalidateVisual();
+    }
+
+    private void InvalidateObjectMarkers()
+    {
+        _objectMarkers = null;
+        _objectMarkersProjection = null;
+        _objectMarkersElevation = null;
+    }
+
+    private static IBrush GetObjectMarkerBrush(int pidType) =>
+        pidType switch
+        {
+            0 => ItemMarkerBrush,
+            1 => CritterMarkerBrush,
+            2 => SceneryMarkerBrush,
+            3 => WallMarkerBrush,
+            4 => TileMarkerBrush,
+            5 => MiscMarkerBrush,
+            6 => InterfaceMarkerBrush,
+            7 => InventoryMarkerBrush,
+            8 => HeadMarkerBrush,
+            9 => BackgroundMarkerBrush,
+            10 => SkilldexMarkerBrush,
+            _ => DefaultObjectMarkerBrush
+        };
+
+    private bool TryGetCurrentCamera(out MapIsometricFloorCameraTransform camera)
+    {
+        if (_cameraTransform is MapIsometricFloorCameraTransform stored && stored.IsValid)
+        {
+            camera = stored;
+            return true;
+        }
+
+        camera = default;
+        return false;
+    }
+
+    // A fixed CE viewport keeps projected world coordinates stable; the camera fits them to the control.
+    private bool TryGetProjectionTransform(out MapIsometricFloorViewTransform projection) =>
+        MapIsometricFloorGeometry.TryCreateViewTransform(
+            ProjectionCenterHexX,
+            ProjectionCenterHexY,
+            ProjectionViewportWidth,
+            ProjectionViewportHeight,
+            0,
+            0,
+            out projection);
+
+    private bool TryGetContentBounds(out Rect contentBounds)
+    {
+        contentBounds = default;
+        if (!TryGetProjectionTransform(out var projection)
+            || !MapIsometricFloorGeometry.TryProjectSquareCoordinates(0, 0, projection, out var topLeft)
+            || !MapIsometricFloorGeometry.TryProjectSquareCoordinates(99, 0, projection, out var topRight)
+            || !MapIsometricFloorGeometry.TryProjectSquareCoordinates(0, 99, projection, out var bottomLeft)
+            || !MapIsometricFloorGeometry.TryProjectSquareCoordinates(99, 99, projection, out var bottomRight))
+        {
+            return false;
+        }
+
+        var minX = Math.Min(Math.Min(topLeft.X, topRight.X), Math.Min(bottomLeft.X, bottomRight.X));
+        var minY = Math.Min(Math.Min(topLeft.Y, topRight.Y), Math.Min(bottomLeft.Y, bottomRight.Y));
+        var maxX = Math.Max(Math.Max(topLeft.X, topRight.X), Math.Max(bottomLeft.X, bottomRight.X));
+        var maxY = Math.Max(Math.Max(topLeft.Y, topRight.Y), Math.Max(bottomLeft.Y, bottomRight.Y));
+        var maxBitmapWidth = 0;
+        var maxBitmapHeight = 0;
+        if (TileBitmaps is not null)
+        {
+            foreach (var bitmap in TileBitmaps.Values)
+            {
+                maxBitmapWidth = Math.Max(maxBitmapWidth, bitmap.PixelSize.Width);
+                maxBitmapHeight = Math.Max(maxBitmapHeight, bitmap.PixelSize.Height);
+            }
+        }
+
+        maxX += maxBitmapWidth;
+        maxY += maxBitmapHeight;
+        var width = maxX - minX;
+        var height = maxY - minY;
+        if (!double.IsFinite(width) || !double.IsFinite(height) || width <= 0 || height <= 0)
+        {
+            return false;
+        }
+
+        contentBounds = new Rect(minX, minY, width, height);
+        return true;
+    }
+}

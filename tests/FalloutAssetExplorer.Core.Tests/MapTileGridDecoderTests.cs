@@ -7,6 +7,61 @@ namespace FalloutAssetExplorer.Core.Tests;
 
 public sealed class MapTileGridDecoderTests
 {
+    [Fact]
+    public void CellValueFields_DecodeZeroAsRawZeroFields()
+    {
+        var fields = new MapGridCellValueFields(0);
+
+        Assert.Equal(0u, fields.FloorArtId);
+        Assert.Equal(0u, fields.FloorFlagNibble);
+        Assert.Equal(0u, fields.RoofArtId);
+        Assert.Equal(0u, fields.RoofFlagNibble);
+        Assert.False(fields.FloorRenderSuppressionBitIsSet);
+        Assert.False(fields.RoofRenderSuppressionBitIsSet);
+    }
+
+    [Fact]
+    public void CellValueFields_ExtractsIdsAndFlagNibblesFromBothWords()
+    {
+        var fields = new MapGridCellValueFields(0xF234A567);
+
+        Assert.Equal(0x567u, fields.FloorArtId);
+        Assert.Equal(0xAu, fields.FloorFlagNibble);
+        Assert.Equal(0x234u, fields.RoofArtId);
+        Assert.Equal(0xFu, fields.RoofFlagNibble);
+        Assert.False(fields.FloorRenderSuppressionBitIsSet);
+        Assert.True(fields.RoofRenderSuppressionBitIsSet);
+    }
+
+    [Theory]
+    [InlineData(0x00001000u, true, false)]
+    [InlineData(0x10000000u, false, true)]
+    [InlineData(0x00002000u, false, false)]
+    [InlineData(0x20000000u, false, false)]
+    public void CellValueFields_OnlyTheConfirmedLowFlagBitSuppressesDrawing(
+        uint rawValue,
+        bool floorSuppressed,
+        bool roofSuppressed)
+    {
+        var fields = new MapGridCellValueFields(rawValue);
+
+        Assert.Equal(floorSuppressed, fields.FloorRenderSuppressionBitIsSet);
+        Assert.Equal(roofSuppressed, fields.RoofRenderSuppressionBitIsSet);
+    }
+
+    [Fact]
+    public void CellValueFields_HandlesMaximumRawWord()
+    {
+        var fields = new MapGridCellValueFields(uint.MaxValue);
+
+        Assert.Equal(0xFFFu, fields.FloorArtId);
+        Assert.Equal(0xFu, fields.FloorFlagNibble);
+        Assert.Equal(0xFFFu, fields.RoofArtId);
+        Assert.Equal(0xFu, fields.RoofFlagNibble);
+        Assert.True(fields.FloorRenderSuppressionBitIsSet);
+        Assert.True(fields.RoofRenderSuppressionBitIsSet);
+    }
+
     [Theory]
     [InlineData(0, 0, 100, 100, 99)]
     [InlineData(99.999, 0, 100, 100, 0)]

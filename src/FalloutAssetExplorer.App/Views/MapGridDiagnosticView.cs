@@ -198,6 +198,21 @@ public sealed class MapGridDiagnosticView : Control
     }
 }
 
+public readonly record struct MapGridCellValueFields(uint RawValue)
+{
+    public uint FloorArtId => RawValue & 0x0FFFu;
+
+    public uint FloorFlagNibble => (RawValue >> 12) & 0x0Fu;
+
+    public uint RoofArtId => (RawValue >> 16) & 0x0FFFu;
+
+    public uint RoofFlagNibble => (RawValue >> 28) & 0x0Fu;
+
+    public bool FloorRenderSuppressionBitIsSet => (FloorFlagNibble & 0x01u) != 0;
+
+    public bool RoofRenderSuppressionBitIsSet => (RoofFlagNibble & 0x01u) != 0;
+}
+
 public static class MapGridDiagnosticGeometry
 {
     public static bool TryGetSerializedIndex(
