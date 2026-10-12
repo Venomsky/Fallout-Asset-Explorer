@@ -16,13 +16,29 @@ public sealed record Fallout2PrototypeDiagnostic(
     public bool IsVerified => VerifiedFileName is not null;
 
     public bool HasSupportedSubtype { get; init; }
+
+    public IReadOnlyList<Fallout2PrototypeField> SceneryFields { get; init; } = [];
+
+    public IReadOnlyList<Fallout2PrototypeField> ItemFields { get; init; } = [];
 }
+
+public sealed record Fallout2PrototypeField(
+    string Name,
+    int Offset,
+    int SizeInBytes,
+    int Value,
+    bool IsFlags = false,
+    bool DisplayAsHex = false,
+    string? Interpretation = null,
+    string StorageType = "int32 BE");
 
 public sealed class Fallout2PrototypeResolver
 {
     private const int MaximumPrototypeListSize = 16 * 1024 * 1024;
     private const int MaximumPrototypeSize = 1024 * 1024;
     private const int MinimumPrototypeSize = 36;
+    private const int SceneryTwoWordPrototypeSize = 0x31;
+    private const int SceneryOneWordPrototypeSize = 0x2D;
     private const int MaximumCachedPrototypeBytes = 8 * 1024 * 1024;
 
     private readonly IGameArchive? _archive;
@@ -338,9 +354,45 @@ public sealed class Fallout2PrototypeResolver
                 prototypeBytes);
         }
 
+        if (pidType == 0)
+        {
+            var expectedItemSize = GetExpectedItemSize(subtype);
+            var itemFields = ReadItemFields(prototypeBytes.Span, subtype);
+            var itemStatus = prototypeBytes.Length switch
+            {
+                var size when size < expectedItemSize =>
+                    $"the item prototype is shorter than {expectedItemSize} bytes for subtype {subtype} (found {size})",
+                var size when size > expectedItemSize =>
+                    $"the item prototype is longer than expected {expectedItemSize} bytes for subtype {subtype} (found {size})",
+                _ => "Prototype PID, subtype, and Item size validated."
+            };
+
+            return new Fallout2PrototypeDiagnostic(
+                requestedPid,
+                itemStatus,
+                fileName,
+                fileName,
+                prototypePid,
+                subtype,
+                fileSize,
+                prototypeBytes)
+            {
+                HasSupportedSubtype = true,
+                ItemFields = itemFields
+            };
+        }
+
+        var expectedScenerySize = subtype <= 2
+            ? SceneryTwoWordPrototypeSize
+            : SceneryOneWordPrototypeSize;
+        var sceneryFields = ReadSceneryFields(prototypeBytes.Span, subtype);
+        var status = prototypeBytes.Length < expectedScenerySize
+            ? $"the scenery prototype is shorter than {expectedScenerySize} bytes for subtype {subtype}"
+            : "Prototype PID and subtype validated.";
+
         return new Fallout2PrototypeDiagnostic(
             requestedPid,
-            "Prototype PID and subtype validated.",
+            status,
             fileName,
             fileName,
             prototypePid,
@@ -348,9 +400,235 @@ public sealed class Fallout2PrototypeResolver
             fileSize,
             prototypeBytes)
         {
-            HasSupportedSubtype = true
+            HasSupportedSubtype = true,
+            SceneryFields = sceneryFields
         };
     }
+
+    private static IReadOnlyList<Fallout2PrototypeField> ReadSceneryFields(
+        ReadOnlySpan<byte> prototypeBytes,
+        int subtype)
+    {
+        var fields = new List<Fallout2PrototypeField>();
+        AddInt32Field(fields, prototypeBytes, "messageId", 0x04);
+        AddInt32Field(fields, prototypeBytes, "fid", 0x08, displayAsHex: true);
+        AddInt32Field(fields, prototypeBytes, "lightDistance", 0x0C);
+        AddInt32Field(fields, prototypeBytes, "lightIntensity", 0x10);
+        AddInt32Field(fields, prototypeBytes, "flags", 0x14, isFlags: true);
+        AddInt32Field(fields, prototypeBytes, "extendedFlags", 0x18, isFlags: true);
+        AddInt32Field(
+            fields,
+            prototypeBytes,
+            "sid",
+            0x1C,
+            interpretationResolver: value => value == -1 ? "No script" : null);
+        AddInt32Field(
+            fields,
+            prototypeBytes,
+            "material",
+            0x24,
+            interpretationResolver: GetMaterialName);
+
+        switch (subtype)
+        {
+            case 0:
+                AddInt32Field(fields, prototypeBytes, "openFlags", 0x29, isFlags: true);
+                AddInt32Field(fields, prototypeBytes, "keyCode", 0x2D);
+                break;
+            case 1:
+                AddInt32Field(fields, prototypeBytes, "stairs.field_0", 0x29);
+                AddInt32Field(fields, prototypeBytes, "stairs.field_4", 0x2D);
+                break;
+            case 2:
+                AddInt32Field(fields, prototypeBytes, "elevator.type", 0x29);
+                AddInt32Field(fields, prototypeBytes, "elevator.level", 0x2D);
+                break;
+            case 3:
+                AddInt32Field(fields, prototypeBytes, "ladder.field_0", 0x29);
+                break;
+            case 4:
+                AddInt32Field(fields, prototypeBytes, "ladder.field_0", 0x29);
+                break;
+            case 5:
+                AddInt32Field(fields, prototypeBytes, "generic.field_0", 0x29);
+                break;
+        }
+
+        return fields;
+    }
+
+    private static IReadOnlyList<Fallout2PrototypeField> ReadItemFields(
+        ReadOnlySpan<byte> prototypeBytes,
+        int subtype)
+    {
+        var fields = new List<Fallout2PrototypeField>();
+        AddInt32Field(fields, prototypeBytes, "messageId", 0x04);
+        AddInt32Field(fields, prototypeBytes, "fid", 0x08, displayAsHex: true);
+        AddInt32Field(fields, prototypeBytes, "lightDistance", 0x0C);
+        AddInt32Field(fields, prototypeBytes, "lightIntensity", 0x10);
+        AddInt32Field(fields, prototypeBytes, "flags", 0x14, isFlags: true);
+        AddInt32Field(fields, prototypeBytes, "extendedFlags", 0x18, isFlags: true);
+        AddInt32Field(
+            fields,
+            prototypeBytes,
+            "sid",
+            0x1C,
+            interpretationResolver: value => value == -1 ? "No script" : null);
+        AddInt32Field(fields, prototypeBytes, "material", 0x24, interpretationResolver: GetMaterialName);
+        AddInt32Field(fields, prototypeBytes, "size", 0x28);
+        AddInt32Field(fields, prototypeBytes, "weight", 0x2C);
+        AddInt32Field(fields, prototypeBytes, "cost", 0x30);
+        AddInt32Field(fields, prototypeBytes, "inventoryFid", 0x34, displayAsHex: true);
+
+        switch (subtype)
+        {
+            case 0:
+                AddInt32Field(fields, prototypeBytes, "armorClass", 0x39);
+                AddInt32ArrayFields(fields, prototypeBytes, "damageResistance", 0x3D, 7);
+                AddInt32ArrayFields(fields, prototypeBytes, "damageThreshold", 0x59, 7);
+                AddInt32Field(fields, prototypeBytes, "perk", 0x75);
+                AddInt32Field(fields, prototypeBytes, "maleFid", 0x79, displayAsHex: true);
+                AddInt32Field(fields, prototypeBytes, "femaleFid", 0x7D, displayAsHex: true);
+                break;
+            case 1:
+                AddInt32Field(fields, prototypeBytes, "maxSize", 0x39);
+                AddInt32Field(fields, prototypeBytes, "openFlags", 0x3D, isFlags: true);
+                break;
+            case 2:
+                AddInt32ArrayFields(fields, prototypeBytes, "stat", 0x39, 3);
+                AddInt32ArrayFields(fields, prototypeBytes, "amount", 0x45, 3);
+                AddInt32Field(fields, prototypeBytes, "duration1", 0x51);
+                AddInt32ArrayFields(fields, prototypeBytes, "amount1", 0x55, 3);
+                AddInt32Field(fields, prototypeBytes, "duration2", 0x61);
+                AddInt32ArrayFields(fields, prototypeBytes, "amount2", 0x65, 3);
+                AddInt32Field(fields, prototypeBytes, "addictionChance", 0x71);
+                AddInt32Field(fields, prototypeBytes, "withdrawalEffect", 0x75);
+                AddInt32Field(fields, prototypeBytes, "withdrawalOnset", 0x79);
+                break;
+            case 3:
+                AddInt32Field(fields, prototypeBytes, "animationCode", 0x39);
+                AddInt32Field(fields, prototypeBytes, "minDamage", 0x3D);
+                AddInt32Field(fields, prototypeBytes, "maxDamage", 0x41);
+                AddInt32Field(fields, prototypeBytes, "damageType", 0x45);
+                AddInt32Field(fields, prototypeBytes, "maxRange1", 0x49);
+                AddInt32Field(fields, prototypeBytes, "maxRange2", 0x4D);
+                AddInt32Field(fields, prototypeBytes, "projectilePid", 0x51, displayAsHex: true);
+                AddInt32Field(fields, prototypeBytes, "minStrength", 0x55);
+                AddInt32Field(fields, prototypeBytes, "actionPointCost1", 0x59);
+                AddInt32Field(fields, prototypeBytes, "actionPointCost2", 0x5D);
+                AddInt32Field(fields, prototypeBytes, "criticalFailureType", 0x61);
+                AddInt32Field(fields, prototypeBytes, "perk", 0x65);
+                AddInt32Field(fields, prototypeBytes, "rounds", 0x69);
+                AddInt32Field(fields, prototypeBytes, "caliber", 0x6D);
+                AddInt32Field(fields, prototypeBytes, "ammoTypePid", 0x71, displayAsHex: true);
+                AddInt32Field(fields, prototypeBytes, "ammoCapacity", 0x75);
+                AddUInt8Field(fields, prototypeBytes, "soundCode", 0x79);
+                break;
+            case 4:
+                AddInt32Field(fields, prototypeBytes, "caliber", 0x39);
+                AddInt32Field(fields, prototypeBytes, "quantity", 0x3D);
+                AddInt32Field(fields, prototypeBytes, "armorClassModifier", 0x41);
+                AddInt32Field(fields, prototypeBytes, "damageResistanceModifier", 0x45);
+                AddInt32Field(fields, prototypeBytes, "damageMultiplier", 0x49);
+                AddInt32Field(fields, prototypeBytes, "damageDivisor", 0x4D);
+                break;
+            case 5:
+                AddInt32Field(fields, prototypeBytes, "powerTypePid", 0x39, displayAsHex: true);
+                AddInt32Field(fields, prototypeBytes, "powerType", 0x3D);
+                AddInt32Field(fields, prototypeBytes, "charges", 0x41);
+                break;
+            case 6:
+                AddInt32Field(fields, prototypeBytes, "keyCode", 0x39);
+                break;
+        }
+
+        return fields;
+    }
+
+    private static int GetExpectedItemSize(int subtype) =>
+        subtype switch
+        {
+            0 => 0x81,
+            1 => 0x41,
+            2 => 0x7D,
+            3 => 0x7A,
+            4 => 0x51,
+            5 => 0x45,
+            6 => 0x3D,
+            _ => throw new ArgumentOutOfRangeException(nameof(subtype))
+        };
+
+    private static void AddInt32ArrayFields(
+        List<Fallout2PrototypeField> fields,
+        ReadOnlySpan<byte> prototypeBytes,
+        string name,
+        int offset,
+        int count)
+    {
+        for (var index = 0; index < count; index++)
+        {
+            AddInt32Field(fields, prototypeBytes, $"{name}[{index}]", offset + index * sizeof(int));
+        }
+    }
+
+    private static void AddInt32Field(
+        List<Fallout2PrototypeField> fields,
+        ReadOnlySpan<byte> prototypeBytes,
+        string name,
+        int offset,
+        bool isFlags = false,
+        bool displayAsHex = false,
+        Func<int, string?>? interpretationResolver = null)
+    {
+        if (prototypeBytes.Length - offset < sizeof(int))
+        {
+            return;
+        }
+
+        var value = BinaryPrimitives.ReadInt32BigEndian(
+            prototypeBytes.Slice(offset, sizeof(int)));
+        fields.Add(new Fallout2PrototypeField(
+            name,
+            offset,
+            sizeof(int),
+            value,
+            isFlags,
+            displayAsHex,
+            interpretationResolver?.Invoke(value)));
+    }
+
+    private static void AddUInt8Field(
+        List<Fallout2PrototypeField> fields,
+        ReadOnlySpan<byte> prototypeBytes,
+        string name,
+        int offset)
+    {
+        if ((uint)offset >= (uint)prototypeBytes.Length)
+        {
+            return;
+        }
+
+        fields.Add(new Fallout2PrototypeField(
+            name,
+            offset,
+            sizeof(byte),
+            prototypeBytes[offset],
+            StorageType: "uint8"));
+    }
+
+    private static string? GetMaterialName(int value) =>
+        value switch
+        {
+            0 => "Glass",
+            1 => "Metal",
+            2 => "Plastic",
+            3 => "Wood",
+            4 => "Dirt",
+            5 => "Stone",
+            6 => "Cement",
+            7 => "Leather",
+            _ => null
+        };
 
     private PrototypeLocation CacheLocation(int pid, PrototypeLocation location)
     {

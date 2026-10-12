@@ -245,10 +245,66 @@ The implemented prototype subtype readers do not decode the complete PRO format.
 
 1. Resolve the PID low 24 bits as the 1-based line number in the type-specific scenery (`proto\\scenery\\scenery.lst`) or Item (`proto\\items\\items.lst`) list, following `_proto_list_str` in pinned [`src/proto.cc`](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto.cc#L201-L248).
 2. Resolve that list entry to its `.PRO` resource. `_proto_load_pid` obtains this name, opens the file, and passes it to `protoRead` in [`src/proto.cc`](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto.cc#L1948).
-3. Read only the fixed prefix through byte 35, verify that the embedded PRO PID exactly matches the MAP PID and has the expected object type, then validate the subtype value.
+3. The MAP record-length path needs only the fixed prefix through byte 35 to verify that the embedded PRO PID exactly matches the MAP PID and has the expected object type, then validate the subtype value.
 4. Advance only for the confirmed scenery and Item layouts in their tables. Stop rather than guessing on missing/malformed resources or unsupported subtype values.
 
-The shared prototype subtype resolver implements these checks for Fallout 2 DAT2 archives and caches list bytes and per-PID results during one decode operation. Read failures retain full exception diagnostics in debug output while the object status remains concise. Scenery state and Item payload words are preserved raw in source stream order, not interpreted. Prototype-dependent Fallout 1 layouts remain unsupported. Resource names are selected by the type-specific list rather than inferred from PID digits.
+The shared prototype resolver implements these checks for Fallout 2 DAT2 archives and caches list data, resolved locations, and raw prototype bytes during one decode operation. Read failures retain full exception diagnostics in debug output while the object status remains concise. MAP Scenery state and Item instance payload words are preserved raw in source stream order; the separate selected-object `.PRO` diagnostics interpret only the confirmed prototype fields documented below. Prototype-dependent Fallout 1 layouts remain unsupported. Resource names are selected by the type-specific list rather than inferred from PID digits.
+
+### Scenery PRO field diagnostics
+
+The selected-object `.PRO` diagnostics separately expose confirmed Scenery and Item prototype fields; they do not change MAP decoding. The pinned CE `protoRead` reads the Scenery common fields in order as 32-bit values, and the FODev PRO reference specifies big-endian numeric fields unless noted otherwise ([FODev PRO format](https://fodev.net/files/fo2/pro.html); [pinned CE `proto.cc`, `protoRead`](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto.cc#L1663-L1708)):
+
+| PRO offset | Size/type | Displayed field | Qualification |
+| ---: | --- | --- | --- |
+| `0x04` | 4-byte `int32` BE | `messageId` | Common Scenery field |
+| `0x08` | 4-byte `int32` BE | `fid` | Displayed as its full hexadecimal identifier |
+| `0x0C` | 4-byte `int32` BE | `lightDistance` | Common Scenery field |
+| `0x10` | 4-byte `int32` BE | `lightIntensity` | Common Scenery field |
+| `0x14` | 4-byte `int32` BE | `flags` | Displayed as a raw bitmask; individual bits are not decoded |
+| `0x18` | 4-byte `int32` BE | `extendedFlags` | Displayed as a raw bitmask; individual bits are not decoded |
+| `0x1C` | 4-byte `int32` BE | `sid` | `-1` is displayed as “No script” |
+| `0x20` | 4-byte `int32` BE | `type` / subtype | Discriminator values 0–5 are Door, Stairs, Elevator, Ladder Up, Ladder Down, and Generic ([pinned CE `proto_types.h`](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto_types.h#L37-L45)) |
+| `0x24` | 4-byte `int32` BE | `material` | CE exposes `field_2C` as `SCENERY_DATA_MEMBER_MATERIAL`; the FODev material table maps 0–7 to Glass, Metal, Plastic, Wood, Dirt, Stone, Cement, and Leather ([pinned CE `proto.cc`](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto.cc#L1218-L1245); [FODev PRO format](https://fodev.net/files/fo2/pro.html)) |
+| `0x28` | 1 byte | Not decoded | FODev describes a byte here, but its meaning is not sufficiently confirmed; it remains in the raw dump |
+| `0x29` | 4-byte `int32` BE | Subtype payload | Fields below are read by CE's `protoSceneryDataRead` ([pinned CE `proto.cc`](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto.cc#L1629-L1656)) |
+| `0x2D` | 4-byte `int32` BE | Second subtype payload word, where present | Only present for Door, Stairs, and Elevator |
+
+The subtype payload is displayed with CE's field names: Door has `openFlags` at `0x29` and `keyCode` at `0x2D`; Stairs has `stairs.field_0` and `stairs.field_4`; Elevator has `elevator.type` and `elevator.level`; Ladder Up/Down has `ladder.field_0`; Generic has `generic.field_0`. Placeholder fields and Elevator values are shown as their signed numeric/raw hexadecimal words without further semantic mapping. `field_34` (the byte at `0x28`) is not interpreted. The nominal serialized Scenery structure sizes are `0x31` bytes for subtypes 0–2 and `0x2D` bytes for subtypes 3–5 ([FODev type-size table](https://fodev.net/files/fo2/pro.html); pinned CE [`protoSceneryDataRead`](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto.cc#L1629-L1659)). CE's `protoRead` returns after reading those subtype fields without checking for end-of-file, so trailing bytes are ignored by its reader. The pinned `protoWrite` Scenery case also falls through into Wall serialization, and `_proto_save_pid` writes that result to the resource file; this can append 24 bytes after the nominal Scenery structure ([`protoRead`](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto.cc#L1663-L1709), [`protoWrite` and `_proto_save_pid`](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto.cc#L1848-L1942)). Whether that fall-through is intentional is unclear, but it demonstrates that a longer Scenery resource can be produced by the pinned writer and accepted by its reader. The resolver therefore retains and accepts trailing bytes, reports truncation for short resources, and displays only complete confirmed fields. The complete raw-byte dump is retained for every case.
+
+### Item PRO field diagnostics
+
+The selected-object Item diagnostic now displays the confirmed Item common fields and subtype payload. Fallout 2 CE reads the common Item fields in order in pinned [`src/proto.cc`, `protoRead` at lines 1663–1685](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto.cc#L1663-L1685); the subtype readers and their field order are at lines 1553–1660 of the same file. The Item subtype values are defined in [`src/proto_types.h`, lines 26–35](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto_types.h#L26-L35), and Item is PID type 0 in [`src/obj_types.h`](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/obj_types.h). FODev specifies big-endian signed 32-bit numeric values unless a byte is explicitly marked, documents the common Item prefix and its payload start at `0x39`, and lists the subtype sizes and fields ([FODev PRO format](https://fodev.net/files/fo2/pro.html)).
+
+| PRO offset | Size/type | Field | Qualification |
+| ---: | --- | --- | --- |
+| `0x04` | 4-byte `int32` BE | `messageId` | Common field |
+| `0x08` | 4-byte `int32` BE | `fid` | Displayed as a hexadecimal identifier |
+| `0x0C` | 4-byte `int32` BE | `lightDistance` | Common field |
+| `0x10` | 4-byte `int32` BE | `lightIntensity` | Common field |
+| `0x14` | 4-byte `int32` BE | `flags` | Raw bitmask; individual bits are not decoded |
+| `0x18` | 4-byte `int32` BE | `extendedFlags` | Raw bitmask; individual bits are not decoded |
+| `0x1C` | 4-byte `int32` BE | `sid` | `-1` is displayed as “No script” |
+| `0x20` | 4-byte `int32` BE | `type` / subtype | Shown in the existing subtype metadata; values 0–6 are Armor, Container, Drug, Weapon, Ammo, Misc, and Key |
+| `0x24` | 4-byte `int32` BE | `material` | Values 0–7 use the documented material names |
+| `0x28` | 4-byte `int32` BE | `size` | Common Item field |
+| `0x2C` | 4-byte `int32` BE | `weight` | Common Item field |
+| `0x30` | 4-byte `int32` BE | `cost` | Common Item field |
+| `0x34` | 4-byte `int32` BE | `inventoryFid` | Displayed as a hexadecimal identifier |
+| `0x38` | 1-byte `uint8` | `field_80` | Not interpreted; its meaning is not sufficiently confirmed and the byte remains in the raw dump |
+
+Each subtype payload starts at `0x39`. All listed fields below are 4-byte `int32` BE except `weapon.soundCode`, which is 1-byte `uint8`, as read by CE's `fileReadUInt8`.
+
+| Subtype | Total PRO size | Confirmed payload fields and offsets |
+| --- | ---: | --- |
+| Armor (`0`) | `0x81` | `armorClass` `0x39`; `damageResistance[0..6]` `0x3D`, `0x41`, `0x45`, `0x49`, `0x4D`, `0x51`, `0x55`; `damageThreshold[0..6]` `0x59`, `0x5D`, `0x61`, `0x65`, `0x69`, `0x6D`, `0x71`; `perk` `0x75`; `maleFid` `0x79`; `femaleFid` `0x7D` |
+| Container (`1`) | `0x41` | `maxSize` `0x39`; `openFlags` `0x3D` (raw bitmask) |
+| Drug (`2`) | `0x7D` | `stat[0..2]` `0x39`, `0x3D`, `0x41`; `amount[0..2]` `0x45`, `0x49`, `0x4D`; `duration1` `0x51`; `amount1[0..2]` `0x55`, `0x59`, `0x5D`; `duration2` `0x61`; `amount2[0..2]` `0x65`, `0x69`, `0x6D`; `addictionChance` `0x71`; `withdrawalEffect` `0x75`; `withdrawalOnset` `0x79` |
+| Weapon (`3`) | `0x7A` | `animationCode` `0x39`; `minDamage` `0x3D`; `maxDamage` `0x41`; `damageType` `0x45`; `maxRange1` `0x49`; `maxRange2` `0x4D`; `projectilePid` `0x51`; `minStrength` `0x55`; `actionPointCost1` `0x59`; `actionPointCost2` `0x5D`; `criticalFailureType` `0x61`; `perk` `0x65`; `rounds` `0x69`; `caliber` `0x6D`; `ammoTypePid` `0x71`; `ammoCapacity` `0x75`; `soundCode` `0x79` (`uint8`) |
+| Ammo (`4`) | `0x51` | `caliber` `0x39`; `quantity` `0x3D`; `armorClassModifier` `0x41`; `damageResistanceModifier` `0x45`; `damageMultiplier` `0x49`; `damageDivisor` `0x4D` |
+| Misc (`5`) | `0x45` | `powerTypePid` `0x39`; `powerType` `0x3D`; `charges` `0x41` |
+| Key (`6`) | `0x3D` | `keyCode` `0x39` |
+
+The subtype-specific sizes match the FODev Item table. A size mismatch is reported against the selected subtype; the resolver retains all raw bytes and emits only fields whose complete byte ranges are present. It does not decode the ambiguous byte at `0x38`, nor map numeric enums such as damage type, caliber, perks, or stat IDs to names.
 
 For Items, the `item.type` enum values 0–6 are Armor, Container, Drug, Weapon, Ammo, Misc, and Key respectively ([pinned `src/proto_types.h`, lines 26–35](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto_types.h#L26-L35)). In Fallout 2 CE `objectDataRead`, Weapon reads `ammoQuantity` then `ammoTypePid`; Ammo reads `quantity`; Misc reads `charges`; Key reads `keyCode`; Armor, Container, and Drug fall through the default branch without extra words ([pinned `src/proto.cc`, lines 579–599](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto.cc#L579-L599)). `protoRead` reads `item.type` at byte offset 32 ([pinned `src/proto.cc`, lines 1663–1685](https://github.com/alexbatalov/fallout2-ce/blob/e97087b9582f37075db347a89898887320753f8b/src/proto.cc#L1663-L1685)). The decoder consumes only the corresponding MAP payload word counts and does not infer size from PRO file length.
 

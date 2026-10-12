@@ -72,6 +72,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private string _mapObjectDetailsDisplay = "Select a parsed object to inspect its raw fields.";
     private string _mapObjectPrototypeDiagnosticStatus = "Select an Item or Scenery object to inspect its Fallout 2 prototype.";
     private string _mapObjectPrototypeDiagnosticDetails = string.Empty;
+    private string _mapObjectPrototypeSceneryFieldsDisplay = string.Empty;
+    private string _mapObjectPrototypeItemFieldsDisplay = string.Empty;
     private IReadOnlyList<string> _mapObjectPrototypeRawByteLines = [];
     private string _mapFloorTilesStatusDisplay = "Select the floor-tile diagnostic layer to load this map's tiles.";
     private string _previewMessage = "Select a .FRM or .MAP entry to inspect.";
@@ -699,6 +701,36 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         get => _mapObjectPrototypeDiagnosticDetails;
         private set => SetProperty(ref _mapObjectPrototypeDiagnosticDetails, value);
     }
+
+    public string MapObjectPrototypeSceneryFieldsDisplay
+    {
+        get => _mapObjectPrototypeSceneryFieldsDisplay;
+        private set
+        {
+            if (SetProperty(ref _mapObjectPrototypeSceneryFieldsDisplay, value))
+            {
+                OnPropertyChanged(nameof(HasMapObjectPrototypeSceneryFields));
+            }
+        }
+    }
+
+    public bool HasMapObjectPrototypeSceneryFields =>
+        !string.IsNullOrEmpty(MapObjectPrototypeSceneryFieldsDisplay);
+
+    public string MapObjectPrototypeItemFieldsDisplay
+    {
+        get => _mapObjectPrototypeItemFieldsDisplay;
+        private set
+        {
+            if (SetProperty(ref _mapObjectPrototypeItemFieldsDisplay, value))
+            {
+                OnPropertyChanged(nameof(HasMapObjectPrototypeItemFields));
+            }
+        }
+    }
+
+    public bool HasMapObjectPrototypeItemFields =>
+        !string.IsNullOrEmpty(MapObjectPrototypeItemFieldsDisplay);
 
     public IReadOnlyList<string> MapObjectPrototypeRawByteLines
     {
@@ -1715,6 +1747,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MapObjectPrototypeDiagnosticStatus =
             "Select an Item or Scenery object to inspect its Fallout 2 prototype.";
         MapObjectPrototypeDiagnosticDetails = string.Empty;
+        MapObjectPrototypeSceneryFieldsDisplay = string.Empty;
+        MapObjectPrototypeItemFieldsDisplay = string.Empty;
         MapObjectPrototypeRawByteLines = [];
         _playbackTimer.Stop();
         _playback.SetFrameCounts([]);
@@ -1798,6 +1832,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         _mapObjectPrototypeDiagnosticCancellation?.Cancel();
         _mapObjectPrototypeDiagnosticCancellation = null;
         MapObjectPrototypeDiagnosticDetails = string.Empty;
+        MapObjectPrototypeSceneryFieldsDisplay = string.Empty;
+        MapObjectPrototypeItemFieldsDisplay = string.Empty;
         MapObjectPrototypeRawByteLines = [];
 
         if (placement is null)
@@ -1844,8 +1880,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             var diagnostic = await resolver.ResolveAsync(
                 placement.RawPid,
                 cancellationToken);
-            var byteLines = await Task.Run(
-                () => FormatPrototypeBytes(diagnostic.RawBytes, cancellationToken),
+            var formatted = await Task.Run(
+                () => (
+                    Details: FormatPrototypeDiagnosticDetails(diagnostic),
+                    SceneryFields: FormatPrototypeFields(diagnostic.SceneryFields),
+                    ItemFields: FormatPrototypeFields(diagnostic.ItemFields),
+                    ByteLines: FormatPrototypeBytes(diagnostic.RawBytes, cancellationToken)),
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -1856,8 +1896,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             }
 
             MapObjectPrototypeDiagnosticStatus = diagnostic.Status;
-            MapObjectPrototypeDiagnosticDetails = FormatPrototypeDiagnosticDetails(diagnostic);
-            MapObjectPrototypeRawByteLines = byteLines;
+            MapObjectPrototypeDiagnosticDetails = formatted.Details;
+            MapObjectPrototypeSceneryFieldsDisplay = formatted.SceneryFields;
+            MapObjectPrototypeItemFieldsDisplay = formatted.ItemFields;
+            MapObjectPrototypeRawByteLines = formatted.ByteLines;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1894,7 +1936,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             ? $"Prototype PID: 0x{unchecked((uint)pid):X8}"
             : "Prototype PID: unavailable";
         var subtype = diagnostic.Subtype is int value
-            ? $"Subtype at 0x20: {value}"
+            ? $"Subtype at 0x20: {value}{GetScenerySubtypeLabel(diagnostic.RequestedPid, value)}"
             : "Subtype at 0x20: unavailable";
         var fileSize = diagnostic.FileSize is long size
             ? $"File size: {size:N0} bytes"
@@ -1907,6 +1949,53 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             prototypePid,
             subtype,
             fileSize);
+    }
+
+    private static string GetScenerySubtypeLabel(int pid, int subtype)
+    {
+        if ((uint)pid >> 24 != 2)
+        {
+            return string.Empty;
+        }
+
+        var name = subtype switch
+        {
+            0 => "Door",
+            1 => "Stairs",
+            2 => "Elevator",
+            3 => "Ladder up",
+            4 => "Ladder down",
+            5 => "Generic",
+            _ => null
+        };
+        return name is null ? string.Empty : $" ({name})";
+    }
+
+    private static string FormatPrototypeFields(
+        IReadOnlyList<Fallout2PrototypeField> fields)
+    {
+        if (fields.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            fields.Select(field =>
+            {
+                var hexadecimalFormat = field.SizeInBytes == sizeof(byte) ? "X2" : "X8";
+                var hexadecimalValue =
+                    $"0x{unchecked((uint)field.Value).ToString(hexadecimalFormat, CultureInfo.InvariantCulture)}";
+                var valueDisplay = field.IsFlags || field.DisplayAsHex
+                    ? hexadecimalValue
+                    : $"{field.Value.ToString(CultureInfo.InvariantCulture)} ({hexadecimalValue})";
+                if (field.Interpretation is not null)
+                {
+                    valueDisplay += $"; {field.Interpretation}";
+                }
+
+                return $"{field.Name}: {valueDisplay} [{field.StorageType} @ 0x{field.Offset:X2}, {field.SizeInBytes} bytes]";
+            }));
     }
 
     private static string[] FormatPrototypeBytes(

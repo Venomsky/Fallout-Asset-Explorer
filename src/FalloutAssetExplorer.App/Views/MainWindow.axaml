@@ -599,6 +599,20 @@
                         FontSize="10"
                         Text="{Binding MapObjectPrototypeDiagnosticDetails}"
                         TextWrapping="Wrap" />
+                    <TextBlock
+                        Foreground="#E7EAF0"
+                        FontFamily="Consolas"
+                        FontSize="9"
+                        IsVisible="{Binding HasMapObjectPrototypeSceneryFields}"
+                        Text="{Binding MapObjectPrototypeSceneryFieldsDisplay}"
+                        TextWrapping="Wrap" />
+                    <TextBlock
+                        Foreground="#E7EAF0"
+                        FontFamily="Consolas"
+                        FontSize="9"
+                        IsVisible="{Binding HasMapObjectPrototypeItemFields}"
+                        Text="{Binding MapObjectPrototypeItemFieldsDisplay}"
+                        TextWrapping="Wrap" />
                   </StackPanel>
                 </ScrollViewer>
                 <GridSplitter
