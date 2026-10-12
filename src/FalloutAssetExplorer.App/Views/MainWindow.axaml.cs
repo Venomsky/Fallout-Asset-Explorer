@@ -115,6 +115,16 @@ public partial class MainWindow : Window
         }
     }
 
+    private void MapIsometricFloorView_ObjectSelectionChanged(
+        object? sender,
+        MapObjectMarkerSelectionChangedEventArgs e)
+    {
+        if (DataContext is ArchiveBrowserViewModel viewModel)
+        {
+            viewModel.SelectMapObjectFromIsometricMarker(e.RecordIndex);
+        }
+    }
+
     private async void MapDiagnosticLayer_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (sender is ComboBox combo

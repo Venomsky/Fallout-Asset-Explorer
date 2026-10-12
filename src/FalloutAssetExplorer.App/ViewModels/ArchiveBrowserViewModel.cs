@@ -78,6 +78,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             Interval = GetPlaybackInterval()
         };
         _playbackTimer.Tick += PlaybackTimer_Tick;
+        MapObjectPlacements.CollectionChanged += MapObjectPlacements_CollectionChanged;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -337,6 +338,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
             if (SetProperty(ref _selectedMapElevationIndex, value))
             {
+                if (_selectedMapObject is not null
+                    && _selectedMapObject.ElevationGroup != value)
+                {
+                    SetSelectedMapObject(null);
+                }
+
                 OnPropertyChanged(nameof(SelectedMapGridValues));
                 OnPropertyChanged(nameof(HasMapGrid));
                 OnPropertyChanged(nameof(IsMapGridEmpty));
@@ -500,9 +507,22 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
     }
 
+    public int? SelectedMapObjectRecordIndex => _selectedMapObject?.RecordIndex;
+
     public void SelectMapObjectFromFloorMarker(MapObjectPlacement placement)
     {
         ArgumentNullException.ThrowIfNull(placement);
+        SetSelectedMapObject(placement);
+    }
+
+    public void SelectMapObjectFromIsometricMarker(int? recordIndex)
+    {
+        var placement = recordIndex is int selectedRecordIndex
+            ? MapObjectPlacements.FirstOrDefault(candidate =>
+                candidate.RecordIndex == selectedRecordIndex
+                && candidate.ElevationGroup == SelectedMapElevationIndex
+                && candidate.ParentRecordIndex is null)
+            : null;
         SetSelectedMapObject(placement);
     }
 
@@ -1558,8 +1578,21 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         if (SetProperty(ref _selectedMapObject, placement, nameof(SelectedMapObject)))
         {
+            OnPropertyChanged(nameof(SelectedMapObjectRecordIndex));
             MapObjectDetailsDisplay = placement?.Details
                 ?? "Select a parsed object to inspect its raw fields.";
+        }
+    }
+
+    private void MapObjectPlacements_CollectionChanged(
+        object? sender,
+        System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (_selectedMapObject is not null
+            && !MapObjectPlacements.Any(
+                placement => placement.RecordIndex == _selectedMapObject.RecordIndex))
+        {
+            SetSelectedMapObject(null);
         }
     }
 

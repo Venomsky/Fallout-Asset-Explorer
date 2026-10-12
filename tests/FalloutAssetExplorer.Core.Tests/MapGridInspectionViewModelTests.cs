@@ -151,4 +151,90 @@ public sealed class MapGridInspectionViewModelTests
         Assert.Same(placement, viewModel.SelectedMapObject);
         Assert.Equal(placement.Details, viewModel.MapObjectDetailsDisplay);
     }
+
+    [Fact]
+    public void IsometricMarkerSelection_ClearsWhenElevationChanges()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        viewModel.MapElevationOptions.Add(0);
+        viewModel.MapElevationOptions.Add(1);
+        viewModel.SelectedMapElevationIndex = 0;
+        var placement = CreateMarkerPlacement(21, elevation: 0);
+        viewModel.MapObjectPlacements.Add(placement);
+
+        viewModel.SelectMapObjectFromIsometricMarker(placement.RecordIndex);
+
+        Assert.Same(placement, viewModel.SelectedMapObject);
+        Assert.Equal(placement.RecordIndex, viewModel.SelectedMapObjectRecordIndex);
+
+        viewModel.SelectedMapElevationIndex = 1;
+
+        Assert.Null(viewModel.SelectedMapObject);
+        Assert.Null(viewModel.SelectedMapObjectRecordIndex);
+    }
+
+    [Fact]
+    public void IsometricMarkerSelection_ClearsWhenRecordLeavesCurrentMap()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        viewModel.MapElevationOptions.Add(0);
+        viewModel.SelectedMapElevationIndex = 0;
+        var placement = CreateMarkerPlacement(21, elevation: 0);
+        viewModel.MapObjectPlacements.Add(placement);
+        viewModel.SelectMapObjectFromIsometricMarker(placement.RecordIndex);
+
+        viewModel.MapObjectPlacements.Remove(placement);
+
+        Assert.Null(viewModel.SelectedMapObject);
+        Assert.Null(viewModel.SelectedMapObjectRecordIndex);
+    }
+
+    [Fact]
+    public void IsometricMarkerSelection_ClearsWhenEmptySpaceIsClicked()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        viewModel.MapElevationOptions.Add(0);
+        viewModel.SelectedMapElevationIndex = 0;
+        var placement = CreateMarkerPlacement(21, elevation: 0);
+        viewModel.MapObjectPlacements.Add(placement);
+        viewModel.SelectMapObjectFromIsometricMarker(placement.RecordIndex);
+
+        viewModel.SelectMapObjectFromIsometricMarker(null);
+
+        Assert.Null(viewModel.SelectedMapObject);
+        Assert.Null(viewModel.SelectedMapObjectRecordIndex);
+    }
+
+    private static MapObjectPlacement CreateMarkerPlacement(int recordIndex, int elevation) =>
+        new(
+            RecordIndex: recordIndex,
+            RecordOffset: 0,
+            ElevationGroup: elevation,
+            RawObjectId: 0,
+            RawHexIndex: 20_099,
+            HexX: 100,
+            HexY: 100,
+            RawOffsetX: 0,
+            RawOffsetY: 0,
+            RawScreenX: 0,
+            RawScreenY: 0,
+            RawFrame: 0,
+            RawRotation: 0,
+            RawFid: 0,
+            RawObjectFlags: 0,
+            StoredElevation: elevation,
+            RawPid: 0x03000001,
+            PidTypeIdentifier: 3,
+            RawCid: 0,
+            RawLightDistance: 0,
+            RawLightIntensity: 0,
+            RawField74: 0,
+            RawScriptId: 0,
+            RawScriptField: 0,
+            RawInventoryLength: 0,
+            RawInventoryCapacity: 0,
+            RawInventoryPointer: 0,
+            RawPayloadWords: [],
+            Warning: null,
+            UnsupportedReason: null);
 }

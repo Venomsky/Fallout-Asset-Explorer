@@ -172,6 +172,8 @@
                   Placements="{Binding MapObjectPlacements}"
                   Elevation="{Binding SelectedMapElevationIndex}"
                   ShowObjectMarkers="{Binding IsMapIsometricObjectMarkerLayerVisible}"
+                  SelectedRecordIndex="{Binding SelectedMapObjectRecordIndex}"
+                  ObjectSelectionChanged="MapIsometricFloorView_ObjectSelectionChanged"
                   RenderOptions.BitmapInterpolationMode="None"
                   IsHitTestVisible="True"
                   IsVisible="{Binding IsMapIsometricViewVisible}"
@@ -314,49 +316,49 @@
                 Text="{Binding PlaybackSpeedDisplay}" />
           </Grid>
           <TextBlock
-              Grid.Row="5"
+              Grid.Row="6"
               Foreground="#AAB2BF"
               FontSize="12"
               Text="{Binding PreviewDetails}"
               IsVisible="{Binding HasPreview}"
               TextWrapping="Wrap" />
           <TextBlock
-              Grid.Row="5"
+              Grid.Row="6"
               Foreground="#E7EAF0"
               FontSize="12"
               Text="{Binding MapGridCellDisplay}"
               IsVisible="{Binding IsMapSquareGridVisible}"
               TextWrapping="Wrap" />
           <TextBlock
-              Grid.Row="5"
+              Grid.Row="6"
               Foreground="#E7EAF0"
               FontSize="12"
               Text="{Binding MapGridCellDisplay}"
               IsVisible="{Binding IsMapFloorTileLayerVisible}"
               TextWrapping="Wrap" />
           <TextBlock
-              Grid.Row="6"
+              Grid.Row="7"
               Foreground="#AAB2BF"
               FontSize="12"
               Text="{Binding PreviewDetails}"
               IsVisible="{Binding IsMapInspector}"
               TextWrapping="Wrap" />
           <TextBlock
-              Grid.Row="7"
+              Grid.Row="8"
               Foreground="#AAB2BF"
               FontSize="12"
               Text="{Binding MapGridHoverDisplay}"
               IsVisible="{Binding IsMapSquareGridVisible}"
               TextWrapping="Wrap" />
           <TextBlock
-              Grid.Row="7"
+              Grid.Row="8"
               Foreground="#AAB2BF"
               FontSize="12"
               Text="Hex markers are diagnostic only; repeat-click stacked markers to cycle records."
               IsVisible="{Binding IsMapHexGridVisible}"
               TextWrapping="Wrap" />
           <StackPanel
-              Grid.Row="7"
+              Grid.Row="8"
               IsVisible="{Binding IsMapFloorTileLayerVisible}"
               Spacing="2">
             <TextBlock
@@ -371,27 +373,48 @@
                 TextWrapping="Wrap" />
           </StackPanel>
           <TextBlock
-            Grid.Row="7"
+            Grid.Row="8"
             Foreground="#AAB2BF"
             FontSize="12"
             Text="{Binding MapFloorTilesStatusDisplay}"
             IsVisible="{Binding IsMapIsometricFloorLayerVisible}"
             TextWrapping="Wrap" />
           <TextBlock
-              Grid.Row="8"
+              Grid.Row="9"
               Foreground="#AAB2BF"
               FontSize="12"
               Text="{Binding PaletteStatus}"
               TextWrapping="Wrap" />
           <TextBlock
-              Grid.Row="9"
+              Grid.Row="10"
               Foreground="#E7EAF0"
               FontWeight="SemiBold"
               Text="{Binding MapObjectStatusDisplay}"
               IsVisible="{Binding IsMapInspector}"
               TextWrapping="Wrap" />
+          <Border
+              Grid.Row="5"
+              Height="88"
+              Padding="6"
+              Background="#20242B"
+              BorderBrush="#343A44"
+              BorderThickness="1"
+              CornerRadius="4"
+              IsVisible="{Binding IsMapInspector}"
+              AutomationProperties.Name="Selected MAP object details">
+            <ScrollViewer
+                MaxHeight="72"
+                HorizontalScrollBarVisibility="Disabled"
+                VerticalScrollBarVisibility="Auto">
+              <TextBlock
+                  Foreground="#E7EAF0"
+                  FontSize="11"
+                  Text="{Binding MapObjectDetailsDisplay}"
+                  TextWrapping="Wrap" />
+            </ScrollViewer>
+          </Border>
           <ListBox
-              Grid.Row="10"
+              Grid.Row="11"
               MaxHeight="120"
               ItemsSource="{Binding MapObjectPlacements}"
               SelectedItem="{Binding SelectedMapObject, Mode=TwoWay}"
@@ -403,13 +426,6 @@
               </DataTemplate>
             </ListBox.ItemTemplate>
           </ListBox>
-          <TextBlock
-              Grid.Row="11"
-              Foreground="#AAB2BF"
-              FontSize="11"
-              Text="{Binding MapObjectDetailsDisplay}"
-              IsVisible="{Binding SelectedMapObject}"
-              TextWrapping="Wrap" />
         </Grid>
       </Border>
     </Grid>

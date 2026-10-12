@@ -19,6 +19,8 @@ public sealed class MapIsometricFloorView : Control
     private static readonly IBrush BackgroundBrush = new SolidColorBrush(Color.Parse("#171A1F"));
     private static readonly IPen ObjectMarkerOutlinePen =
         new Pen(new SolidColorBrush(Color.Parse("#171A1F")), 1);
+    private static readonly IPen SelectedObjectMarkerPen =
+        new Pen(new SolidColorBrush(Color.Parse("#F2C14E")), 2);
     private static readonly IBrush ItemMarkerBrush = new SolidColorBrush(Color.Parse("#F2C14E"));
     private static readonly IBrush CritterMarkerBrush = new SolidColorBrush(Color.Parse("#6FCF97"));
     private static readonly IBrush SceneryMarkerBrush = new SolidColorBrush(Color.Parse("#57CC99"));
@@ -50,6 +52,9 @@ public sealed class MapIsometricFloorView : Control
 
     public static readonly StyledProperty<bool> ShowObjectMarkersProperty =
         AvaloniaProperty.Register<MapIsometricFloorView, bool>(nameof(ShowObjectMarkers));
+
+    public static readonly StyledProperty<int?> SelectedRecordIndexProperty =
+        AvaloniaProperty.Register<MapIsometricFloorView, int?>(nameof(SelectedRecordIndex));
 
     private MapIsometricFloorCameraTransform? _cameraTransform;
     private IReadOnlyList<MapIsometricObjectMarker>? _objectMarkers;
@@ -93,6 +98,14 @@ public sealed class MapIsometricFloorView : Control
         get => GetValue(ShowObjectMarkersProperty);
         set => SetValue(ShowObjectMarkersProperty, value);
     }
+
+    public int? SelectedRecordIndex
+    {
+        get => GetValue(SelectedRecordIndexProperty);
+        set => SetValue(SelectedRecordIndexProperty, value);
+    }
+
+    public event EventHandler<MapObjectMarkerSelectionChangedEventArgs>? ObjectSelectionChanged;
 
     public void FitToView()
     {
@@ -169,15 +182,21 @@ public sealed class MapIsometricFloorView : Control
 
             InvalidateObjectMarkers();
             PrepareCameraForMarkersIfNeeded();
+            ValidateSelectedRecord();
         }
         else if (change.Property == ElevationProperty)
         {
             InvalidateObjectMarkers();
             PrepareCameraForMarkersIfNeeded();
+            ValidateSelectedRecord();
         }
         else if (change.Property == ShowObjectMarkersProperty)
         {
             PrepareCameraForMarkersIfNeeded();
+        }
+        else if (change.Property == SelectedRecordIndexProperty)
+        {
+            ValidateSelectedRecord();
         }
 
         if (change.Property == ValuesProperty
@@ -185,7 +204,8 @@ public sealed class MapIsometricFloorView : Control
             || change.Property == AssetRevisionProperty
             || change.Property == PlacementsProperty
             || change.Property == ElevationProperty
-            || change.Property == ShowObjectMarkersProperty)
+            || change.Property == ShowObjectMarkersProperty
+            || change.Property == SelectedRecordIndexProperty)
         {
             InvalidateVisual();
         }
@@ -249,7 +269,7 @@ public sealed class MapIsometricFloorView : Control
 
         if (ShowObjectMarkers)
         {
-            var markerRadius = Math.Clamp(camera.Scale * 3, 2.5, 6);
+            var markerRadius = MapIsometricObjectMarkerHitTest.GetMarkerRadius(camera.Scale);
             foreach (var marker in GetObjectMarkers(projection))
             {
                 var center = camera.ToScreen(marker.WorldPosition);
@@ -272,6 +292,16 @@ public sealed class MapIsometricFloorView : Control
                     center,
                     markerRadius,
                     markerRadius);
+
+                if (marker.Placement.RecordIndex == SelectedRecordIndex)
+                {
+                    context.DrawEllipse(
+                        null,
+                        SelectedObjectMarkerPen,
+                        center,
+                        markerRadius + 2,
+                        markerRadius + 2);
+                }
             }
         }
     }
@@ -304,6 +334,27 @@ public sealed class MapIsometricFloorView : Control
     {
         base.OnPointerPressed(e);
         var properties = e.GetCurrentPoint(this).Properties;
+        if (properties.IsLeftButtonPressed && ShowObjectMarkers)
+        {
+            int? recordIndex = null;
+            if (TryGetProjectionTransform(out var projection)
+                && TryGetCurrentCamera(out var camera))
+            {
+                recordIndex = MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
+                    GetObjectMarkers(projection),
+                    camera,
+                    e.GetPosition(this),
+                    Bounds.Width,
+                    Bounds.Height);
+            }
+
+            ObjectSelectionChanged?.Invoke(
+                this,
+                new MapObjectMarkerSelectionChangedEventArgs(recordIndex));
+            e.Handled = true;
+            return;
+        }
+
         if (!properties.IsRightButtonPressed && !properties.IsMiddleButtonPressed)
         {
             return;
@@ -418,7 +469,23 @@ public sealed class MapIsometricFloorView : Control
     {
         InvalidateObjectMarkers();
         PrepareCameraForMarkersIfNeeded();
+        ValidateSelectedRecord();
         InvalidateVisual();
+    }
+
+    private void ValidateSelectedRecord()
+    {
+        if (SelectedRecordIndex is not int selectedRecordIndex
+            || !TryGetProjectionTransform(out var projection)
+            || GetObjectMarkers(projection).Any(
+                marker => marker.Placement.RecordIndex == selectedRecordIndex))
+        {
+            return;
+        }
+
+        ObjectSelectionChanged?.Invoke(
+            this,
+            new MapObjectMarkerSelectionChangedEventArgs(null));
     }
 
     private void InvalidateObjectMarkers()

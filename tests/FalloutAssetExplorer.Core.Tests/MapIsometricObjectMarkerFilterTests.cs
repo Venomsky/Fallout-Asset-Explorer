@@ -64,6 +64,133 @@ public sealed class MapIsometricObjectMarkerFilterTests
         Assert.Empty(MapIsometricObjectMarkerFilter.GetMarkers([], 0, projection));
     }
 
+    [Fact]
+    public void HitTest_SelectsMarkerAndIgnoresClicksOutsideItsRenderedCircle()
+    {
+        var markers = MapIsometricObjectMarkerFilter.GetMarkers(
+            [CreatePlacement(12, 20_099, 100, 100, elevation: 0)],
+            0,
+            CreateProjection());
+        var camera = new MapIsometricFloorCameraTransform(1, 0, 0);
+
+        Assert.Equal(
+            12,
+            MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
+                markers,
+                camera,
+                new Point(288, 230),
+                640,
+                480));
+        Assert.Null(MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
+            markers,
+            camera,
+            new Point(292, 230),
+            640,
+            480));
+    }
+
+    [Fact]
+    public void HitTest_UsesZoomedAndPannedScreenPositionAndMarkerRadius()
+    {
+        var markers = MapIsometricObjectMarkerFilter.GetMarkers(
+            [CreatePlacement(12, 20_099, 100, 100, elevation: 0)],
+            0,
+            CreateProjection());
+        var camera = new MapIsometricFloorCameraTransform(2, 100, -30);
+
+        Assert.Equal(6, MapIsometricObjectMarkerHitTest.GetMarkerRadius(camera.Scale));
+        Assert.Equal(
+            12,
+            MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
+                markers,
+                camera,
+                new Point(680, 433),
+                800,
+                600));
+        Assert.Null(MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
+            markers,
+            camera,
+            new Point(683, 430),
+            800,
+            600));
+    }
+
+    [Fact]
+    public void HitTest_PicksNearestOverlapAndBreaksExactTiesByRenderOrder()
+    {
+        var markers = new[]
+        {
+            new MapIsometricObjectMarker(
+                CreatePlacement(12, 20_099, 100, 100, elevation: 0),
+                new Point(100, 100)),
+            new MapIsometricObjectMarker(
+                CreatePlacement(13, 20_099, 100, 100, elevation: 0),
+                new Point(100, 100)),
+            new MapIsometricObjectMarker(
+                CreatePlacement(14, 20_098, 101, 100, elevation: 0),
+                new Point(103, 100))
+        };
+        var camera = new MapIsometricFloorCameraTransform(2, 0, 0);
+
+        Assert.Equal(
+            14,
+            MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
+                markers,
+                camera,
+                new Point(203, 200),
+                640,
+                480));
+        Assert.Equal(
+            13,
+            MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
+                markers,
+                camera,
+                new Point(201, 200),
+                640,
+                480));
+    }
+
+    [Fact]
+    public void HitTest_RespectsViewportClippingAndFilteredOutRecords()
+    {
+        var placements = new[]
+        {
+            CreatePlacement(12, 20_099, 100, 100, elevation: 0),
+            CreatePlacement(13, 20_099, 100, 100, elevation: 0) with { ParentRecordIndex = 12 },
+            CreatePlacement(14, -1, null, null, elevation: 0)
+        };
+        var markers = MapIsometricObjectMarkerFilter.GetMarkers(
+            placements,
+            0,
+            CreateProjection());
+
+        Assert.Equal(
+            12,
+            MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
+                markers,
+                new MapIsometricFloorCameraTransform(1, -290, 0),
+                new Point(0, 230),
+                640,
+                480));
+        Assert.Null(MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
+            markers,
+            new MapIsometricFloorCameraTransform(1, -300, 0),
+            new Point(0, 230),
+            640,
+            480));
+
+        var filteredOutMarkers = MapIsometricObjectMarkerFilter.GetMarkers(
+            placements.Skip(1).ToArray(),
+            0,
+            CreateProjection());
+        Assert.Null(MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
+            filteredOutMarkers,
+            new MapIsometricFloorCameraTransform(1, 0, 0),
+            new Point(288, 230),
+            640,
+            480));
+    }
+
     private static MapIsometricFloorViewTransform CreateProjection()
     {
         Assert.True(MapIsometricFloorGeometry.TryCreateViewTransform(

@@ -38,3 +38,75 @@ public static class MapIsometricObjectMarkerFilter
         return markers;
     }
 }
+
+public static class MapIsometricObjectMarkerHitTest
+{
+    public static double GetMarkerRadius(double cameraScale) =>
+        Math.Clamp(cameraScale * 3, 2.5, 6);
+
+    public static int? GetRecordIndexAtPosition(
+        IReadOnlyList<MapIsometricObjectMarker> markers,
+        MapIsometricFloorCameraTransform camera,
+        Point position,
+        double viewWidth,
+        double viewHeight)
+    {
+        ArgumentNullException.ThrowIfNull(markers);
+        if (!camera.IsValid
+            || !double.IsFinite(position.X)
+            || !double.IsFinite(position.Y)
+            || !double.IsFinite(viewWidth)
+            || !double.IsFinite(viewHeight)
+            || viewWidth <= 0
+            || viewHeight <= 0
+            || position.X < 0
+            || position.X >= viewWidth
+            || position.Y < 0
+            || position.Y >= viewHeight)
+        {
+            return null;
+        }
+
+        var radius = GetMarkerRadius(camera.Scale);
+        var radiusSquared = radius * radius;
+        var closestDistanceSquared = double.PositiveInfinity;
+        var closestMarkerIndex = -1;
+        for (var index = 0; index < markers.Count; index++)
+        {
+            var center = camera.ToScreen(markers[index].WorldPosition);
+            var bounds = new Rect(
+                center.X - radius,
+                center.Y - radius,
+                radius * 2,
+                radius * 2);
+            if (!MapIsometricFloorViewportGeometry.IntersectsViewport(bounds, viewWidth, viewHeight))
+            {
+                continue;
+            }
+
+            var deltaX = position.X - center.X;
+            var deltaY = position.Y - center.Y;
+            var distanceSquared = deltaX * deltaX + deltaY * deltaY;
+            if (distanceSquared > radiusSquared)
+            {
+                continue;
+            }
+
+            if (distanceSquared < closestDistanceSquared
+                || (distanceSquared == closestDistanceSquared && index > closestMarkerIndex))
+            {
+                closestDistanceSquared = distanceSquared;
+                closestMarkerIndex = index;
+            }
+        }
+
+        return closestMarkerIndex >= 0
+            ? markers[closestMarkerIndex].Placement.RecordIndex
+            : null;
+    }
+}
+
+public sealed class MapObjectMarkerSelectionChangedEventArgs(int? recordIndex) : EventArgs
+{
+    public int? RecordIndex { get; } = recordIndex;
+}
