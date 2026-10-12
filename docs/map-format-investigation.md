@@ -329,7 +329,7 @@ Both matched PRO resources are 45 bytes in this installation, and the `scenery.t
 
 ### Smallest safe follow-up and remaining limits
 
-The targeted Fallout 2 PRO-list/prototype-prefix lookup now advances validated Door, Stairs, Elevator, Ladder Up/Down, and GENERIC scenery records, plus standalone Item records with the confirmed subtype layouts above, without parsing unrelated PRO fields. Any object with positive inventory length still stops safely; recursive inventory and unsupported object/subtype layouts remain outside the parser's scope. Unknown subtype/PID combinations fail closed.
+The targeted Fallout 2 PRO-list/prototype lookup now advances validated Door, Stairs, Elevator, Ladder Up/Down, and GENERIC scenery records, plus Item records with the confirmed subtype layouts above, without parsing unrelated PRO fields. The selected-object Scenery diagnostic additionally displays the confirmed PRO fields above while leaving unknown fields raw. The decoder recursively reads the inventory of each record whose inventory-length field is positive and preserves the raw `tile` value of every nested record; unsupported object/subtype layouts still stop safely. Unknown subtype/PID combinations fail closed.
 
 This research verifies Fallout 2 CE at the pinned revision and the local Fallout 2 samples. It does not independently establish identical PRO list or subtype behavior for Fallout 1 CE, third-party archives/mods, malformed PRO data, or all MAP versions. Do not reuse Fallout 2's exact resource-resolution assumptions for Fallout 1 without checking its corresponding pinned source and samples.
 
