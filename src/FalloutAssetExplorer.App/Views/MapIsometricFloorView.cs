@@ -61,6 +61,8 @@ public sealed class MapIsometricFloorView : Control
     private MapIsometricFloorViewTransform? _objectMarkersProjection;
     private int? _objectMarkersElevation;
     private Point? _panLastPosition;
+    private Point? _pointerPosition;
+    private string? _hoveredPrototypeFileName;
     private bool _isFitToView = true;
 
     public uint[]? Values
@@ -110,6 +112,7 @@ public sealed class MapIsometricFloorView : Control
     public void FitToView()
     {
         UpdateFitCamera();
+        RefreshHoverToolTip();
         InvalidateVisual();
     }
 
@@ -132,6 +135,7 @@ public sealed class MapIsometricFloorView : Control
         if (_isFitToView)
         {
             UpdateFitCamera();
+            RefreshHoverToolTip();
             InvalidateVisual();
             return;
         }
@@ -154,6 +158,7 @@ public sealed class MapIsometricFloorView : Control
             UpdateFitCamera();
         }
 
+        RefreshHoverToolTip();
         InvalidateVisual();
     }
 
@@ -208,6 +213,7 @@ public sealed class MapIsometricFloorView : Control
             || change.Property == SelectedRecordIndexProperty)
         {
             InvalidateVisual();
+            RefreshHoverToolTip();
         }
     }
 
@@ -309,25 +315,34 @@ public sealed class MapIsometricFloorView : Control
     protected override void OnPointerMoved(PointerEventArgs e)
     {
         base.OnPointerMoved(e);
-        if (_panLastPosition is not Point last
-            || !TryGetCurrentCamera(out var current)
-            || !TryGetContentBounds(out var contentBounds))
+        var position = e.GetPosition(this);
+        if (_panLastPosition is Point last
+            && TryGetCurrentCamera(out var current)
+            && TryGetContentBounds(out var contentBounds))
         {
+            _cameraTransform = MapIsometricFloorViewportGeometry.Pan(
+                current,
+                position.X - last.X,
+                position.Y - last.Y,
+                contentBounds,
+                Bounds.Width,
+                Bounds.Height);
+            _panLastPosition = position;
+            _isFitToView = false;
+            UpdateHoverToolTip(position);
+            InvalidateVisual();
+            e.Handled = true;
             return;
         }
 
-        var position = e.GetPosition(this);
-        _cameraTransform = MapIsometricFloorViewportGeometry.Pan(
-            current,
-            position.X - last.X,
-            position.Y - last.Y,
-            contentBounds,
-            Bounds.Width,
-            Bounds.Height);
-        _panLastPosition = position;
-        _isFitToView = false;
-        InvalidateVisual();
-        e.Handled = true;
+        UpdateHoverToolTip(position);
+    }
+
+    protected override void OnPointerExited(PointerEventArgs e)
+    {
+        base.OnPointerExited(e);
+        _pointerPosition = null;
+        SetHoveredPrototypeFileName(null);
     }
 
     protected override void OnPointerPressed(PointerPressedEventArgs e)
@@ -411,6 +426,7 @@ public sealed class MapIsometricFloorView : Control
             Bounds.Width,
             Bounds.Height);
         _isFitToView = false;
+        UpdateHoverToolTip(position);
         InvalidateVisual();
         e.Handled = true;
     }
@@ -470,7 +486,49 @@ public sealed class MapIsometricFloorView : Control
         InvalidateObjectMarkers();
         PrepareCameraForMarkersIfNeeded();
         ValidateSelectedRecord();
+        RefreshHoverToolTip();
         InvalidateVisual();
+    }
+
+    private void RefreshHoverToolTip()
+    {
+        if (_pointerPosition is Point position)
+        {
+            UpdateHoverToolTip(position);
+        }
+    }
+
+    private void UpdateHoverToolTip(Point position)
+    {
+        _pointerPosition = position;
+        string? prototypeFileName = null;
+        if (ShowObjectMarkers
+            && TryGetProjectionTransform(out var projection)
+            && TryGetCurrentCamera(out var camera))
+        {
+            prototypeFileName = MapIsometricObjectMarkerHitTest.GetPrototypeFileNameAtPosition(
+                GetObjectMarkers(projection),
+                camera,
+                position,
+                Bounds.Width,
+                Bounds.Height);
+        }
+
+        SetHoveredPrototypeFileName(prototypeFileName);
+    }
+
+    private void SetHoveredPrototypeFileName(string? prototypeFileName)
+    {
+        if (string.Equals(_hoveredPrototypeFileName, prototypeFileName, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _hoveredPrototypeFileName = prototypeFileName;
+        var toolTip = MapIsometricObjectMarkerHitTest.FormatPrototypeFileToolTip(prototypeFileName);
+        ToolTip.SetIsOpen(this, false);
+        ToolTip.SetTip(this, toolTip);
+        ToolTip.SetIsOpen(this, toolTip is not null);
     }
 
     private void ValidateSelectedRecord()

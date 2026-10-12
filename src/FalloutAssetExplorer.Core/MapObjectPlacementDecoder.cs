@@ -250,6 +250,7 @@ public static class MapObjectPlacementDecoder
         var rawPid = rawHeader[11];
         var pidType = (int)((uint)rawPid >> 24);
         var payloadWords = new List<int>();
+        string? prototypeFileName = null;
         string? unsupportedReason = null;
 
         if (unsupportedReason is null)
@@ -272,6 +273,7 @@ public static class MapObjectPlacementDecoder
                         var itemType = await itemResolver.ResolveAsync(rawPid, cancellationToken);
                         if (itemType.Type is int resolvedType)
                         {
+                            prototypeFileName = itemType.PrototypeFileName;
                             var payloadWordCount = resolvedType switch
                             {
                                 0 or 1 or 2 => 0,
@@ -299,6 +301,10 @@ public static class MapObjectPlacementDecoder
                 else if (pidType == 2)
                 {
                     var sceneryType = await sceneryResolver.ResolveAsync(rawPid, cancellationToken);
+                    if (sceneryType.Type is not null)
+                    {
+                        prototypeFileName = sceneryType.PrototypeFileName;
+                    }
 
                     if (sceneryType.Type == 0)
                     {
@@ -438,7 +444,8 @@ public static class MapObjectPlacementDecoder
         {
             ParentRecordIndex = parentRecordIndex,
             InventoryDepth = inventoryDepth,
-            InventoryQuantity = inventoryQuantity
+            InventoryQuantity = inventoryQuantity,
+            PrototypeFileName = pidType is 0 or 2 ? prototypeFileName : null
         };
         objects.Add(placement);
 
@@ -515,9 +522,11 @@ public static class MapObjectPlacementDecoder
         string prototypeCategory)
     {
         private Task<(byte[]? Bytes, string? Error)>? _listTask;
-        private readonly Dictionary<int, Task<(int? Type, string? Error)>> _results = [];
+        private readonly Dictionary<int, Task<(int? Type, string? PrototypeFileName, string? Error)>> _results = [];
 
-        public Task<(int? Type, string? Error)> ResolveAsync(int pid, CancellationToken cancellationToken)
+        public Task<(int? Type, string? PrototypeFileName, string? Error)> ResolveAsync(
+            int pid,
+            CancellationToken cancellationToken)
         {
             if (_results.TryGetValue(pid, out var result))
             {
@@ -529,7 +538,7 @@ public static class MapObjectPlacementDecoder
             return result;
         }
 
-        private async Task<(int? Type, string? Error)> ResolveCoreAsync(
+        private async Task<(int? Type, string? PrototypeFileName, string? Error)> ResolveCoreAsync(
             int pid,
             CancellationToken cancellationToken)
         {
@@ -537,7 +546,7 @@ public static class MapObjectPlacementDecoder
                 || archive.Game != FalloutGame.Fallout2
                 || archive.Format != ArchiveFormat.Dat2)
             {
-                return (null, "the active Fallout 2 DAT2 archive is unavailable");
+                return (null, null, "the active Fallout 2 DAT2 archive is unavailable");
             }
 
             _listTask ??= ReadPrototypeListAsync(
@@ -549,13 +558,13 @@ public static class MapObjectPlacementDecoder
             var listResult = await _listTask;
             if (listResult.Bytes is null)
             {
-                return (null, listResult.Error);
+                return (null, null, listResult.Error);
             }
 
             var listIndex = pid & 0x00ffffff;
             if (listIndex == 0)
             {
-                return (null, $"the {prototypeCategory} PID has an invalid zero list index");
+                return (null, null, $"the {prototypeCategory} PID has an invalid zero list index");
             }
 
             var lineIndex = 0;
@@ -575,30 +584,30 @@ public static class MapObjectPlacementDecoder
 
             if (string.IsNullOrWhiteSpace(prototypeName))
             {
-                return (null, $"{prototypeCategory} PID list index {listIndex} is outside the prototype list");
+                return (null, null, $"{prototypeCategory} PID list index {listIndex} is outside the prototype list");
             }
 
             if (prototypeName.IndexOfAny(['/', '\\', ':']) >= 0
                 || prototypeName is "." or ".."
                 || !string.Equals(Path.GetExtension(prototypeName), ".PRO", StringComparison.OrdinalIgnoreCase))
             {
-                return (null, $"the {prototypeCategory} prototype list contains an unsafe or invalid filename");
+                return (null, null, $"the {prototypeCategory} prototype list contains an unsafe or invalid filename");
             }
 
             var prototypeEntry = FindArchiveEntry(archive, $"proto/{prototypeDirectory}/{prototypeName}");
             if (prototypeEntry is null)
             {
-                return (null, $"the {prototypeCategory} prototype '{prototypeName}' is missing");
+                return (null, null, $"the {prototypeCategory} prototype '{prototypeName}' is missing");
             }
 
             if (!TryReadEntrySize(prototypeEntry, MaximumPrototypeSize, out var prototypeSize, out var sizeError))
             {
-                return (null, $"the {prototypeCategory} prototype {sizeError}");
+                return (null, null, $"the {prototypeCategory} prototype {sizeError}");
             }
 
             if (prototypeSize < MinimumPrototypeSize)
             {
-                return (null, $"the {prototypeCategory} prototype is shorter than {MinimumPrototypeSize} bytes");
+                return (null, null, $"the {prototypeCategory} prototype is shorter than {MinimumPrototypeSize} bytes");
             }
 
             byte[] prototypeBytes;
@@ -609,24 +618,24 @@ public static class MapObjectPlacementDecoder
             catch (InvalidDataException exception)
             {
                 System.Diagnostics.Debug.WriteLine($"MAP {prototypeCategory} prototype read failed: {exception}");
-                return (null, $"the {prototypeCategory} prototype could not be read");
+                return (null, null, $"the {prototypeCategory} prototype could not be read");
             }
             catch (IOException exception)
             {
                 System.Diagnostics.Debug.WriteLine($"MAP {prototypeCategory} prototype read failed: {exception}");
-                return (null, $"the {prototypeCategory} prototype could not be read");
+                return (null, null, $"the {prototypeCategory} prototype could not be read");
             }
 
             var prototypePid = BinaryPrimitives.ReadInt32BigEndian(prototypeBytes.AsSpan(0, sizeof(int)));
             if (prototypePid != pid || (uint)prototypePid >> 24 != expectedPidType)
             {
-                return (null, $"the {prototypeCategory} prototype PID 0x{prototypePid:X8} does not match MAP PID 0x{pid:X8}");
+                return (null, null, $"the {prototypeCategory} prototype PID 0x{prototypePid:X8} does not match MAP PID 0x{pid:X8}");
             }
 
             var prototypeType = BinaryPrimitives.ReadInt32BigEndian(prototypeBytes.AsSpan(32, sizeof(int)));
             return prototypeType is >= 0 && prototypeType <= maximumSubtype
-                ? (prototypeType, null)
-                : (null, $"the {prototypeCategory} prototype has unsupported subtype {prototypeType}");
+                ? (prototypeType, prototypeName, null)
+                : (null, null, $"the {prototypeCategory} prototype has unsupported subtype {prototypeType}");
         }
 
         private static async Task<(byte[]? Bytes, string? Error)> ReadPrototypeListAsync(
@@ -826,6 +835,8 @@ public sealed record MapObjectPlacement(
 
     public int? InventoryQuantity { get; init; }
 
+    public string? PrototypeFileName { get; init; }
+
     public string ObjectTypeDisplay => PidTypeIdentifier switch
     {
         >= 0 and <= 10 => PidTypeIdentifier switch
@@ -861,6 +872,7 @@ public sealed record MapObjectPlacement(
             + (InventoryQuantity is int quantity ? $" | Quantity: {quantity}" : string.Empty)
         + Environment.NewLine
         + $"Type: {ObjectTypeDisplay} (PID type {PidTypeIdentifier}) | PID: 0x{RawPid:X8} | FID: 0x{RawFid:X8}"
+        + (PrototypeFileName is null ? string.Empty : Environment.NewLine + $"Prototype file: {PrototypeFileName}")
         + Environment.NewLine
         + $"Hex index: {RawHexIndex} | Coordinates: {(HexX is int x && HexY is int y ? $"({x}, {y})" : "unavailable")} | Elevation group: {ElevationGroup} | Stored elevation: {StoredElevation}"
         + Environment.NewLine

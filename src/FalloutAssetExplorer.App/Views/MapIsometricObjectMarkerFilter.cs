@@ -49,6 +49,31 @@ public static class MapIsometricObjectMarkerHitTest
         MapIsometricFloorCameraTransform camera,
         Point position,
         double viewWidth,
+        double viewHeight) =>
+        GetMarkerAtPosition(markers, camera, position, viewWidth, viewHeight)?.Placement.RecordIndex;
+
+    public static string? GetPrototypeFileNameAtPosition(
+        IReadOnlyList<MapIsometricObjectMarker> markers,
+        MapIsometricFloorCameraTransform camera,
+        Point position,
+        double viewWidth,
+        double viewHeight)
+    {
+        var marker = GetMarkerAtPosition(markers, camera, position, viewWidth, viewHeight);
+        var prototypeFileName = marker?.Placement.PrototypeFileName;
+        return string.IsNullOrWhiteSpace(prototypeFileName) ? null : prototypeFileName;
+    }
+
+    public static string? FormatPrototypeFileToolTip(string? prototypeFileName) =>
+        string.IsNullOrWhiteSpace(prototypeFileName)
+            ? null
+            : $"Prototype file: {prototypeFileName}";
+
+    private static MapIsometricObjectMarker? GetMarkerAtPosition(
+        IReadOnlyList<MapIsometricObjectMarker> markers,
+        MapIsometricFloorCameraTransform camera,
+        Point position,
+        double viewWidth,
         double viewHeight)
     {
         ArgumentNullException.ThrowIfNull(markers);
@@ -101,7 +126,7 @@ public static class MapIsometricObjectMarkerHitTest
         }
 
         return closestMarkerIndex >= 0
-            ? markers[closestMarkerIndex].Placement.RecordIndex
+            ? markers[closestMarkerIndex]
             : null;
     }
 }

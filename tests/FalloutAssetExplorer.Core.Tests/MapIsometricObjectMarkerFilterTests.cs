@@ -90,6 +90,81 @@ public sealed class MapIsometricObjectMarkerFilterTests
     }
 
     [Fact]
+    public void HoverTarget_ReturnsVerifiedPrototypeFileNameAndTooltipText()
+    {
+        const string prototypeFileName = "scenery/example.pro";
+        var placement = CreatePlacement(12, 20_099, 100, 100, elevation: 0) with
+        {
+            PrototypeFileName = prototypeFileName
+        };
+        var markers = MapIsometricObjectMarkerFilter.GetMarkers(
+            [placement],
+            0,
+            CreateProjection());
+
+        var resolvedFileName = MapIsometricObjectMarkerHitTest.GetPrototypeFileNameAtPosition(
+            markers,
+            new MapIsometricFloorCameraTransform(1, 0, 0),
+            new Point(288, 230),
+            640,
+            480);
+
+        Assert.Equal(prototypeFileName, resolvedFileName);
+        Assert.Equal(
+            $"Prototype file: {prototypeFileName}",
+            MapIsometricObjectMarkerHitTest.FormatPrototypeFileToolTip(resolvedFileName));
+    }
+
+    [Fact]
+    public void HoverTarget_DoesNotCreateTooltipForMarkerWithoutVerifiedFileName()
+    {
+        var markers = MapIsometricObjectMarkerFilter.GetMarkers(
+            [CreatePlacement(12, 20_099, 100, 100, elevation: 0)],
+            0,
+            CreateProjection());
+
+        var resolvedFileName = MapIsometricObjectMarkerHitTest.GetPrototypeFileNameAtPosition(
+            markers,
+            new MapIsometricFloorCameraTransform(1, 0, 0),
+            new Point(288, 230),
+            640,
+            480);
+
+        Assert.Null(resolvedFileName);
+        Assert.Null(MapIsometricObjectMarkerHitTest.FormatPrototypeFileToolTip(resolvedFileName));
+        Assert.Null(MapIsometricObjectMarkerHitTest.FormatPrototypeFileToolTip(" "));
+    }
+
+    [Fact]
+    public void HoverTarget_ClearsWhenPointerMovesAwayFromMarker()
+    {
+        var placement = CreatePlacement(12, 20_099, 100, 100, elevation: 0) with
+        {
+            PrototypeFileName = "items/example.pro"
+        };
+        var markers = MapIsometricObjectMarkerFilter.GetMarkers(
+            [placement],
+            0,
+            CreateProjection());
+        var camera = new MapIsometricFloorCameraTransform(1, 0, 0);
+
+        Assert.Equal(
+            "items/example.pro",
+            MapIsometricObjectMarkerHitTest.GetPrototypeFileNameAtPosition(
+                markers,
+                camera,
+                new Point(288, 230),
+                640,
+                480));
+        Assert.Null(MapIsometricObjectMarkerHitTest.GetPrototypeFileNameAtPosition(
+            markers,
+            camera,
+            new Point(300, 230),
+            640,
+            480));
+    }
+
+    [Fact]
     public void HitTest_UsesZoomedAndPannedScreenPositionAndMarkerRadius()
     {
         var markers = MapIsometricObjectMarkerFilter.GetMarkers(

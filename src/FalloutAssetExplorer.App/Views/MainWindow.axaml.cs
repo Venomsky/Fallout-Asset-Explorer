@@ -125,6 +125,14 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ClearMapObjectSearch_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is ArchiveBrowserViewModel viewModel)
+        {
+            viewModel.MapObjectSearchText = string.Empty;
+        }
+    }
+
     private async void MapDiagnosticLayer_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (sender is ComboBox combo

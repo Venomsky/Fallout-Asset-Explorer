@@ -398,6 +398,26 @@ public sealed class MapObjectPlacementDecoderTests
 
         Assert.False(decoded.IsComplete);
         Assert.Contains("does not match MAP PID", decoded.UnsupportedReason);
+        Assert.Null(Assert.Single(decoded.Objects).PrototypeFileName);
+    }
+
+    [Fact]
+    public async Task DecodeAsync_StoresSceneryPrototypeFileNameFromOneBasedListIndex()
+    {
+        const int sceneryPid = 0x02000002;
+        const string prototypeFileName = "Tree123.pro";
+        var archive = PrototypeArchive.Create(
+            [
+                (prototypeFileName, PrototypeArchive.CreateSceneryPrototype(sceneryPid, sceneryType: 5))
+            ],
+            listContent: $"unused.pro\n{prototypeFileName}\n");
+
+        var decoded = await DecodeSingleSceneryAsync(sceneryPid, archive);
+
+        var placement = Assert.Single(decoded.Objects);
+        Assert.True(decoded.IsComplete, decoded.UnsupportedReason);
+        Assert.Equal(prototypeFileName, placement.PrototypeFileName);
+        Assert.Contains($"Prototype file: {prototypeFileName}", placement.Details);
     }
 
     [Theory]
@@ -445,7 +465,9 @@ public sealed class MapObjectPlacementDecoderTests
 
         var decoded = await DecodeSingleSceneryAsync(0x02000001, archive);
 
+        Assert.False(decoded.IsComplete);
         Assert.Contains("prototype '00000001.PRO' is missing", decoded.UnsupportedReason);
+        Assert.Null(Assert.Single(decoded.Objects).PrototypeFileName);
     }
 
     [Fact]
@@ -590,6 +612,25 @@ public sealed class MapObjectPlacementDecoderTests
     }
 
     [Fact]
+    public async Task DecodeAsync_StoresItemPrototypeFileNameFromOneBasedListIndex()
+    {
+        const int itemPid = 0x00000002;
+        const string prototypeFileName = "MetalArmor.pro";
+        var archive = PrototypeArchive.CreateItems(
+            [
+                (prototypeFileName, PrototypeArchive.CreateItemPrototype(itemPid, itemType: 0))
+            ],
+            listContent: $"unused.pro\n{prototypeFileName}\n");
+
+        var decoded = await DecodeSingleItemAsync(itemPid, archive);
+
+        var placement = Assert.Single(decoded.Objects);
+        Assert.True(decoded.IsComplete, decoded.UnsupportedReason);
+        Assert.Equal(prototypeFileName, placement.PrototypeFileName);
+        Assert.Contains($"Prototype file: {prototypeFileName}", placement.Details);
+    }
+
+    [Fact]
     public async Task DecodeAsync_RejectsTruncatedWeaponItemPayload()
     {
         const int itemPid = 0x00000001;
@@ -644,6 +685,7 @@ public sealed class MapObjectPlacementDecoderTests
 
         Assert.False(decoded.IsComplete);
         Assert.Contains("item prototype '00000001.PRO' is missing", decoded.UnsupportedReason);
+        Assert.Null(Assert.Single(decoded.Objects).PrototypeFileName);
     }
 
     [Fact]
@@ -672,6 +714,7 @@ public sealed class MapObjectPlacementDecoderTests
         Assert.False(decoded.IsComplete);
         Assert.Contains("item prototype PID", decoded.UnsupportedReason);
         Assert.Contains("does not match MAP PID", decoded.UnsupportedReason);
+        Assert.Null(Assert.Single(decoded.Objects).PrototypeFileName);
     }
 
     [Fact]
@@ -685,6 +728,7 @@ public sealed class MapObjectPlacementDecoderTests
 
         Assert.False(decoded.IsComplete);
         Assert.Contains("item prototype has unsupported subtype 7", decoded.UnsupportedReason);
+        Assert.Null(Assert.Single(decoded.Objects).PrototypeFileName);
     }
 
     [Fact]
