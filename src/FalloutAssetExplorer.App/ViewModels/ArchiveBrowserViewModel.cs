@@ -1028,7 +1028,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 return;
             }
 
-            if (string.Equals(selectedEntry.Extension, ".MAP", StringComparison.OrdinalIgnoreCase))
+            var previewRoute = PreviewRouteSelector.Select(selectedEntry.Extension);
+            if (previewRoute == PreviewRoute.Map)
             {
                 _isMapInspector = true;
                 OnPropertyChanged(nameof(IsMapInspector));
@@ -1066,6 +1067,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                     System.Diagnostics.Debug.WriteLine($"MAP object decoding failed: {exception}");
                     objectPlacementError = "MAP object data is malformed or truncated; header and grid inspection remain available.";
                 }
+
+                cancellation.Token.ThrowIfCancellationRequested();
 
                 _mapTileGridData = tileGrids;
                 MapElevationOptions.Clear();
@@ -1132,7 +1135,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 return;
             }
 
-            if (!string.Equals(selectedEntry.Extension, ".FRM", StringComparison.OrdinalIgnoreCase))
+            if (previewRoute != PreviewRoute.Frm)
             {
                 PreviewMessage = "Select a .FRM or .MAP entry to inspect.";
                 return;

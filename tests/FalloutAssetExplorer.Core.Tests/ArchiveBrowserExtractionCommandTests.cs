@@ -54,6 +54,22 @@ public sealed class ArchiveBrowserExtractionCommandTests
             notifiedProperties.Add(args.PropertyName);
     }
 
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_LeavesUnsupportedEntriesBrowsableAndExtractable()
+    {
+        using var archiveFile = new TemporaryArchive(CreateDat1Archive("ART/PROTO/TEST.PRO"));
+        using var viewModel = new ArchiveBrowserViewModel();
+
+        await viewModel.LoadArchiveAsync(archiveFile.Path);
+        viewModel.SelectedEntry = Assert.Single(viewModel.Entries);
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Equal("Select a .FRM or .MAP entry to inspect.", viewModel.PreviewMessage);
+        Assert.Null(viewModel.PreviewBitmap);
+        Assert.Single(viewModel.VisibleEntries);
+        Assert.True(viewModel.CanExtractAll);
+    }
+
     private static byte[] CreateEmptyDat1Archive()
     {
         byte[] archive = new byte[16];

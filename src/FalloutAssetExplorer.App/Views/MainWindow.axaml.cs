@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
@@ -11,15 +12,21 @@ public partial class MainWindow : Window
     private GridLength[]? _normalWorkspaceRowHeights;
     private GridLength? _mapWorkspaceHeightBeforeCollapse;
     private GridLength? _mapWorkspaceSplitterHeightBeforeCollapse;
-    private GridLength? _mapRecordsHeightBeforeCollapse;
-    private GridLength? _mapRecordsSplitterHeightBeforeCollapse;
+    private (GridLength Workspace, GridLength Splitter)? _mapWorkspaceRowsBeforeMaximize;
+    private GridLength? _viewportHeightBeforeMap;
+    private GridLength? _splitterHeightBeforeMap;
+    private GridLength? _workspaceHeightBeforeMap;
+    private ArchiveBrowserViewModel? _observedViewModel;
+    private bool _isMapInspectorActive;
     private bool _isMapWorkspaceCollapsed;
-    private bool _isMapRecordsCollapsed;
     private bool _isMapMaximized;
 
     public MainWindow()
     {
         InitializeComponent();
+        MapInspectorControl.WorkspaceToggleRequested += MapWorkspaceToggleRequested;
+        MapInspectorControl.RecordsToggleRequested += MapRecordsToggleRequested;
+        MapInspectorControl.MaximizeToggleRequested += MapMaximizeToggleRequested;
         Closed += MainWindow_Closed;
     }
 
@@ -93,130 +100,133 @@ public partial class MainWindow : Window
     {
         if (DataContext is ArchiveBrowserViewModel viewModel)
         {
+            ObserveViewModel(viewModel);
             viewModel.UpdateSelectionCount(EntriesGrid.SelectedItems.Count);
             await viewModel.PreviewSelectedEntryAsync();
         }
     }
 
-    private void MapGridView_CellInspected(object? sender, MapGridCellInspectedEventArgs e)
+    private void ObserveViewModel(ArchiveBrowserViewModel viewModel)
     {
-        if (DataContext is ArchiveBrowserViewModel viewModel)
+        if (ReferenceEquals(_observedViewModel, viewModel))
         {
-            viewModel.InspectMapGridCell(e.X, e.Y, e.SerializedIndex, e.RawValue);
+            return;
+        }
+
+        if (_observedViewModel is not null)
+        {
+            _observedViewModel.PropertyChanged -= ArchiveBrowserViewModel_PropertyChanged;
+        }
+
+        _observedViewModel = viewModel;
+        _observedViewModel.PropertyChanged += ArchiveBrowserViewModel_PropertyChanged;
+        SetMapInspectorLayout(viewModel.IsMapInspector);
+    }
+
+    private void ArchiveBrowserViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(ArchiveBrowserViewModel.IsMapInspector)
+            && sender is ArchiveBrowserViewModel viewModel)
+        {
+            SetMapInspectorLayout(viewModel.IsMapInspector);
         }
     }
 
-    private void MapGridView_CellSelected(object? sender, MapGridCellInspectedEventArgs e)
+    private void SetMapInspectorLayout(bool isMapInspector)
     {
-        if (DataContext is ArchiveBrowserViewModel viewModel)
+        if (_isMapInspectorActive == isMapInspector)
         {
-            viewModel.SelectMapGridCell(e.SerializedIndex);
+            return;
         }
+
+        var rows = PreviewLayoutGrid.RowDefinitions;
+        if (isMapInspector)
+        {
+            _viewportHeightBeforeMap = rows[2].Height;
+            _splitterHeightBeforeMap = rows[3].Height;
+            _workspaceHeightBeforeMap = rows[4].Height;
+            MapInspectorControl.SetPreviewSplitRows(rows[2].Height, rows[3].Height, rows[4].Height);
+            rows[3].Height = new GridLength(0);
+            _isMapInspectorActive = true;
+            return;
+        }
+
+        var mapRows = MapInspectorControl.GetPreviewSplitRows();
+        if (_isMapMaximized)
+        {
+            if (_normalWorkspaceRowHeights is { Length: > 4 } normalRows)
+            {
+                normalRows[2] = _viewportHeightBeforeMap ?? mapRows.Viewport;
+                normalRows[3] = _splitterHeightBeforeMap ?? mapRows.Splitter;
+                normalRows[4] = _workspaceHeightBeforeMap ?? mapRows.Workspace;
+            }
+        }
+        else
+        {
+            rows[2].Height = mapRows.Viewport;
+            rows[3].Height = mapRows.Splitter;
+            rows[4].Height = mapRows.Workspace;
+        }
+
+        _viewportHeightBeforeMap = null;
+        _splitterHeightBeforeMap = null;
+        _workspaceHeightBeforeMap = null;
+        _isMapInspectorActive = false;
     }
 
-    private void MapFloorTileView_ObjectSelected(
-        object? sender,
-        MapObjectPlacementSelectedEventArgs e)
+    private void MapWorkspaceToggleRequested(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is ArchiveBrowserViewModel viewModel)
-        {
-            viewModel.SelectMapObjectFromFloorMarker(e.Placement);
-        }
-    }
-
-    private void MapIsometricFloorView_ObjectSelectionChanged(
-        object? sender,
-        MapObjectMarkerSelectionChangedEventArgs e)
-    {
-        if (DataContext is ArchiveBrowserViewModel viewModel)
-        {
-            viewModel.SelectMapObjectFromIsometricMarker(e.RecordIndex);
-        }
-    }
-
-    private void ClearMapObjectSearch_Click(object? sender, RoutedEventArgs e)
-    {
-        if (DataContext is ArchiveBrowserViewModel viewModel)
-        {
-            viewModel.MapObjectSearchText = string.Empty;
-        }
-    }
-
-    private void ToggleMapWorkspace_Click(object? sender, RoutedEventArgs e)
-    {
-        var workspaceRow = PreviewLayoutGrid.RowDefinitions[4];
-        var workspaceSplitterRow = PreviewLayoutGrid.RowDefinitions[3];
         if (_isMapWorkspaceCollapsed)
         {
-            workspaceRow.Height = _mapWorkspaceHeightBeforeCollapse
-                ?? new GridLength(1, GridUnitType.Star);
-            workspaceSplitterRow.Height = _mapWorkspaceSplitterHeightBeforeCollapse
-                ?? new GridLength(6);
+            MapInspectorControl.SetMapWorkspaceRows(
+                _mapWorkspaceHeightBeforeCollapse ?? new GridLength(1, GridUnitType.Star),
+                _mapWorkspaceSplitterHeightBeforeCollapse ?? new GridLength(6));
             _mapWorkspaceHeightBeforeCollapse = null;
             _mapWorkspaceSplitterHeightBeforeCollapse = null;
-            MapWorkspaceToggleButton.Content = "Hide workspace";
             _isMapWorkspaceCollapsed = false;
-            return;
         }
-
-        _mapWorkspaceHeightBeforeCollapse = workspaceRow.Height;
-        _mapWorkspaceSplitterHeightBeforeCollapse = workspaceSplitterRow.Height;
-        workspaceRow.Height = new GridLength(0);
-        workspaceSplitterRow.Height = new GridLength(0);
-        MapWorkspaceToggleButton.Content = "Show workspace";
-        _isMapWorkspaceCollapsed = true;
-    }
-
-    private void ToggleMapRecords_Click(object? sender, RoutedEventArgs e)
-    {
-        var recordsRow = RecordPrototypeGrid.RowDefinitions[0];
-        var recordsSplitterRow = RecordPrototypeGrid.RowDefinitions[1];
-        if (_isMapRecordsCollapsed)
+        else
         {
-            recordsRow.Height = _mapRecordsHeightBeforeCollapse
-                ?? new GridLength(1, GridUnitType.Star);
-            recordsSplitterRow.Height = _mapRecordsSplitterHeightBeforeCollapse
-                ?? new GridLength(6);
-            _mapRecordsHeightBeforeCollapse = null;
-            _mapRecordsSplitterHeightBeforeCollapse = null;
-            MapRecordsToggleButton.Content = "Hide records";
-            _isMapRecordsCollapsed = false;
-            return;
+            var rows = MapInspectorControl.GetMapWorkspaceRows();
+            _mapWorkspaceHeightBeforeCollapse = rows.Workspace;
+            _mapWorkspaceSplitterHeightBeforeCollapse = rows.Splitter;
+            MapInspectorControl.SetMapWorkspaceRows(new GridLength(0), new GridLength(0));
+            _isMapWorkspaceCollapsed = true;
         }
 
-        _mapRecordsHeightBeforeCollapse = recordsRow.Height;
-        _mapRecordsSplitterHeightBeforeCollapse = recordsSplitterRow.Height;
-        recordsRow.Height = new GridLength(0);
-        recordsSplitterRow.Height = new GridLength(0);
-        MapRecordsToggleButton.Content = "Show records";
-        _isMapRecordsCollapsed = true;
+        MapInspectorControl.UpdateShellControls(_isMapWorkspaceCollapsed, _isMapMaximized);
     }
 
-    private void ToggleMapMaximized_Click(object? sender, RoutedEventArgs e)
+    private void MapRecordsToggleRequested(object? sender, RoutedEventArgs e) =>
+        MapInspectorControl.ToggleRecords();
+
+    private void MapMaximizeToggleRequested(object? sender, RoutedEventArgs e)
     {
         if (!_isMapMaximized)
         {
             _normalWorkspaceRowHeights = PreviewLayoutGrid.RowDefinitions
                 .Select(row => row.Height)
                 .ToArray();
+            if (!_isMapWorkspaceCollapsed)
+            {
+                _mapWorkspaceRowsBeforeMaximize = MapInspectorControl.GetMapWorkspaceRows();
+                MapInspectorControl.SetMapWorkspaceRows(new GridLength(0), new GridLength(0));
+            }
+
             EntriesGrid.IsVisible = false;
             Grid.SetColumnSpan(PreviewPane, 2);
-            MapWorkspaceToggleButton.IsEnabled = false;
-            MapRecordsToggleButton.IsEnabled = false;
+            MapInspectorControl.UpdateShellControls(_isMapWorkspaceCollapsed, true);
             for (var rowIndex = 3; rowIndex < PreviewLayoutGrid.RowDefinitions.Count; rowIndex++)
             {
                 PreviewLayoutGrid.RowDefinitions[rowIndex].Height = new GridLength(0);
             }
 
-            MapMaximizeButton.Content = "Restore workspace";
             _isMapMaximized = true;
             return;
         }
 
         EntriesGrid.IsVisible = true;
         Grid.SetColumnSpan(PreviewPane, 1);
-        MapWorkspaceToggleButton.IsEnabled = true;
-        MapRecordsToggleButton.IsEnabled = true;
         if (_normalWorkspaceRowHeights is { } rowHeights)
         {
             for (var rowIndex = 0; rowIndex < rowHeights.Length; rowIndex++)
@@ -225,30 +235,16 @@ public partial class MainWindow : Window
             }
         }
 
+        if (!_isMapWorkspaceCollapsed && _mapWorkspaceRowsBeforeMaximize is { } workspaceRows)
+        {
+            MapInspectorControl.SetMapWorkspaceRows(workspaceRows.Workspace, workspaceRows.Splitter);
+        }
+
+        _mapWorkspaceRowsBeforeMaximize = null;
+        MapInspectorControl.UpdateShellControls(_isMapWorkspaceCollapsed, false);
         _normalWorkspaceRowHeights = null;
-        MapMaximizeButton.Content = "Maximize map";
         _isMapMaximized = false;
     }
-
-    private async void MapDiagnosticLayer_SelectionChanged(object? sender, SelectionChangedEventArgs e)
-    {
-        if (sender is ComboBox combo
-            && combo.SelectedIndex is 2 or 3 or 4
-            && DataContext is ArchiveBrowserViewModel viewModel)
-        {
-            viewModel.SelectedMapDiagnosticLayerIndex = combo.SelectedIndex;
-            await viewModel.PrepareMapFloorTilesAsync();
-        }
-    }
-
-    private void MapHexFit_Click(object? sender, RoutedEventArgs e) => MapHexGridView.FitToView();
-
-    private void MapHexCenter_Click(object? sender, RoutedEventArgs e) => MapHexGridView.CenterOnSelection();
-
-    private void MapFloorFit_Click(object? sender, RoutedEventArgs e) => MapFloorTileView.FitToView();
-
-    private void MapIsometricFloorFit_Click(object? sender, RoutedEventArgs e) =>
-        MapIsometricFloorView.FitToView();
 
     private async void ExtractSelected_Click(object? sender, RoutedEventArgs e)
     {
@@ -381,6 +377,14 @@ public partial class MainWindow : Window
     private void MainWindow_Closed(object? sender, EventArgs e)
     {
         Closed -= MainWindow_Closed;
+        MapInspectorControl.WorkspaceToggleRequested -= MapWorkspaceToggleRequested;
+        MapInspectorControl.RecordsToggleRequested -= MapRecordsToggleRequested;
+        MapInspectorControl.MaximizeToggleRequested -= MapMaximizeToggleRequested;
+        if (_observedViewModel is not null)
+        {
+            _observedViewModel.PropertyChanged -= ArchiveBrowserViewModel_PropertyChanged;
+        }
+
         (DataContext as ArchiveBrowserViewModel)?.Dispose();
     }
 
