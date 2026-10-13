@@ -382,6 +382,123 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void ExportStandaloneProReport_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ArchiveBrowserViewModel viewModel
+            || !viewModel.CanExportStandaloneProReport
+            || viewModel.StandaloneProInspection is not { } inspection)
+        {
+            return;
+        }
+
+        try
+        {
+            var reportFileType = new FilePickerFileType("Raport inspekcji PRO")
+            {
+                Patterns = ["*.txt"]
+            };
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Eksportuj raport inspekcji PRO",
+                SuggestedFileName = GetStandaloneProSuggestedName(inspection.EntryPath, ".report.txt"),
+                DefaultExtension = "txt",
+                FileTypeChoices = [reportFileType],
+                SuggestedFileType = reportFileType,
+                ShowOverwritePrompt = true
+            });
+
+            if (file is null)
+            {
+                return;
+            }
+
+            if (!viewModel.IsCurrentStandaloneProInspection(inspection))
+            {
+                viewModel.ReportError("Eksport anulowano, ponieważ podczas wyboru lokalizacji zmienił się wpis PRO.");
+                return;
+            }
+
+            await using var destination = await file.OpenWriteAsync();
+            await viewModel.ExportStandaloneProReportAsync(destination, inspection);
+            viewModel.ReportError($"Zapisano raport inspekcji PRO: {file.Name}");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or InvalidOperationException
+            or NotSupportedException
+            or ArgumentException
+            or InvalidDataException)
+        {
+            viewModel.ReportError($"Nie udało się wyeksportować raportu PRO: {exception.Message}");
+        }
+    }
+
+    private async void ExportStandaloneProRawBin_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ArchiveBrowserViewModel viewModel
+            || !viewModel.CanExportStandaloneProRawBin
+            || viewModel.StandaloneProInspection is not { } inspection)
+        {
+            return;
+        }
+
+        try
+        {
+            var binaryFileType = new FilePickerFileType("Surowe dane PRO")
+            {
+                Patterns = ["*.bin"]
+            };
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Eksportuj surowe bajty PRO",
+                SuggestedFileName = GetStandaloneProSuggestedName(inspection.EntryPath, ".bin"),
+                DefaultExtension = "bin",
+                FileTypeChoices = [binaryFileType],
+                SuggestedFileType = binaryFileType,
+                ShowOverwritePrompt = true
+            });
+
+            if (file is null)
+            {
+                return;
+            }
+
+            if (!viewModel.IsCurrentStandaloneProInspection(inspection))
+            {
+                viewModel.ReportError("Eksport anulowano, ponieważ podczas wyboru lokalizacji zmienił się wpis PRO.");
+                return;
+            }
+
+            await using var destination = await file.OpenWriteAsync();
+            await viewModel.ExportStandaloneProRawBinAsync(destination, inspection);
+            viewModel.ReportError($"Zapisano surowe bajty PRO: {file.Name}");
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or InvalidOperationException
+            or NotSupportedException
+            or ArgumentException
+            or InvalidDataException)
+        {
+            viewModel.ReportError($"Nie udało się wyeksportować surowego BIN: {exception.Message}");
+        }
+    }
+
+    private static string GetStandaloneProSuggestedName(string entryPath, string suffix)
+    {
+        var normalizedPath = entryPath.Replace('\\', '/');
+        var fileName = normalizedPath[(normalizedPath.LastIndexOf('/') + 1)..];
+        return $"{fileName}{suffix}";
+    }
+
     private async Task TryExtractAsync(
         ArchiveBrowserViewModel viewModel,
         IReadOnlyList<ArchiveEntry> entries,

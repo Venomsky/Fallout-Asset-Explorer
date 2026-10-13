@@ -17,7 +17,7 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         maximumWidth: 16_384,
         maximumHeight: 16_384,
         maximumPixelCount: 64L * 1024 * 1024);
-    private const string DefaultPreviewDetails = "Select a .FRM or .MAP entry to inspect.";
+    private const string DefaultPreviewDetails = "Select a .FRM, .MAP, or .PRO entry to inspect.";
     private const int DefaultSpritesheetSpacing = 0;
 
     private readonly FrmPlaybackController _playback = new();

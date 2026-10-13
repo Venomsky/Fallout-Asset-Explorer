@@ -15,6 +15,9 @@ namespace FalloutAssetExplorer.App.ViewModels;
 
 public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposable
 {
+    // App preview budget, not a MAP-format limit; keeps UI reads well below the archive reader's 512 MiB entry cap.
+    public const long MaximumMapPreviewSizeBytes = 64L * 1024 * 1024;
+
     private static readonly string[] SupportedExtensions = [".FRM", ".MAP", ".PRO", ".LST", ".INT"];
 
     private string _searchText = string.Empty;
@@ -38,6 +41,9 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private readonly Dictionary<uint, Bitmap> _mapFloorTileBitmaps = [];
     private readonly HashSet<uint> _unavailableMapFloorIds = [];
     private Fallout2PrototypeResolver? _mapPrototypeResolver;
+    private CancellationTokenSource? _standaloneProExportCancellation;
+    private ArchiveEntry? _standaloneProEntry;
+    private IGameArchive? _standaloneProArchive;
     private bool _isMapGridDataLoaded;
     private bool _mapFloorTilesLoaded;
     private int _mapFloorTilesRevision;
@@ -46,10 +52,17 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private string _mapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
     private string _mapObjectStatusDisplay = "MAP objects have not been read.";
     private string _mapFloorTilesStatusDisplay = "Select the floor-tile diagnostic layer to load this map's tiles.";
-    private string _previewMessage = "Select a .FRM or .MAP entry to inspect.";
-    private string _previewDetails = "Select a .FRM or .MAP entry to inspect.";
+    private string _previewMessage = "Select a .FRM, .MAP, or .PRO entry to inspect.";
+    private string _previewDetails = "Select a .FRM, .MAP, or .PRO entry to inspect.";
     private string _previewTitle = "Resource Inspector";
     private string _paletteStatus = "Palette discovery uses the open archive or a configured game-data folder.";
+    private bool _isProInspector;
+    private string _standaloneProStatus = "Select a .PRO entry to inspect.";
+    private string _standaloneProDetails = string.Empty;
+    private string _standaloneProFieldsDisplay = string.Empty;
+    private IReadOnlyList<string> _standaloneProRawByteLines = [];
+    private Fallout2StandalonePrototypeInspection? _standaloneProInspection;
+    private bool _isStandaloneProExporting;
     private bool _isDisposed;
 
     public ArchiveBrowserViewModel()
@@ -189,6 +202,83 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         get => _paletteStatus;
         private set => SetProperty(ref _paletteStatus, value);
     }
+
+    public bool IsProInspector
+    {
+        get => _isProInspector;
+        private set
+        {
+            if (SetProperty(ref _isProInspector, value))
+            {
+                OnPropertyChanged(nameof(CanExportStandaloneProReport));
+                OnPropertyChanged(nameof(CanExportStandaloneProRawBin));
+            }
+        }
+    }
+
+    public Fallout2StandalonePrototypeInspection? StandaloneProInspection
+    {
+        get => _standaloneProInspection;
+        private set
+        {
+            if (SetProperty(ref _standaloneProInspection, value))
+            {
+                OnPropertyChanged(nameof(CanExportStandaloneProReport));
+                OnPropertyChanged(nameof(CanExportStandaloneProRawBin));
+            }
+        }
+    }
+
+    public bool CanExportStandaloneProReport =>
+        IsProInspector && StandaloneProInspection is not null && !_isStandaloneProExporting;
+
+    public bool CanExportStandaloneProRawBin =>
+        CanExportStandaloneProReport && StandaloneProInspection!.IsReadComplete;
+
+    private bool IsStandaloneProExporting
+    {
+        get => _isStandaloneProExporting;
+        set
+        {
+            if (SetProperty(ref _isStandaloneProExporting, value))
+            {
+                OnPropertyChanged(nameof(CanExportStandaloneProReport));
+                OnPropertyChanged(nameof(CanExportStandaloneProRawBin));
+            }
+        }
+    }
+
+    public string StandaloneProStatus
+    {
+        get => _standaloneProStatus;
+        private set => SetProperty(ref _standaloneProStatus, value);
+    }
+
+    public string StandaloneProDetails
+    {
+        get => _standaloneProDetails;
+        private set => SetProperty(ref _standaloneProDetails, value);
+    }
+
+    public string StandaloneProFieldsDisplay
+    {
+        get => _standaloneProFieldsDisplay;
+        private set => SetProperty(ref _standaloneProFieldsDisplay, value);
+    }
+
+    public IReadOnlyList<string> StandaloneProRawByteLines
+    {
+        get => _standaloneProRawByteLines;
+        private set
+        {
+            if (SetProperty(ref _standaloneProRawByteLines, value))
+            {
+                OnPropertyChanged(nameof(HasStandaloneProRawBytes));
+            }
+        }
+    }
+
+    public bool HasStandaloneProRawBytes => StandaloneProRawByteLines.Count > 0;
 
     public bool IsMapInspector => MapInspector.IsMapInspector;
 
@@ -464,28 +554,47 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         var cancellation = new CancellationTokenSource();
         _previewCancellation = cancellation;
         ClearPreview();
+        ArchiveEntry? selectedEntry = null;
+        IGameArchive? previewArchive = null;
+        var previewRoute = PreviewRoute.Unsupported;
 
         try
         {
-            var selectedEntry = SelectedEntry;
+            selectedEntry = SelectedEntry;
             if (selectedEntry is null)
             {
-                PreviewMessage = "Select a .FRM or .MAP entry to inspect.";
+                PreviewMessage = "Select a .FRM, .MAP, or .PRO entry to inspect.";
                 return;
             }
 
-            var archive = _archive;
-            if (archive is null)
+            previewArchive = _archive;
+            if (previewArchive is null)
             {
                 PreviewMessage = "The selected entry is not available in the loaded archive.";
                 return;
             }
 
-            var previewRoute = PreviewRouteSelector.Select(selectedEntry.Extension);
+            var archive = previewArchive;
+            previewRoute = PreviewRouteSelector.Select(selectedEntry.Extension);
             if (previewRoute == PreviewRoute.Map)
             {
                 MapInspector.SetMapInspectorActive(true);
                 PreviewTitle = "MAP Inspector";
+                if (selectedEntry.UncompressedSize < 0)
+                {
+                    PreviewMessage = "Could not inspect MAP: the archive reports a negative uncompressed size.";
+                    return;
+                }
+
+                if (selectedEntry.UncompressedSize > MaximumMapPreviewSizeBytes)
+                {
+                    PreviewMessage =
+                        $"MAP preview is limited to {MaximumMapPreviewSizeBytes / (1024 * 1024)} MiB "
+                        + $"of uncompressed data; this entry declares {selectedEntry.UncompressedSize:N0} bytes. "
+                        + "The entry was not read.";
+                    return;
+                }
+
                 PreviewMessage = "Reading MAP header and tile-grid metadata...";
                 using var mapBuffer = new MemoryStream();
                 await archive.CopyEntryToAsync(selectedEntry, mapBuffer, cancellation.Token);
@@ -497,30 +606,45 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 }
 
                 var mapData = mapBuffer.GetBuffer().AsMemory(0, checked((int)mapBuffer.Length));
-                var metadata = MapHeaderDecoder.Decode(
-                    mapData,
-                    archive.Game);
-                var tileGrids = MapTileGridDecoder.Decode(mapData, metadata);
-                MapObjectPlacementData? objectPlacements = null;
-                string? objectPlacementError = null;
-                var prototypeResolver = new Fallout2PrototypeResolver(archive);
-                _mapPrototypeResolver = prototypeResolver;
-                try
+                var mapDecode = await Task.Run(async () =>
                 {
-                    objectPlacements = await MapObjectPlacementDecoder.DecodeAsync(
-                        mapData,
-                        metadata,
-                        archive,
-                        cancellation.Token,
-                        prototypeResolver);
-                }
-                catch (InvalidDataException exception)
-                {
-                    System.Diagnostics.Debug.WriteLine($"MAP object decoding failed: {exception}");
-                    objectPlacementError = "MAP object data is malformed or truncated; header and grid inspection remain available.";
-                }
+                    cancellation.Token.ThrowIfCancellationRequested();
+                    var metadata = MapHeaderDecoder.Decode(mapData, archive.Game);
+                    var tileGrids = MapTileGridDecoder.Decode(mapData, metadata);
+                    var prototypeResolver = new Fallout2PrototypeResolver(archive);
+                    MapObjectPlacementData? objectPlacements = null;
+                    string? objectPlacementError = null;
+                    try
+                    {
+                        objectPlacements = await MapObjectPlacementDecoder.DecodeAsync(
+                            mapData,
+                            metadata,
+                            archive,
+                            cancellation.Token,
+                            prototypeResolver);
+                    }
+                    catch (InvalidDataException exception)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"MAP object decoding failed: {exception}");
+                        objectPlacementError =
+                            "MAP object data is malformed or truncated; header and grid inspection remain available.";
+                    }
 
+                    cancellation.Token.ThrowIfCancellationRequested();
+                    return (
+                        Metadata: metadata,
+                        TileGrids: tileGrids,
+                        ObjectPlacements: objectPlacements,
+                        ObjectPlacementError: objectPlacementError,
+                        PrototypeResolver: prototypeResolver);
+                }, cancellation.Token);
                 cancellation.Token.ThrowIfCancellationRequested();
+
+                var metadata = mapDecode.Metadata;
+                var tileGrids = mapDecode.TileGrids;
+                var objectPlacements = mapDecode.ObjectPlacements;
+                var objectPlacementError = mapDecode.ObjectPlacementError;
+                _mapPrototypeResolver = mapDecode.PrototypeResolver;
 
                 _mapTileGridData = tileGrids;
                 var availableElevations = tileGrids.Grids
@@ -578,9 +702,50 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 return;
             }
 
+            if (previewRoute == PreviewRoute.Pro)
+            {
+                IsProInspector = true;
+                PreviewTitle = "PRO Inspector";
+                StandaloneProStatus = "Reading standalone PRO entry...";
+                StandaloneProDetails =
+                    $"Entry: {selectedEntry.Path}{Environment.NewLine}"
+                    + "Provenance: selected directly from the archive; not verified through a MAP PID or prototype list.";
+
+                var inspection = await new Fallout2PrototypeResolver(archive)
+                    .InspectStandaloneEntryAsync(selectedEntry, cancellation.Token);
+                cancellation.Token.ThrowIfCancellationRequested();
+
+                var formatted = await Task.Run(
+                    () => (
+                        Fields: FormatPrototypeFields(
+                            inspection.ItemFields.Count > 0
+                                ? inspection.ItemFields
+                                : inspection.SceneryFields),
+                        ByteLines: FormatPrototypeBytes(inspection.RawBytes, cancellation.Token)),
+                    cancellation.Token);
+                cancellation.Token.ThrowIfCancellationRequested();
+
+                if (!ReferenceEquals(_previewCancellation, cancellation)
+                    || !ReferenceEquals(SelectedEntry, selectedEntry)
+                    || !ReferenceEquals(_archive, archive))
+                {
+                    return;
+                }
+
+                StandaloneProStatus = inspection.Status;
+                StandaloneProDetails = BuildStandalonePrototypeDetails(inspection);
+                StandaloneProFieldsDisplay = formatted.Fields;
+                StandaloneProRawByteLines = formatted.ByteLines;
+                _standaloneProEntry = selectedEntry;
+                _standaloneProArchive = archive;
+                StandaloneProInspection = inspection;
+                PreviewMessage = selectedEntry.Path;
+                return;
+            }
+
             if (previewRoute != PreviewRoute.Frm)
             {
-                PreviewMessage = "Select a .FRM or .MAP entry to inspect.";
+                PreviewMessage = "Select a .FRM, .MAP, or .PRO entry to inspect.";
                 return;
             }
 
@@ -623,9 +788,19 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         {
             if (!cancellation.IsCancellationRequested)
             {
-                PreviewMessage = string.Equals(SelectedEntry?.Extension, ".MAP", StringComparison.OrdinalIgnoreCase)
-                    ? $"Could not inspect MAP: {exception.Message}"
-                    : $"Could not preview FRM: {exception.Message}";
+                PreviewMessage = previewRoute switch
+                {
+                    PreviewRoute.Map => $"Could not inspect MAP: {exception.Message}",
+                    PreviewRoute.Pro => $"Could not inspect standalone PRO: {exception.Message}",
+                    _ => $"Could not preview FRM: {exception.Message}"
+                };
+                if (previewRoute == PreviewRoute.Pro
+                    && ReferenceEquals(_previewCancellation, cancellation)
+                    && ReferenceEquals(SelectedEntry, selectedEntry)
+                    && ReferenceEquals(_archive, previewArchive))
+                {
+                    StandaloneProStatus = $"Could not inspect standalone PRO: {exception.Message}";
+                }
             }
         }
         finally
@@ -666,6 +841,95 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         StatusMessage = message;
+    }
+
+    public Task ExportStandaloneProReportAsync(
+        Stream destination,
+        Fallout2StandalonePrototypeInspection inspection,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(inspection);
+        return ExportStandaloneProDataAsync(
+            destination,
+            inspection,
+            Encoding.UTF8.GetBytes(Fallout2PrototypeReportFormatter.Format(inspection)),
+            requireCompleteRead: false,
+            cancellationToken);
+    }
+
+    public Task ExportStandaloneProRawBinAsync(
+        Stream destination,
+        Fallout2StandalonePrototypeInspection inspection,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(inspection);
+        return ExportStandaloneProDataAsync(
+            destination,
+            inspection,
+            inspection.RawBytes.ToArray(),
+            requireCompleteRead: true,
+            cancellationToken);
+    }
+
+    private async Task ExportStandaloneProDataAsync(
+        Stream destination,
+        Fallout2StandalonePrototypeInspection inspection,
+        byte[] bytes,
+        bool requireCompleteRead,
+        CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if (!IsCurrentStandaloneProInspection(inspection))
+        {
+            throw new OperationCanceledException("Eksport anulowano, ponieważ wybrany wpis PRO uległ zmianie.");
+        }
+
+        if (requireCompleteRead && !inspection.IsReadComplete)
+        {
+            throw new InvalidDataException("Nie można eksportować BIN: odczyt danych PRO nie był kompletny.");
+        }
+
+        if (IsStandaloneProExporting)
+        {
+            throw new InvalidOperationException("Eksport PRO jest już w toku.");
+        }
+
+        using var exportCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _standaloneProExportCancellation = exportCancellation;
+        IsStandaloneProExporting = true;
+        try
+        {
+            exportCancellation.Token.ThrowIfCancellationRequested();
+            if (!IsCurrentStandaloneProInspection(inspection))
+            {
+                throw new OperationCanceledException(exportCancellation.Token);
+            }
+
+            await destination.WriteAsync(bytes, exportCancellation.Token);
+            exportCancellation.Token.ThrowIfCancellationRequested();
+            if (!IsCurrentStandaloneProInspection(inspection))
+            {
+                throw new OperationCanceledException(exportCancellation.Token);
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_standaloneProExportCancellation, exportCancellation))
+            {
+                _standaloneProExportCancellation = null;
+            }
+
+            IsStandaloneProExporting = false;
+        }
+    }
+
+    public bool IsCurrentStandaloneProInspection(Fallout2StandalonePrototypeInspection inspection)
+    {
+        ArgumentNullException.ThrowIfNull(inspection);
+        return IsProInspector
+        && ReferenceEquals(StandaloneProInspection, inspection)
+        && ReferenceEquals(SelectedEntry, _standaloneProEntry)
+        && ReferenceEquals(_archive, _standaloneProArchive);
     }
 
     public void InspectMapGridCell(int? x, int? y, int? serializedIndex, uint? rawValue)
@@ -1057,6 +1321,11 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     private void ClearPreview()
     {
+        _standaloneProExportCancellation?.Cancel();
+        _standaloneProExportCancellation = null;
+        _standaloneProEntry = null;
+        _standaloneProArchive = null;
+        StandaloneProInspection = null;
         _mapFloorTileCancellation?.Cancel();
         _mapFloorTileCancellation = null;
         _mapObjectPrototypeDiagnosticCancellation?.Cancel();
@@ -1082,6 +1351,11 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         _selectedMapGridIndex = null;
         _isMapGridDataLoaded = false;
         MapInspector.SetMapInspectorActive(false);
+        IsProInspector = false;
+        StandaloneProStatus = "Select a .PRO entry to inspect.";
+        StandaloneProDetails = string.Empty;
+        StandaloneProFieldsDisplay = string.Empty;
+        StandaloneProRawByteLines = [];
         OnPropertyChanged(nameof(SelectedMapGridIndex));
         OnPropertyChanged(nameof(SelectedMapGridValues));
         OnPropertyChanged(nameof(HasMapGrid));
@@ -1102,9 +1376,53 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             FrmPreview.ClearPreview();
         }
 
-        PreviewDetails = "Select a .FRM or .MAP entry to inspect.";
+        PreviewDetails = "Select a .FRM, .MAP, or .PRO entry to inspect.";
         PreviewTitle = "Resource Inspector";
         PaletteStatus = "Palette discovery uses the open archive or a configured game-data folder.";
+    }
+
+    private static string BuildStandalonePrototypeDetails(
+        Fallout2StandalonePrototypeInspection inspection)
+    {
+        var details = new List<string>
+        {
+            $"Entry: {inspection.EntryPath}",
+            $"Provenance: {inspection.Provenance}",
+            inspection.Game is not null && inspection.Format is not null
+                ? $"Archive: {inspection.Game} {inspection.Format}"
+                : "Archive: unavailable"
+        };
+
+        if (inspection.PidType is int pidType)
+        {
+            details.Add(inspection.PidTypeName is null
+                ? $"PID type: unsupported ({pidType})"
+                : $"PID type: {inspection.PidTypeName} ({pidType})");
+        }
+
+        if (inspection.PrototypePid is int prototypePid)
+        {
+            details.Add($"Embedded PID: 0x{unchecked((uint)prototypePid):X8}");
+        }
+
+        if (inspection.Subtype is int subtype)
+        {
+            details.Add(inspection.SubtypeName is null
+                ? $"Subtype: unsupported ({subtype})"
+                : $"Subtype: {inspection.SubtypeName} ({subtype})");
+        }
+
+        if (inspection.FileSize is long fileSize)
+        {
+            details.Add($"Uncompressed size: {fileSize:N0} bytes");
+        }
+
+        if (inspection.RawBytes.Length > 0)
+        {
+            details.Add($"Raw bytes retained: {inspection.RawBytes.Length:N0}");
+        }
+
+        return string.Join(Environment.NewLine, details);
     }
 
     private void UpdateSelectedMapGridDisplay()

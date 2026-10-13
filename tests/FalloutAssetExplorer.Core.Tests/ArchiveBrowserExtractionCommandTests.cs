@@ -61,7 +61,7 @@ public sealed class ArchiveBrowserExtractionCommandTests
     public async Task PreviewSelectedEntryAsync_LeavesUnsupportedEntriesBrowsableAndExtractable()
     {
         AvaloniaTestEnvironment.EnsureInitialized();
-        using var archiveFile = new TemporaryArchive(CreateDat1Archive("ART/PROTO/TEST.PRO"));
+        using var archiveFile = new TemporaryArchive(CreateDat1Archive("ART/PROTO/TEST.LST"));
         using var viewModel = new ArchiveBrowserViewModel();
 
         await viewModel.LoadArchiveAsync(archiveFile.Path);
@@ -78,7 +78,7 @@ public sealed class ArchiveBrowserExtractionCommandTests
         viewModel.SelectedEntry = Assert.Single(viewModel.Entries);
         await viewModel.PreviewSelectedEntryAsync();
 
-        Assert.Equal("Select a .FRM or .MAP entry to inspect.", viewModel.PreviewMessage);
+        Assert.Equal("Select a .FRM, .MAP, or .PRO entry to inspect.", viewModel.PreviewMessage);
         Assert.Null(viewModel.FrmPreview.PreviewBitmap);
         Assert.False(viewModel.FrmPreview.HasPreview);
         Assert.Single(viewModel.VisibleEntries);
@@ -110,6 +110,367 @@ public sealed class ArchiveBrowserExtractionCommandTests
         Assert.Null(viewModel.FrmPreview.PreviewBitmap);
         Assert.False(viewModel.FrmPreview.HasPreview);
         Assert.StartsWith("Could not inspect MAP:", viewModel.PreviewMessage);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_RejectsOversizedMapBeforeReadingPayload()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry(
+            "MAPS/OVERSIZED.MAP",
+            CreateValidEmptyMap(),
+            ArchiveBrowserViewModel.MaximumMapPreviewSizeBytes + 1);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Equal(0, archive.CopyCount);
+        Assert.Contains("64 MiB", viewModel.PreviewMessage);
+        Assert.Contains("The entry was not read.", viewModel.PreviewMessage);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_ParsesValidMapWithinSizeLimit()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry("MAPS/VALID.MAP", CreateValidEmptyMap());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Equal(1, archive.CopyCount);
+        Assert.True(viewModel.IsMapInspector);
+        Assert.Equal(entry.Path, viewModel.PreviewMessage);
+        Assert.Equal(
+            "Decoded 0 records, including 0 top-level objects.",
+            viewModel.MapObjectStatusDisplay);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_DeclaredSizeAtLimitUsesNormalReadPath()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry(
+            "MAPS/BOUNDARY.MAP",
+            CreateValidEmptyMap(),
+            ArchiveBrowserViewModel.MaximumMapPreviewSizeBytes);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Equal(1, archive.CopyCount);
+        Assert.StartsWith("Could not inspect MAP: MAP entry declares", viewModel.PreviewMessage);
+        Assert.DoesNotContain("preview is limited", viewModel.PreviewMessage);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_SupersededMapReadCannotPublishOrClearNewerPreview()
+    {
+        var synchronizationContext = SynchronizationContext.Current;
+        AvaloniaTestEnvironment.EnsureInitialized();
+        SynchronizationContext.SetSynchronizationContext(synchronizationContext);
+        using var archive = new ControlledArchive();
+        var mapEntry = archive.AddEntry("MAPS/STALE.MAP", CreateValidEmptyMap());
+        var frmEntry = archive.AddEntry(
+            "ART/CRITTERS/CURRENT.FRM",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [17])]], framesPerSecond: 17));
+        archive.AddEntry("COLOR.PAL", new byte[FalloutPalette.MinimalFileSize]);
+        var mapRead = archive.BlockEntry(mapEntry.Path);
+        var frmRead = archive.BlockEntry(frmEntry.Path);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        Task? mapPreview = null;
+        Task? frmPreview = null;
+        try
+        {
+            viewModel.SelectedEntry = mapEntry;
+            mapPreview = viewModel.PreviewSelectedEntryAsync();
+            await mapRead.WaitStartedAsync();
+
+            viewModel.SelectedEntry = frmEntry;
+            frmPreview = viewModel.PreviewSelectedEntryAsync();
+            await frmRead.WaitStartedAsync();
+            var currentCancellation = GetPrivateField<CancellationTokenSource?>(
+                viewModel,
+                "_previewCancellation");
+            Assert.NotNull(currentCancellation);
+
+            mapRead.Release();
+            await mapPreview.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Same(
+                currentCancellation,
+                GetPrivateField<CancellationTokenSource?>(viewModel, "_previewCancellation"));
+            Assert.Equal("FRM Preview", viewModel.PreviewTitle);
+            Assert.Equal("Reading and decoding FRM...", viewModel.PreviewMessage);
+            Assert.False(viewModel.IsMapInspector);
+
+            frmRead.Release();
+            await frmPreview.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(frmEntry.Path, viewModel.PreviewMessage);
+            Assert.Equal("CURRENT_NE_Frame01.png", viewModel.FrmPreview.SuggestedPngFileName);
+        }
+        finally
+        {
+            mapRead.Release();
+            frmRead.Release();
+            if (mapPreview is not null)
+            {
+                await mapPreview.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+
+            if (frmPreview is not null)
+            {
+                await frmPreview.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_ShowsStandaloneProInspection()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry(
+            "proto/items/STANDALONE.pro",
+            CreateItemPrototype(0x00000001));
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Equal(1, archive.CopyCount);
+        Assert.Equal("PRO Inspector", viewModel.PreviewTitle);
+        Assert.True(viewModel.IsProInspector);
+        Assert.False(viewModel.IsMapInspector);
+        Assert.Equal(entry.Path, viewModel.PreviewMessage);
+        Assert.Contains(entry.Path, viewModel.StandaloneProDetails);
+        Assert.Contains("Selected directly from the archive", viewModel.StandaloneProDetails);
+        Assert.Contains("Item (0)", viewModel.StandaloneProDetails);
+        Assert.Contains("Misc (5)", viewModel.StandaloneProDetails);
+        Assert.Contains("Prototype PID, subtype, and Item size validated.", viewModel.StandaloneProStatus);
+        Assert.Contains("messageId:", viewModel.StandaloneProFieldsDisplay);
+        Assert.True(viewModel.HasStandaloneProRawBytes);
+        Assert.Equal(entry.UncompressedSize, viewModel.StandaloneProInspection?.ActualSize);
+        Assert.True(viewModel.StandaloneProInspection?.IsReadComplete == true);
+        Assert.True(viewModel.CanExportStandaloneProReport);
+        Assert.True(viewModel.CanExportStandaloneProRawBin);
+    }
+
+    [Fact]
+    public async Task ExportStandaloneProReportAsync_WritesUtf8ReportForCurrentInspection()
+    {
+        using var archive = new ControlledArchive();
+        archive.AddEntry("proto/items/REPORT.pro", CreateItemPrototype(0x00000001));
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = Assert.Single(archive.BrowserEntries);
+        await viewModel.PreviewSelectedEntryAsync();
+        var inspection = Assert.IsType<Fallout2StandalonePrototypeInspection>(viewModel.StandaloneProInspection);
+        using var destination = new MemoryStream();
+
+        await viewModel.ExportStandaloneProReportAsync(destination, inspection);
+
+        var report = Encoding.UTF8.GetString(destination.ToArray());
+        Assert.StartsWith("Fallout Asset Explorer — raport inspekcji PRO", report);
+        Assert.Contains("proto/items/REPORT.pro", report);
+        Assert.Contains("Wynik parsowania: Sukces", report);
+    }
+
+    [Fact]
+    public async Task ExportStandaloneProRawBinAsync_WritesExactlyTheReadBytes()
+    {
+        using var archive = new ControlledArchive();
+        var bytes = CreateItemPrototype(0x00000001);
+        archive.AddEntry("proto/items/RAW.pro", bytes);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = Assert.Single(archive.BrowserEntries);
+        await viewModel.PreviewSelectedEntryAsync();
+        var inspection = Assert.IsType<Fallout2StandalonePrototypeInspection>(viewModel.StandaloneProInspection);
+        using var destination = new MemoryStream();
+
+        await viewModel.ExportStandaloneProRawBinAsync(destination, inspection);
+
+        Assert.Equal(bytes, destination.ToArray());
+    }
+
+    [Fact]
+    public async Task ExportStandaloneProRawBinAsync_RejectsIncompleteReadWithoutWriting()
+    {
+        using var archive = new ControlledArchive();
+        var bytes = CreateItemPrototype(0x00000001);
+        var entry = archive.AddEntry("proto/items/INCOMPLETE.pro", bytes, bytes.Length + 1L);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+        await viewModel.PreviewSelectedEntryAsync();
+        var inspection = Assert.IsType<Fallout2StandalonePrototypeInspection>(viewModel.StandaloneProInspection);
+        using var destination = new MemoryStream();
+
+        Assert.False(inspection.IsReadComplete);
+        Assert.Equal(bytes.Length, inspection.ActualSize);
+        Assert.Equal(bytes, inspection.RawBytes.ToArray());
+        Assert.False(viewModel.CanExportStandaloneProRawBin);
+        await Assert.ThrowsAsync<InvalidDataException>(
+            () => viewModel.ExportStandaloneProRawBinAsync(destination, inspection));
+        Assert.Empty(destination.ToArray());
+    }
+
+    [Fact]
+    public async Task ExportStandaloneProReportAsync_PropagatesWriteFailureAndCancellation()
+    {
+        using var archive = new ControlledArchive();
+        archive.AddEntry("proto/items/WRITE-FAIL.pro", CreateItemPrototype(0x00000001));
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = Assert.Single(archive.BrowserEntries);
+        await viewModel.PreviewSelectedEntryAsync();
+        var inspection = Assert.IsType<Fallout2StandalonePrototypeInspection>(viewModel.StandaloneProInspection);
+
+        await Assert.ThrowsAsync<IOException>(
+            () => viewModel.ExportStandaloneProReportAsync(new ThrowingWriteStream(), inspection));
+
+        using var cancelledDestination = new MemoryStream();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => viewModel.ExportStandaloneProReportAsync(
+                cancelledDestination,
+                inspection,
+                cancellation.Token));
+        Assert.Empty(cancelledDestination.ToArray());
+        Assert.True(viewModel.CanExportStandaloneProReport);
+    }
+
+    [Fact]
+    public async Task ExportStandaloneProReportAsync_CancelsWhenSelectionChangesDuringWrite()
+    {
+        using var archive = new ControlledArchive();
+        archive.AddEntry("proto/items/OLD.pro", CreateItemPrototype(0x00000001));
+        var newEntry = archive.AddEntry("proto/items/NEW.pro", CreateItemPrototype(0x00000002));
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = archive.BrowserEntries[0];
+        await viewModel.PreviewSelectedEntryAsync();
+        var oldInspection = Assert.IsType<Fallout2StandalonePrototypeInspection>(viewModel.StandaloneProInspection);
+        using var destination = new BlockingWriteStream();
+
+        var export = viewModel.ExportStandaloneProReportAsync(destination, oldInspection);
+        await destination.WriteStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        viewModel.SelectedEntry = newEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => export);
+        Assert.Empty(destination.ToArray());
+        Assert.Equal(newEntry.Path, viewModel.StandaloneProInspection?.EntryPath);
+        Assert.True(viewModel.CanExportStandaloneProReport);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_RejectsOversizedProBeforeReadingPayload()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry(
+            "proto/items/OVERSIZED.PRO",
+            CreateItemPrototype(0x00000001),
+            Fallout2PrototypeResolver.MaximumPrototypeSizeBytes + 1L);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Equal(0, archive.CopyCount);
+        Assert.Equal("PRO Inspector", viewModel.PreviewTitle);
+        Assert.True(viewModel.IsProInspector);
+        Assert.Contains("1 MiB preview limit", viewModel.StandaloneProStatus);
+        Assert.Contains("The entry was not read.", viewModel.StandaloneProStatus);
+        Assert.False(viewModel.HasStandaloneProRawBytes);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_SupersededProReadCannotPublishOrClearNewerPreview()
+    {
+        var synchronizationContext = SynchronizationContext.Current;
+        AvaloniaTestEnvironment.EnsureInitialized();
+        SynchronizationContext.SetSynchronizationContext(synchronizationContext);
+        using var archive = new ControlledArchive();
+        var staleEntry = archive.AddEntry(
+            "proto/items/STALE.PRO",
+            CreateItemPrototype(0x00000001));
+        var currentEntry = archive.AddEntry(
+            "proto/items/CURRENT.PRO",
+            CreateItemPrototype(0x00000002));
+        var staleRead = archive.BlockEntry(staleEntry.Path);
+        var currentRead = archive.BlockEntry(currentEntry.Path);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        Task? stalePreview = null;
+        Task? currentPreview = null;
+        try
+        {
+            viewModel.SelectedEntry = staleEntry;
+            stalePreview = viewModel.PreviewSelectedEntryAsync();
+            await staleRead.WaitStartedAsync();
+
+            viewModel.SelectedEntry = currentEntry;
+            currentPreview = viewModel.PreviewSelectedEntryAsync();
+            await currentRead.WaitStartedAsync();
+            var currentCancellation = GetPrivateField<CancellationTokenSource?>(
+                viewModel,
+                "_previewCancellation");
+            Assert.NotNull(currentCancellation);
+
+            staleRead.Release();
+            await stalePreview.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Same(
+                currentCancellation,
+                GetPrivateField<CancellationTokenSource?>(viewModel, "_previewCancellation"));
+            Assert.True(viewModel.IsProInspector);
+            Assert.Equal("Reading standalone PRO entry...", viewModel.StandaloneProStatus);
+
+            currentRead.Release();
+            await currentPreview.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(currentEntry.Path, viewModel.PreviewMessage);
+            Assert.Contains(currentEntry.Path, viewModel.StandaloneProDetails);
+            Assert.Contains("Embedded PID: 0x00000002", viewModel.StandaloneProDetails);
+        }
+        finally
+        {
+            staleRead.Release();
+            currentRead.Release();
+            if (stalePreview is not null)
+            {
+                await stalePreview.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+
+            if (currentPreview is not null)
+            {
+                await currentPreview.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
     }
 
     [Theory]
@@ -456,6 +817,14 @@ public sealed class ArchiveBrowserExtractionCommandTests
         return stream.ToArray();
     }
 
+    private static byte[] CreateValidEmptyMap()
+    {
+        var data = new byte[MapHeaderDecoder.HeaderSize + 5 * sizeof(int) + 4 * sizeof(int)];
+        BinaryPrimitives.WriteInt32BigEndian(data, 19);
+        BinaryPrimitives.WriteInt32BigEndian(data.AsSpan(0x28), 0x0e);
+        return data;
+    }
+
     private static void WriteName(Stream stream, string value)
     {
         var bytes = Encoding.Latin1.GetBytes(value);
@@ -485,12 +854,36 @@ public sealed class ArchiveBrowserExtractionCommandTests
         public void Dispose() => File.Delete(Path);
     }
 
+    private sealed class ThrowingWriteStream : MemoryStream
+    {
+        public override ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default) =>
+            ValueTask.FromException(new IOException("Synthetic write failure."));
+    }
+
+    private sealed class BlockingWriteStream : MemoryStream
+    {
+        public TaskCompletionSource<bool> WriteStarted { get; } =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask WriteAsync(
+            ReadOnlyMemory<byte> buffer,
+            CancellationToken cancellationToken = default)
+        {
+            WriteStarted.TrySetResult(true);
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            await base.WriteAsync(buffer, cancellationToken);
+        }
+    }
+
     private sealed class ControlledArchive : IGameArchive, IDisposable
     {
         private readonly Dictionary<string, (ArchiveEntry Entry, byte[] Bytes)> _entries =
             new(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, ReadGate> _readGates =
             new(StringComparer.OrdinalIgnoreCase);
+        private int _copyCount;
 
         public ControlledArchive()
         {
@@ -509,9 +902,11 @@ public sealed class ArchiveBrowserExtractionCommandTests
         public IReadOnlyList<ArchiveEntry> BrowserEntries =>
             _entries.Values.Select(value => value.Entry).ToArray();
 
-        public ArchiveEntry AddEntry(string path, byte[] bytes)
+        public int CopyCount => Volatile.Read(ref _copyCount);
+
+        public ArchiveEntry AddEntry(string path, byte[] bytes, long? uncompressedSize = null)
         {
-            var entry = new ArchiveEntry(path, bytes.Length, null, Path);
+            var entry = new ArchiveEntry(path, uncompressedSize ?? bytes.LongLength, null, Path);
             _entries.Add(path, (entry, bytes));
             return entry;
         }
@@ -528,6 +923,7 @@ public sealed class ArchiveBrowserExtractionCommandTests
             Stream destination,
             CancellationToken cancellationToken = default)
         {
+            Interlocked.Increment(ref _copyCount);
             if (!_entries.TryGetValue(entry.Path, out var item))
             {
                 throw new IOException($"Unexpected synthetic archive entry: {entry.Path}");

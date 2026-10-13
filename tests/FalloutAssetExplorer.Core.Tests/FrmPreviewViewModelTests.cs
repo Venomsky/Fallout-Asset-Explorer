@@ -52,7 +52,7 @@ public sealed class FrmPreviewViewModelTests
         Assert.Empty(viewModel.FrameOptions);
         Assert.Equal(0, viewModel.SelectedDirectionIndex);
         Assert.Equal(0, viewModel.SelectedFrameIndex);
-        Assert.Equal("Select a .FRM or .MAP entry to inspect.", viewModel.PreviewDetails);
+        Assert.Equal("Select a .FRM, .MAP, or .PRO entry to inspect.", viewModel.PreviewDetails);
         AssertBitmapDisposed(displayedBitmap!);
     }
 

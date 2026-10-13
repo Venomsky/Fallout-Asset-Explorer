@@ -118,7 +118,7 @@
             x:Name="PreviewLayoutGrid"
             RowDefinitions="Auto,Auto,*,6,*"
             RowSpacing="4">
-          <Grid ColumnDefinitions="*,Auto,Auto">
+          <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto">
             <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding PreviewTitle}" />
             <Button
                 Grid.Column="1"
@@ -132,6 +132,20 @@
                 Click="ExportSpritesheet_Click"
                 IsEnabled="{Binding FrmPreview.CanExportSpritesheet}"
                 AutomationProperties.Name="Export all FRM directions and frames as a spritesheet PNG" />
+            <Button
+                Grid.Column="3"
+                Content="Eksportuj raport…"
+                Click="ExportStandaloneProReport_Click"
+                IsVisible="{Binding IsProInspector}"
+                IsEnabled="{Binding CanExportStandaloneProReport}"
+                AutomationProperties.Name="Eksportuj raport inspekcji PRO" />
+            <Button
+                Grid.Column="4"
+                Content="Eksportuj surowe BIN…"
+                Click="ExportStandaloneProRawBin_Click"
+                IsVisible="{Binding IsProInspector}"
+                IsEnabled="{Binding CanExportStandaloneProRawBin}"
+                AutomationProperties.Name="Eksportuj dokładne surowe bajty PRO" />
           </Grid>
           <TextBlock Grid.Row="1" Text="{Binding PreviewMessage}" TextWrapping="Wrap" />
           <Grid
@@ -254,6 +268,69 @@
               </StackPanel>
             </ScrollViewer>
           </Grid>
+          <Border
+              x:Name="StandaloneProInspector"
+              Grid.Row="2"
+              Grid.RowSpan="3"
+              Padding="10"
+              Background="#20242B"
+              IsVisible="{Binding IsProInspector}"
+              AutomationProperties.Name="Standalone Fallout 2 PRO inspector">
+            <Grid RowDefinitions="Auto,Auto,*,6,*" RowSpacing="6">
+              <TextBlock
+                  Grid.Row="0"
+                  FontWeight="SemiBold"
+                  Text="{Binding StandaloneProStatus}"
+                  TextWrapping="Wrap" />
+              <TextBlock
+                  Grid.Row="1"
+                  FontFamily="Consolas"
+                  FontSize="11"
+                  Text="{Binding StandaloneProDetails}"
+                  TextWrapping="Wrap" />
+              <ScrollViewer
+                  Grid.Row="2"
+                  HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollBarVisibility="Auto">
+                <TextBlock
+                    FontFamily="Consolas"
+                    FontSize="11"
+                    Text="{Binding StandaloneProFieldsDisplay}"
+                    TextWrapping="Wrap" />
+              </ScrollViewer>
+              <GridSplitter
+                  Grid.Row="3"
+                  Height="6"
+                  HorizontalAlignment="Stretch"
+                  Background="#3A414C"
+                  ResizeDirection="Rows"
+                  ResizeBehavior="PreviousAndNext"
+                  AutomationProperties.Name="Resize PRO fields and raw bytes" />
+              <ListBox
+                  Grid.Row="4"
+                  ItemsSource="{Binding StandaloneProRawByteLines}"
+                  IsVisible="{Binding HasStandaloneProRawBytes}"
+                  VerticalAlignment="Stretch"
+                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                  ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                  AutomationProperties.Name="Raw standalone PRO bytes">
+                <ListBox.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <VirtualizingStackPanel />
+                  </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock
+                        FontFamily="Consolas"
+                        FontSize="10"
+                        Text="{Binding}"
+                        TextWrapping="NoWrap" />
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </Grid>
+          </Border>
           <local:MapInspectorView
               x:Name="MapInspectorControl"
               Grid.Row="2"
