@@ -46,7 +46,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private readonly Dictionary<uint, Bitmap> _mapFloorTileBitmaps = [];
     private readonly HashSet<uint> _unavailableMapFloorIds = [];
     private Fallout2PrototypeResolver? _mapPrototypeResolver;
-    private bool _isMapInspector;
     private bool _isMapGridDataLoaded;
     private bool _mapFloorTilesLoaded;
     private int _mapFloorTilesRevision;
@@ -320,7 +319,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         private set => SetProperty(ref _paletteStatus, value);
     }
 
-    public bool IsMapInspector => _isMapInspector;
+    public bool IsMapInspector => MapInspector.IsMapInspector;
 
     public int? SelectedMapGridIndex
     {
@@ -347,44 +346,44 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     public bool HasMapGrid => SelectedMapGridValues is not null;
 
     public bool IsMapGridEmpty =>
-        _isMapInspector
+        IsMapInspector
         && MapInspector.SelectedMapDiagnosticLayerIndex == MapInspectorViewModel.SquareTilesLayerIndex
         && _isMapGridDataLoaded
         && !HasMapGrid;
 
     public bool IsMapSquareGridVisible =>
-        _isMapInspector
+        IsMapInspector
         && MapInspector.SelectedMapDiagnosticLayerIndex == MapInspectorViewModel.SquareTilesLayerIndex
         && HasMapGrid;
 
     public bool IsMapHexGridVisible =>
-        _isMapInspector
+        IsMapInspector
         && MapInspector.SelectedMapDiagnosticLayerIndex == MapInspectorViewModel.ObjectHexesLayerIndex;
 
     public bool IsMapFloorTileLayerVisible =>
-        _isMapInspector
+        IsMapInspector
         && MapInspector.SelectedMapDiagnosticLayerIndex == MapInspectorViewModel.FloorTilesLayerIndex
         && HasMapGrid;
 
     public bool IsMapFloorTileLayerEmpty =>
-        _isMapInspector
+        IsMapInspector
         && MapInspector.SelectedMapDiagnosticLayerIndex == MapInspectorViewModel.FloorTilesLayerIndex
         && _isMapGridDataLoaded
         && !HasMapGrid;
 
     public bool IsMapIsometricFloorLayerVisible =>
-        _isMapInspector
+        IsMapInspector
         && MapInspector.SelectedMapDiagnosticLayerIndex == MapInspectorViewModel.IsometricFloorTilesLayerIndex
         && HasMapGrid;
 
     public bool IsMapIsometricFloorLayerEmpty =>
-        _isMapInspector
+        IsMapInspector
         && MapInspector.SelectedMapDiagnosticLayerIndex == MapInspectorViewModel.IsometricFloorTilesLayerIndex
         && _isMapGridDataLoaded
         && !HasMapGrid;
 
     public bool IsMapIsometricObjectMarkerLayerVisible =>
-        _isMapInspector
+        IsMapInspector
         && MapInspector.SelectedMapDiagnosticLayerIndex == MapInspectorViewModel.IsometricObjectMarkersLayerIndex;
 
     public bool IsMapIsometricViewVisible =>
@@ -401,15 +400,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         get => _mapFloorTilesStatusDisplay;
         private set => SetProperty(ref _mapFloorTilesStatusDisplay, value);
     }
-
-    public bool IsMapHexGridEmpty =>
-        IsMapHexGridVisible
-        && !MapObjectPlacements.Any(placement =>
-            placement.ElevationGroup == MapInspector.SelectedMapElevationIndex
-            && placement.HexX is int x
-            && (uint)x < MapObjectPlacementDecoder.HexGridWidth
-            && placement.HexY is int y
-            && (uint)y < MapObjectPlacementDecoder.HexGridHeight);
 
     public string MapGridCellDisplay
     {
@@ -773,8 +763,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             var previewRoute = PreviewRouteSelector.Select(selectedEntry.Extension);
             if (previewRoute == PreviewRoute.Map)
             {
-                _isMapInspector = true;
-                OnPropertyChanged(nameof(IsMapInspector));
+                MapInspector.SetMapInspectorActive(true);
                 PreviewTitle = "MAP Inspector";
                 PreviewMessage = "Reading MAP header and tile-grid metadata...";
                 using var mapBuffer = new MemoryStream();
@@ -854,7 +843,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 OnPropertyChanged(nameof(IsMapGridEmpty));
                 OnPropertyChanged(nameof(IsMapSquareGridVisible));
                 OnPropertyChanged(nameof(IsMapHexGridVisible));
-                OnPropertyChanged(nameof(IsMapHexGridEmpty));
                 OnPropertyChanged(nameof(IsMapFloorTileLayerVisible));
                 OnPropertyChanged(nameof(IsMapFloorTileLayerEmpty));
                 OnPropertyChanged(nameof(IsMapIsometricFloorLayerVisible));
@@ -1457,16 +1445,14 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MapInspector.SetMapObjectPlacements(MapObjectPlacements);
         MapInspector.ResetMapState();
         _selectedMapGridIndex = null;
-        _isMapInspector = false;
         _isMapGridDataLoaded = false;
-        OnPropertyChanged(nameof(IsMapInspector));
+        MapInspector.SetMapInspectorActive(false);
         OnPropertyChanged(nameof(SelectedMapGridIndex));
         OnPropertyChanged(nameof(SelectedMapGridValues));
         OnPropertyChanged(nameof(HasMapGrid));
         OnPropertyChanged(nameof(IsMapGridEmpty));
         OnPropertyChanged(nameof(IsMapSquareGridVisible));
         OnPropertyChanged(nameof(IsMapHexGridVisible));
-        OnPropertyChanged(nameof(IsMapHexGridEmpty));
         OnPropertyChanged(nameof(IsMapFloorTileLayerVisible));
         OnPropertyChanged(nameof(IsMapFloorTileLayerEmpty));
         OnPropertyChanged(nameof(IsMapIsometricFloorLayerVisible));
@@ -1756,13 +1742,16 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     private void MapInspector_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(MapInspectorViewModel.SelectedMapElevationIndex))
+        if (e.PropertyName == nameof(MapInspectorViewModel.IsMapInspector))
+        {
+            OnPropertyChanged(nameof(IsMapInspector));
+        }
+        else if (e.PropertyName == nameof(MapInspectorViewModel.SelectedMapElevationIndex))
         {
             OnPropertyChanged(nameof(SelectedMapGridValues));
             OnPropertyChanged(nameof(HasMapGrid));
             OnPropertyChanged(nameof(IsMapGridEmpty));
             OnPropertyChanged(nameof(IsMapSquareGridVisible));
-            OnPropertyChanged(nameof(IsMapHexGridEmpty));
             OnPropertyChanged(nameof(IsMapFloorTileLayerVisible));
             OnPropertyChanged(nameof(IsMapFloorTileLayerEmpty));
             OnPropertyChanged(nameof(IsMapIsometricFloorLayerVisible));
@@ -1777,7 +1766,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             OnPropertyChanged(nameof(IsMapGridEmpty));
             OnPropertyChanged(nameof(IsMapSquareGridVisible));
             OnPropertyChanged(nameof(IsMapHexGridVisible));
-            OnPropertyChanged(nameof(IsMapHexGridEmpty));
             OnPropertyChanged(nameof(IsMapFloorTileLayerVisible));
             OnPropertyChanged(nameof(IsMapFloorTileLayerEmpty));
             OnPropertyChanged(nameof(IsMapIsometricFloorLayerVisible));

@@ -211,7 +211,7 @@ public sealed class MapGridInspectionViewModelTests
     }
 
     [Fact]
-    public void SelectedElevation_NotifiesParentOfAllElevationDependentProperties()
+    public void SelectedElevation_NotifiesElevationDependentProperties()
     {
         using var viewModel = new ArchiveBrowserViewModel();
         viewModel.MapInspector.SetAvailableElevations([0, 1], preferredElevationIndex: 0);
@@ -227,11 +227,7 @@ public sealed class MapGridInspectionViewModelTests
             System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
         Assert.NotNull(gridDataField);
         gridDataField.SetValue(viewModel, gridData);
-        var mapInspectorField = typeof(ArchiveBrowserViewModel).GetField(
-            "_isMapInspector",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        Assert.NotNull(mapInspectorField);
-        mapInspectorField.SetValue(viewModel, true);
+        viewModel.MapInspector.SetMapInspectorActive(true);
         viewModel.MapInspector.SelectedMapDiagnosticLayerIndex =
             MapInspectorViewModel.SquareTilesLayerIndex;
 
@@ -239,22 +235,138 @@ public sealed class MapGridInspectionViewModelTests
         Assert.True(viewModel.IsMapSquareGridVisible);
 
         var changedProperties = new HashSet<string?>();
+        var inspectorChangedProperties = new HashSet<string?>();
         viewModel.PropertyChanged += (_, args) => changedProperties.Add(args.PropertyName);
+        viewModel.MapInspector.PropertyChanged += (_, args) =>
+            inspectorChangedProperties.Add(args.PropertyName);
 
         viewModel.MapInspector.SelectedMapElevationIndex = 1;
 
         Assert.False(viewModel.IsMapSquareGridVisible);
+        Assert.Contains(nameof(viewModel.MapInspector.IsMapHexGridEmpty), inspectorChangedProperties);
         Assert.Contains(nameof(viewModel.SelectedMapGridValues), changedProperties);
         Assert.Contains(nameof(viewModel.HasMapGrid), changedProperties);
         Assert.Contains(nameof(viewModel.IsMapGridEmpty), changedProperties);
         Assert.Contains(nameof(viewModel.IsMapSquareGridVisible), changedProperties);
-        Assert.Contains(nameof(viewModel.IsMapHexGridEmpty), changedProperties);
         Assert.Contains(nameof(viewModel.IsMapFloorTileLayerVisible), changedProperties);
         Assert.Contains(nameof(viewModel.IsMapFloorTileLayerEmpty), changedProperties);
         Assert.Contains(nameof(viewModel.IsMapIsometricFloorLayerVisible), changedProperties);
         Assert.Contains(nameof(viewModel.IsMapIsometricFloorLayerEmpty), changedProperties);
         Assert.Contains(nameof(viewModel.IsMapIsometricObjectMarkerLayerVisible), changedProperties);
         Assert.Contains(nameof(viewModel.IsMapIsometricViewVisible), changedProperties);
+    }
+
+    [Fact]
+    public void MapInspectorHexGridEmpty_UsesLayerElevationAndValidCoordinates()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var inspector = viewModel.MapInspector;
+        inspector.SetAvailableElevations([0, 1, 2], preferredElevationIndex: 0);
+        inspector.SelectedMapDiagnosticLayerIndex = MapInspectorViewModel.ObjectHexesLayerIndex;
+        Assert.False(inspector.IsMapHexGridEmpty);
+        inspector.SetMapInspectorActive(true);
+        Assert.True(inspector.IsMapHexGridEmpty);
+
+        var otherElevation = CreateMarkerPlacement(1, elevation: 1);
+        var outOfRangeCoordinates = CreateMarkerPlacement(2, elevation: 0) with
+        {
+            HexX = MapObjectPlacementDecoder.HexGridWidth
+        };
+        var missingCoordinate = CreateMarkerPlacement(3, elevation: 0) with
+        {
+            HexX = null
+        };
+        var outOfRangeY = CreateMarkerPlacement(4, elevation: 0) with
+        {
+            HexY = MapObjectPlacementDecoder.HexGridHeight
+        };
+        var missingY = CreateMarkerPlacement(5, elevation: 0) with
+        {
+            HexY = null
+        };
+        inspector.SetMapObjectPlacements(
+            [otherElevation, outOfRangeCoordinates, missingCoordinate, outOfRangeY, missingY]);
+
+        Assert.True(inspector.IsMapHexGridEmpty);
+
+        inspector.SetMapObjectPlacements(
+            [
+                otherElevation,
+                outOfRangeCoordinates,
+                missingCoordinate,
+                outOfRangeY,
+                missingY,
+                CreateMarkerPlacement(6, elevation: 0)
+            ]);
+        Assert.False(inspector.IsMapHexGridEmpty);
+
+        inspector.SelectedMapElevationIndex = 2;
+        Assert.True(inspector.IsMapHexGridEmpty);
+
+        inspector.SelectedMapElevationIndex = 1;
+        Assert.False(inspector.IsMapHexGridEmpty);
+
+        inspector.SelectedMapDiagnosticLayerIndex = MapInspectorViewModel.SquareTilesLayerIndex;
+        Assert.False(inspector.IsMapHexGridEmpty);
+    }
+
+    [Fact]
+    public void MapInspectorHexGridEmpty_NotifiesWhenModeLayerElevationOrPlacementsChange()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var inspector = viewModel.MapInspector;
+        inspector.SetAvailableElevations([0, 1], preferredElevationIndex: 0);
+        var changedProperties = new HashSet<string?>();
+        inspector.PropertyChanged += (_, args) => changedProperties.Add(args.PropertyName);
+
+        inspector.SelectedMapDiagnosticLayerIndex = MapInspectorViewModel.ObjectHexesLayerIndex;
+        Assert.Contains(nameof(inspector.IsMapHexGridEmpty), changedProperties);
+        Assert.False(inspector.IsMapHexGridEmpty);
+
+        changedProperties.Clear();
+        inspector.SetMapInspectorActive(true);
+        Assert.Contains(nameof(inspector.IsMapHexGridEmpty), changedProperties);
+        Assert.True(inspector.IsMapHexGridEmpty);
+
+        changedProperties.Clear();
+        inspector.SelectedMapElevationIndex = 1;
+        Assert.Contains(nameof(inspector.IsMapHexGridEmpty), changedProperties);
+
+        changedProperties.Clear();
+        inspector.SetMapObjectPlacements([CreateMarkerPlacement(1, elevation: 1)]);
+        Assert.Contains(nameof(inspector.IsMapHexGridEmpty), changedProperties);
+        Assert.False(inspector.IsMapHexGridEmpty);
+
+        changedProperties.Clear();
+        inspector.SetMapObjectPlacements([]);
+        Assert.Contains(nameof(inspector.IsMapHexGridEmpty), changedProperties);
+        Assert.True(inspector.IsMapHexGridEmpty);
+    }
+
+    [Fact]
+    public void MapInspectorHexGridEmpty_TracksParentPlacementCollectionChanges()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var inspector = viewModel.MapInspector;
+        inspector.SetAvailableElevations([0], preferredElevationIndex: 0);
+        inspector.SetMapInspectorActive(true);
+        inspector.SelectedMapDiagnosticLayerIndex = MapInspectorViewModel.ObjectHexesLayerIndex;
+        var changedProperties = new HashSet<string?>();
+        inspector.PropertyChanged += (_, args) => changedProperties.Add(args.PropertyName);
+        var placement = CreateMarkerPlacement(1, elevation: 0);
+
+        Assert.True(inspector.IsMapHexGridEmpty);
+
+        viewModel.MapObjectPlacements.Add(placement);
+
+        Assert.False(inspector.IsMapHexGridEmpty);
+        Assert.Contains(nameof(inspector.IsMapHexGridEmpty), changedProperties);
+
+        changedProperties.Clear();
+        viewModel.MapObjectPlacements.Clear();
+
+        Assert.True(inspector.IsMapHexGridEmpty);
+        Assert.Contains(nameof(inspector.IsMapHexGridEmpty), changedProperties);
     }
 
     [Fact]
@@ -310,11 +422,7 @@ public sealed class MapGridInspectionViewModelTests
         bool shouldRequestTiles)
     {
         using var viewModel = new ArchiveBrowserViewModel();
-        var mapInspectorField = typeof(ArchiveBrowserViewModel).GetField(
-            "_isMapInspector",
-            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
-        Assert.NotNull(mapInspectorField);
-        mapInspectorField.SetValue(viewModel, true);
+        viewModel.MapInspector.SetMapInspectorActive(true);
         viewModel.MapInspector.SelectedMapDiagnosticLayerIndex = layerIndex;
 
         await viewModel.PrepareMapFloorTilesAsync();

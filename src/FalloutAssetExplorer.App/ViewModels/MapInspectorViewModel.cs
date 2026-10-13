@@ -19,6 +19,7 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
         new("Record index (asc)", MapObjectListSortMode.RecordIndexAscending);
 
     private IReadOnlyList<MapObjectPlacement> _mapObjectPlacements = [];
+    private bool _isMapInspector;
     private int? _selectedMapElevationIndex;
     private int _selectedMapDiagnosticLayerIndex;
     private string _mapObjectSearchText = string.Empty;
@@ -70,6 +71,8 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
 
     public ObservableCollection<int> MapElevationOptions { get; } = [];
 
+    public bool IsMapInspector => _isMapInspector;
+
     public IReadOnlyList<string> MapDiagnosticLayerOptions { get; } =
     [
         "Square tiles 100 x 100",
@@ -89,11 +92,14 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
                 return;
             }
 
-            if (SetProperty(ref _selectedMapElevationIndex, value)
-                && _selectedMapObject is not null
-                && _selectedMapObject.ElevationGroup != value)
+            if (SetProperty(ref _selectedMapElevationIndex, value))
             {
-                ClearSelectedMapObject();
+                OnPropertyChanged(nameof(IsMapHexGridEmpty));
+                if (_selectedMapObject is not null
+                    && _selectedMapObject.ElevationGroup != value)
+                {
+                    ClearSelectedMapObject();
+                }
             }
         }
     }
@@ -108,7 +114,10 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
                 return;
             }
 
-            SetProperty(ref _selectedMapDiagnosticLayerIndex, value);
+            if (SetProperty(ref _selectedMapDiagnosticLayerIndex, value))
+            {
+                OnPropertyChanged(nameof(IsMapHexGridEmpty));
+            }
         }
     }
 
@@ -158,6 +167,16 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
     public bool HasNoMatchingMapObjects =>
         HasActiveMapObjectFilters
         && FilteredMapObjectPlacements.Count == 0;
+
+    public bool IsMapHexGridEmpty =>
+        IsMapInspector
+        && SelectedMapDiagnosticLayerIndex == ObjectHexesLayerIndex
+        && !_mapObjectPlacements.Any(placement =>
+            placement.ElevationGroup == SelectedMapElevationIndex
+            && placement.HexX is int x
+            && (uint)x < MapObjectPlacementDecoder.HexGridWidth
+            && placement.HexY is int y
+            && (uint)y < MapObjectPlacementDecoder.HexGridHeight);
 
     public MapObjectTypeFilterOption SelectedMapObjectTypeFilter
     {
@@ -259,10 +278,19 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
         SetAvailableElevations([], preferredElevationIndex: null);
     }
 
+    public void SetMapInspectorActive(bool isActive)
+    {
+        if (SetProperty(ref _isMapInspector, isActive, nameof(IsMapInspector)))
+        {
+            OnPropertyChanged(nameof(IsMapHexGridEmpty));
+        }
+    }
+
     public void SetMapObjectPlacements(IReadOnlyList<MapObjectPlacement> placements)
     {
         ArgumentNullException.ThrowIfNull(placements);
         _mapObjectPlacements = placements;
+        OnPropertyChanged(nameof(IsMapHexGridEmpty));
 
         if (_selectedMapObject is not null
             && !_mapObjectPlacements.Any(

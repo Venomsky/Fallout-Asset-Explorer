@@ -90,7 +90,7 @@
                 VerticalAlignment="Center"
                 Text="No placed objects are available on this elevation."
                 TextWrapping="Wrap"
-                IsVisible="{Binding IsMapHexGridEmpty}" />
+                IsVisible="{Binding MapInspector.IsMapHexGridEmpty}" />
           </Grid>
         </Border>
         <StackPanel
