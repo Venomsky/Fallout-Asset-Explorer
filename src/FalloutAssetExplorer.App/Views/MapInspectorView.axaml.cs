@@ -99,7 +99,7 @@ public partial class MapInspectorView : UserControl
         {
             viewModel.MapInspector.SelectMapObjectFromIsometricMarker(
                 e.RecordIndex,
-                viewModel.SelectedMapElevationIndex);
+                viewModel.MapInspector.SelectedMapElevationIndex);
         }
     }
 
@@ -117,7 +117,7 @@ public partial class MapInspectorView : UserControl
             && combo.SelectedIndex is 2 or 3 or 4
             && ViewModel is { } viewModel)
         {
-            viewModel.SelectedMapDiagnosticLayerIndex = combo.SelectedIndex;
+            viewModel.MapInspector.SelectedMapDiagnosticLayerIndex = combo.SelectedIndex;
             await viewModel.PrepareMapFloorTilesAsync();
         }
     }

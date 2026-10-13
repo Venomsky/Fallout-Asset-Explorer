@@ -1,3 +1,4 @@
+using FalloutAssetExplorer.Core;
 using FalloutAssetExplorer.App.ViewModels;
 using Xunit;
 
@@ -38,9 +39,7 @@ public sealed class MapGridInspectionViewModelTests
     public void SelectingMapObject_SwitchesToItsElevationAndHexDiagnosticLayer()
     {
         using var viewModel = new ArchiveBrowserViewModel();
-        viewModel.MapElevationOptions.Add(0);
-        viewModel.MapElevationOptions.Add(1);
-        viewModel.SelectedMapElevationIndex = 0;
+        viewModel.MapInspector.SetAvailableElevations([0, 1], preferredElevationIndex: 0);
         var placement = new MapObjectPlacement(
             4,
             128,
@@ -75,8 +74,8 @@ public sealed class MapGridInspectionViewModelTests
 
         viewModel.MapInspector.SelectedMapObject = placement;
 
-        Assert.Equal(1, viewModel.SelectedMapElevationIndex);
-        Assert.Equal(1, viewModel.SelectedMapDiagnosticLayerIndex);
+        Assert.Equal(1, viewModel.MapInspector.SelectedMapElevationIndex);
+        Assert.Equal(1, viewModel.MapInspector.SelectedMapDiagnosticLayerIndex);
         Assert.Equal(placement.Details, viewModel.MapInspector.MapObjectDetailsDisplay);
     }
 
@@ -156,25 +155,184 @@ public sealed class MapGridInspectionViewModelTests
                 "Floor tiles isometric (experimental)",
                 "Object markers isometric"
             ],
-            viewModel.MapDiagnosticLayerOptions);
+            viewModel.MapInspector.MapDiagnosticLayerOptions);
 
-        viewModel.SelectedMapDiagnosticLayerIndex = 2;
+        viewModel.MapInspector.SelectedMapDiagnosticLayerIndex = 2;
 
-        Assert.Equal(2, viewModel.SelectedMapDiagnosticLayerIndex);
-        viewModel.SelectedMapDiagnosticLayerIndex = 3;
-        Assert.Equal(3, viewModel.SelectedMapDiagnosticLayerIndex);
-        viewModel.SelectedMapDiagnosticLayerIndex = 4;
-        Assert.Equal(4, viewModel.SelectedMapDiagnosticLayerIndex);
+        Assert.Equal(2, viewModel.MapInspector.SelectedMapDiagnosticLayerIndex);
+        viewModel.MapInspector.SelectedMapDiagnosticLayerIndex = 3;
+        Assert.Equal(3, viewModel.MapInspector.SelectedMapDiagnosticLayerIndex);
+        viewModel.MapInspector.SelectedMapDiagnosticLayerIndex = 4;
+        Assert.Equal(4, viewModel.MapInspector.SelectedMapDiagnosticLayerIndex);
+    }
+
+    [Fact]
+    public void MapElevationOptions_AreDistinctAndUsePreferredOrFirstAvailableElevation()
+    {
+        var viewModel = new MapInspectorViewModel();
+
+        viewModel.SetAvailableElevations([2, 1, 2, 0], preferredElevationIndex: 1);
+
+        Assert.Equal([0, 1, 2], viewModel.MapElevationOptions);
+        Assert.Equal(1, viewModel.SelectedMapElevationIndex);
+
+        viewModel.SetAvailableElevations([3, 1, 3], preferredElevationIndex: 8);
+
+        Assert.Equal([1, 3], viewModel.MapElevationOptions);
+        Assert.Equal(1, viewModel.SelectedMapElevationIndex);
+
+        viewModel.SetAvailableElevations([3, 1, 3], preferredElevationIndex: null);
+
+        Assert.Equal([1, 3], viewModel.MapElevationOptions);
+        Assert.Equal(1, viewModel.SelectedMapElevationIndex);
+
+        viewModel.SetAvailableElevations([], preferredElevationIndex: 0);
+
+        Assert.Empty(viewModel.MapElevationOptions);
+        Assert.Null(viewModel.SelectedMapElevationIndex);
+    }
+
+    [Fact]
+    public void MapSelections_RejectIndicesOutsideAvailableOptions()
+    {
+        var viewModel = new MapInspectorViewModel();
+        viewModel.SetAvailableElevations([0, 2], preferredElevationIndex: 2);
+
+        viewModel.SelectedMapElevationIndex = 1;
+        viewModel.SelectedMapDiagnosticLayerIndex = -1;
+        viewModel.SelectedMapDiagnosticLayerIndex = viewModel.MapDiagnosticLayerOptions.Count;
+
+        Assert.Equal(2, viewModel.SelectedMapElevationIndex);
+        Assert.Equal(MapInspectorViewModel.SquareTilesLayerIndex, viewModel.SelectedMapDiagnosticLayerIndex);
+
+        viewModel.SelectedMapDiagnosticLayerIndex = MapInspectorViewModel.IsometricObjectMarkersLayerIndex;
+
+        Assert.Equal(MapInspectorViewModel.IsometricObjectMarkersLayerIndex, viewModel.SelectedMapDiagnosticLayerIndex);
+    }
+
+    [Fact]
+    public void SelectedElevation_NotifiesParentOfAllElevationDependentProperties()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        viewModel.MapInspector.SetAvailableElevations([0, 1], preferredElevationIndex: 0);
+        var mapHeaderData = new byte[
+            MapHeaderDecoder.HeaderSize + MapHeaderDecoder.BytesPerElevation];
+        mapHeaderData[3] = 19;
+        mapHeaderData[0x2B] = 0x0C;
+        var gridData = new MapTileGridData(
+            MapHeaderDecoder.Decode(mapHeaderData, FalloutGame.Fallout1),
+            [new MapTileGrid(0, new uint[MapTileGridDecoder.ValuesPerGrid])]);
+        var gridDataField = typeof(ArchiveBrowserViewModel).GetField(
+            "_mapTileGridData",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(gridDataField);
+        gridDataField.SetValue(viewModel, gridData);
+        var mapInspectorField = typeof(ArchiveBrowserViewModel).GetField(
+            "_isMapInspector",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(mapInspectorField);
+        mapInspectorField.SetValue(viewModel, true);
+        viewModel.MapInspector.SelectedMapDiagnosticLayerIndex =
+            MapInspectorViewModel.SquareTilesLayerIndex;
+
+        Assert.Equal(0, viewModel.MapInspector.SelectedMapElevationIndex);
+        Assert.True(viewModel.IsMapSquareGridVisible);
+
+        var changedProperties = new HashSet<string?>();
+        viewModel.PropertyChanged += (_, args) => changedProperties.Add(args.PropertyName);
+
+        viewModel.MapInspector.SelectedMapElevationIndex = 1;
+
+        Assert.False(viewModel.IsMapSquareGridVisible);
+        Assert.Contains(nameof(viewModel.SelectedMapGridValues), changedProperties);
+        Assert.Contains(nameof(viewModel.HasMapGrid), changedProperties);
+        Assert.Contains(nameof(viewModel.IsMapGridEmpty), changedProperties);
+        Assert.Contains(nameof(viewModel.IsMapSquareGridVisible), changedProperties);
+        Assert.Contains(nameof(viewModel.IsMapHexGridEmpty), changedProperties);
+        Assert.Contains(nameof(viewModel.IsMapFloorTileLayerVisible), changedProperties);
+        Assert.Contains(nameof(viewModel.IsMapFloorTileLayerEmpty), changedProperties);
+        Assert.Contains(nameof(viewModel.IsMapIsometricFloorLayerVisible), changedProperties);
+        Assert.Contains(nameof(viewModel.IsMapIsometricFloorLayerEmpty), changedProperties);
+        Assert.Contains(nameof(viewModel.IsMapIsometricObjectMarkerLayerVisible), changedProperties);
+        Assert.Contains(nameof(viewModel.IsMapIsometricViewVisible), changedProperties);
+    }
+
+    [Fact]
+    public void ResettingMapState_ClearsMapOptionsAndSelectionButPreservesListPreferences()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var placement = CreateMarkerPlacement(1, elevation: 0) with
+        {
+            PidTypeIdentifier = 2,
+            PrototypeFileName = "proto/scenery/tree.pro",
+            RawPid = 0x02000023
+        };
+        viewModel.MapObjectPlacements.Add(placement);
+        viewModel.MapInspector.SetAvailableElevations([0, 1], preferredElevationIndex: 0);
+        viewModel.MapInspector.SelectedMapDiagnosticLayerIndex =
+            MapInspectorViewModel.FloorTilesLayerIndex;
+        viewModel.MapInspector.SelectedMapObject = placement;
+        viewModel.MapInspector.MapObjectSearchText = "tree";
+        viewModel.MapInspector.SelectedMapObjectTypeFilter = viewModel.MapInspector.MapObjectTypeFilterOptions
+            .Single(option => option.PidTypeIdentifier == 2);
+        viewModel.MapInspector.SelectedMapObjectListSort = GetMapObjectSortOption(
+            viewModel,
+            MapInspectorViewModel.MapObjectListSortMode.ByteOffsetDescending);
+
+        viewModel.MapObjectPlacements.Clear();
+        viewModel.MapInspector.SetMapObjectPlacements(viewModel.MapObjectPlacements);
+        viewModel.MapInspector.ResetMapState();
+
+        Assert.Empty(viewModel.MapInspector.MapElevationOptions);
+        Assert.Null(viewModel.MapInspector.SelectedMapElevationIndex);
+        Assert.Equal(
+            MapInspectorViewModel.SquareTilesLayerIndex,
+            viewModel.MapInspector.SelectedMapDiagnosticLayerIndex);
+        Assert.Null(viewModel.MapInspector.SelectedMapObject);
+        Assert.Equal(
+            "Select an Item or Scenery object to inspect its Fallout 2 prototype.",
+            viewModel.MapObjectPrototypeDiagnosticStatus);
+        Assert.Equal("tree", viewModel.MapInspector.MapObjectSearchText);
+        Assert.Equal(2, viewModel.MapInspector.SelectedMapObjectTypeFilter.PidTypeIdentifier);
+        Assert.Equal(
+            MapInspectorViewModel.MapObjectListSortMode.ByteOffsetDescending,
+            viewModel.MapInspector.SelectedMapObjectListSort.SortMode);
+    }
+
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, false)]
+    [InlineData(2, true)]
+    [InlineData(3, true)]
+    [InlineData(4, true)]
+    public async Task PrepareMapFloorTiles_IsGatedBySelectedLayer(
+        int layerIndex,
+        bool shouldRequestTiles)
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var mapInspectorField = typeof(ArchiveBrowserViewModel).GetField(
+            "_isMapInspector",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(mapInspectorField);
+        mapInspectorField.SetValue(viewModel, true);
+        viewModel.MapInspector.SelectedMapDiagnosticLayerIndex = layerIndex;
+
+        await viewModel.PrepareMapFloorTilesAsync();
+
+        Assert.Equal(
+            shouldRequestTiles
+                ? "No decoded MAP tile grids are available."
+                : "Select the floor-tile diagnostic layer to load this map's tiles.",
+            viewModel.MapFloorTilesStatusDisplay);
     }
 
     [Fact]
     public void SelectingFloorMarker_UpdatesObjectDetailsWithoutChangingLayerOrElevation()
     {
         using var viewModel = new ArchiveBrowserViewModel();
-        viewModel.MapElevationOptions.Add(0);
-        viewModel.MapElevationOptions.Add(1);
-        viewModel.SelectedMapElevationIndex = 0;
-        viewModel.SelectedMapDiagnosticLayerIndex = 2;
+        viewModel.MapInspector.SetAvailableElevations([0, 1], preferredElevationIndex: 0);
+        viewModel.MapInspector.SelectedMapDiagnosticLayerIndex =
+            MapInspectorViewModel.FloorTilesLayerIndex;
         var placement = new MapObjectPlacement(
             4,
             128,
@@ -209,8 +367,10 @@ public sealed class MapGridInspectionViewModelTests
 
         viewModel.MapInspector.SelectMapObjectFromFloorMarker(placement);
 
-        Assert.Equal(2, viewModel.SelectedMapDiagnosticLayerIndex);
-        Assert.Equal(0, viewModel.SelectedMapElevationIndex);
+        Assert.Equal(
+            MapInspectorViewModel.FloorTilesLayerIndex,
+            viewModel.MapInspector.SelectedMapDiagnosticLayerIndex);
+        Assert.Equal(0, viewModel.MapInspector.SelectedMapElevationIndex);
         Assert.Same(placement, viewModel.MapInspector.SelectedMapObject);
         Assert.Equal(placement.Details, viewModel.MapInspector.MapObjectDetailsDisplay);
     }
@@ -219,20 +379,18 @@ public sealed class MapGridInspectionViewModelTests
     public void IsometricMarkerSelection_ClearsWhenElevationChanges()
     {
         using var viewModel = new ArchiveBrowserViewModel();
-        viewModel.MapElevationOptions.Add(0);
-        viewModel.MapElevationOptions.Add(1);
-        viewModel.SelectedMapElevationIndex = 0;
+        viewModel.MapInspector.SetAvailableElevations([0, 1], preferredElevationIndex: 0);
         var placement = CreateMarkerPlacement(21, elevation: 0);
         viewModel.MapObjectPlacements.Add(placement);
 
         viewModel.MapInspector.SelectMapObjectFromIsometricMarker(
             placement.RecordIndex,
-            viewModel.SelectedMapElevationIndex);
+            viewModel.MapInspector.SelectedMapElevationIndex);
 
         Assert.Same(placement, viewModel.MapInspector.SelectedMapObject);
         Assert.Equal(placement.RecordIndex, viewModel.MapInspector.SelectedMapObjectRecordIndex);
 
-        viewModel.SelectedMapElevationIndex = 1;
+        viewModel.MapInspector.SelectedMapElevationIndex = 1;
 
         Assert.Null(viewModel.MapInspector.SelectedMapObject);
         Assert.Null(viewModel.MapInspector.SelectedMapObjectRecordIndex);
@@ -242,13 +400,12 @@ public sealed class MapGridInspectionViewModelTests
     public void IsometricMarkerSelection_ClearsWhenRecordLeavesCurrentMap()
     {
         using var viewModel = new ArchiveBrowserViewModel();
-        viewModel.MapElevationOptions.Add(0);
-        viewModel.SelectedMapElevationIndex = 0;
+        viewModel.MapInspector.SetAvailableElevations([0], preferredElevationIndex: 0);
         var placement = CreateMarkerPlacement(21, elevation: 0);
         viewModel.MapObjectPlacements.Add(placement);
         viewModel.MapInspector.SelectMapObjectFromIsometricMarker(
             placement.RecordIndex,
-            viewModel.SelectedMapElevationIndex);
+            viewModel.MapInspector.SelectedMapElevationIndex);
 
         viewModel.MapObjectPlacements.Remove(placement);
 
@@ -260,17 +417,16 @@ public sealed class MapGridInspectionViewModelTests
     public void IsometricMarkerSelection_ClearsWhenEmptySpaceIsClicked()
     {
         using var viewModel = new ArchiveBrowserViewModel();
-        viewModel.MapElevationOptions.Add(0);
-        viewModel.SelectedMapElevationIndex = 0;
+        viewModel.MapInspector.SetAvailableElevations([0], preferredElevationIndex: 0);
         var placement = CreateMarkerPlacement(21, elevation: 0);
         viewModel.MapObjectPlacements.Add(placement);
         viewModel.MapInspector.SelectMapObjectFromIsometricMarker(
             placement.RecordIndex,
-            viewModel.SelectedMapElevationIndex);
+            viewModel.MapInspector.SelectedMapElevationIndex);
 
         viewModel.MapInspector.SelectMapObjectFromIsometricMarker(
             null,
-            viewModel.SelectedMapElevationIndex);
+            viewModel.MapInspector.SelectedMapElevationIndex);
 
         Assert.Null(viewModel.MapInspector.SelectedMapObject);
         Assert.Null(viewModel.MapInspector.SelectedMapObjectRecordIndex);
@@ -505,7 +661,9 @@ public sealed class MapGridInspectionViewModelTests
         Assert.Equal(archivePath, viewModel.ArchivePathDisplay);
         Assert.Equal(operationStatus, viewModel.StatusMessage);
         Assert.Equal(floorStatus, viewModel.MapFloorTilesStatusDisplay);
-        Assert.Equal(0, viewModel.SelectedMapDiagnosticLayerIndex);
+        Assert.Equal(
+            MapInspectorViewModel.SquareTilesLayerIndex,
+            viewModel.MapInspector.SelectedMapDiagnosticLayerIndex);
     }
 
     [Fact]

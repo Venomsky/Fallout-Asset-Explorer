@@ -31,7 +31,7 @@
                 TileBitmaps="{Binding MapFloorTileBitmaps}"
                 UnavailableFloorIds="{Binding UnavailableMapFloorIds}"
                 Placements="{Binding MapObjectPlacements}"
-                Elevation="{Binding SelectedMapElevationIndex}"
+                Elevation="{Binding MapInspector.SelectedMapElevationIndex}"
                 SelectedObject="{Binding MapInspector.SelectedMapObject, Mode=OneWay}"
                 SelectedIndex="{Binding SelectedMapGridIndex, Mode=TwoWay}"
                 CellInspected="MapGridView_CellInspected"
@@ -47,7 +47,7 @@
                 TileBitmaps="{Binding MapFloorTileBitmaps}"
                 AssetRevision="{Binding MapFloorTilesRevision}"
                 Placements="{Binding MapInspector.FilteredMapObjectPlacements}"
-                Elevation="{Binding SelectedMapElevationIndex}"
+                Elevation="{Binding MapInspector.SelectedMapElevationIndex}"
                 ShowObjectMarkers="{Binding IsMapIsometricObjectMarkerLayerVisible}"
                 SelectedRecordIndex="{Binding MapInspector.SelectedMapObjectRecordIndex}"
                 ObjectSelectionChanged="MapIsometricFloorView_ObjectSelectionChanged"
@@ -58,7 +58,7 @@
             <local:MapHexGridDiagnosticView
                 x:Name="MapHexGridView"
                 Placements="{Binding MapObjectPlacements}"
-                Elevation="{Binding SelectedMapElevationIndex}"
+                Elevation="{Binding MapInspector.SelectedMapElevationIndex}"
                 SelectedObject="{Binding MapInspector.SelectedMapObject, Mode=TwoWay}"
                 IsHitTestVisible="True"
                 IsVisible="{Binding IsMapHexGridVisible}"
@@ -100,15 +100,15 @@
           <TextBlock VerticalAlignment="Center" Text="Layer" />
           <ComboBox
               Width="175"
-              ItemsSource="{Binding MapDiagnosticLayerOptions}"
-              SelectedIndex="{Binding SelectedMapDiagnosticLayerIndex}"
+              ItemsSource="{Binding MapInspector.MapDiagnosticLayerOptions}"
+              SelectedIndex="{Binding MapInspector.SelectedMapDiagnosticLayerIndex}"
               SelectionChanged="MapDiagnosticLayer_SelectionChanged"
               AutomationProperties.Name="MAP diagnostic layer" />
           <TextBlock VerticalAlignment="Center" Text="Elevation" />
           <ComboBox
               Width="75"
-              ItemsSource="{Binding MapElevationOptions}"
-              SelectedItem="{Binding SelectedMapElevationIndex}"
+              ItemsSource="{Binding MapInspector.MapElevationOptions}"
+              SelectedItem="{Binding MapInspector.SelectedMapElevationIndex}"
               IsEnabled="{Binding IsMapInspector}"
               AutomationProperties.Name="MAP elevation slot" />
           <Button

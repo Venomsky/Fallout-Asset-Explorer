@@ -8,11 +8,19 @@ namespace FalloutAssetExplorer.App.ViewModels;
 
 public sealed class MapInspectorViewModel : INotifyPropertyChanged
 {
+    public const int SquareTilesLayerIndex = 0;
+    public const int ObjectHexesLayerIndex = 1;
+    public const int FloorTilesLayerIndex = 2;
+    public const int IsometricFloorTilesLayerIndex = 3;
+    public const int IsometricObjectMarkersLayerIndex = 4;
+
     private static readonly MapObjectTypeFilterOption AllMapObjectTypes = new("All types", null);
     private static readonly MapObjectListSortOption DefaultMapObjectListSort =
         new("Record index (asc)", MapObjectListSortMode.RecordIndexAscending);
 
     private IReadOnlyList<MapObjectPlacement> _mapObjectPlacements = [];
+    private int? _selectedMapElevationIndex;
+    private int _selectedMapDiagnosticLayerIndex;
     private string _mapObjectSearchText = string.Empty;
     private MapObjectTypeFilterOption _selectedMapObjectTypeFilter = AllMapObjectTypes;
     private MapObjectListSortOption _selectedMapObjectListSort = DefaultMapObjectListSort;
@@ -59,6 +67,50 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public event EventHandler<MapObjectSelectionChangedEventArgs>? SelectedMapObjectChanged;
+
+    public ObservableCollection<int> MapElevationOptions { get; } = [];
+
+    public IReadOnlyList<string> MapDiagnosticLayerOptions { get; } =
+    [
+        "Square tiles 100 x 100",
+        "Object hexes 200 x 200",
+        "Floor tiles 100 x 100",
+        "Floor tiles isometric (experimental)",
+        "Object markers isometric"
+    ];
+
+    public int? SelectedMapElevationIndex
+    {
+        get => _selectedMapElevationIndex;
+        set
+        {
+            if (value is not null && !MapElevationOptions.Contains(value.Value))
+            {
+                return;
+            }
+
+            if (SetProperty(ref _selectedMapElevationIndex, value)
+                && _selectedMapObject is not null
+                && _selectedMapObject.ElevationGroup != value)
+            {
+                ClearSelectedMapObject();
+            }
+        }
+    }
+
+    public int SelectedMapDiagnosticLayerIndex
+    {
+        get => _selectedMapDiagnosticLayerIndex;
+        set
+        {
+            if ((uint)value >= (uint)MapDiagnosticLayerOptions.Count)
+            {
+                return;
+            }
+
+            SetProperty(ref _selectedMapDiagnosticLayerIndex, value);
+        }
+    }
 
     public IReadOnlyList<MapObjectTypeFilterOption> MapObjectTypeFilterOptions { get; } =
     [
@@ -175,6 +227,36 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
     {
         get => _mapObjectDetailsDisplay;
         private set => SetProperty(ref _mapObjectDetailsDisplay, value);
+    }
+
+    public void SetAvailableElevations(
+        IEnumerable<int> elevations,
+        int? preferredElevationIndex)
+    {
+        ArgumentNullException.ThrowIfNull(elevations);
+        var availableElevations = elevations.Distinct().Order().ToArray();
+
+        SelectedMapElevationIndex = null;
+        MapElevationOptions.Clear();
+        foreach (var elevation in availableElevations)
+        {
+            MapElevationOptions.Add(elevation);
+        }
+
+        int? initialElevationIndex = preferredElevationIndex is int preferred
+            && MapElevationOptions.Contains(preferred)
+                ? preferred
+                : MapElevationOptions.Count > 0
+                    ? MapElevationOptions[0]
+                    : null;
+        SelectedMapElevationIndex = initialElevationIndex;
+    }
+
+    public void ResetMapState()
+    {
+        ClearSelectedMapObject();
+        SelectedMapDiagnosticLayerIndex = SquareTilesLayerIndex;
+        SetAvailableElevations([], preferredElevationIndex: null);
     }
 
     public void SetMapObjectPlacements(IReadOnlyList<MapObjectPlacement> placements)
