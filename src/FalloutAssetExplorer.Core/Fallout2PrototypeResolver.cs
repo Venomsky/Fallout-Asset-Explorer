@@ -17,6 +17,52 @@ public sealed record Fallout2PrototypeDiagnostic(
 
     public bool HasSupportedSubtype { get; init; }
 
+    public bool HasExpectedSize { get; init; }
+
+    public IReadOnlyList<Fallout2PrototypeField> SceneryFields { get; init; } = [];
+
+    public IReadOnlyList<Fallout2PrototypeField> ItemFields { get; init; } = [];
+}
+
+public enum PrototypeInspectionOutcome
+{
+    Success,
+    Partial,
+    Error
+}
+
+public sealed record Fallout2StandalonePrototypeInspection(
+    string EntryPath,
+    string Status,
+    FalloutGame? Game,
+    ArchiveFormat? Format,
+    int? PrototypePid,
+    int? PidType,
+    int? Subtype,
+    long? FileSize,
+    ReadOnlyMemory<byte> RawBytes)
+{
+    public string? ArchivePath { get; init; }
+
+    public string? ArchiveLocation { get; init; }
+
+    public long? CompressedSize { get; init; }
+
+    public long? ActualSize { get; init; }
+
+    public bool IsReadComplete { get; init; }
+
+    public PrototypeInspectionOutcome Outcome { get; init; } = PrototypeInspectionOutcome.Error;
+
+    public string Provenance =>
+        "Selected directly from the archive; not verified through a MAP PID or prototype list.";
+
+    public string? PidTypeName { get; init; }
+
+    public string? SubtypeName { get; init; }
+
+    public bool HasSupportedSubtype { get; init; }
+
     public IReadOnlyList<Fallout2PrototypeField> SceneryFields { get; init; } = [];
 
     public IReadOnlyList<Fallout2PrototypeField> ItemFields { get; init; } = [];
@@ -35,7 +81,7 @@ public sealed record Fallout2PrototypeField(
 public sealed class Fallout2PrototypeResolver
 {
     private const int MaximumPrototypeListSize = 16 * 1024 * 1024;
-    private const int MaximumPrototypeSize = 1024 * 1024;
+    public const int MaximumPrototypeSizeBytes = 1024 * 1024;
     private const int MinimumPrototypeSize = 36;
     private const int SceneryTwoWordPrototypeSize = 0x31;
     private const int SceneryOneWordPrototypeSize = 0x2D;
@@ -108,6 +154,169 @@ public sealed class Fallout2PrototypeResolver
         }
 
         return ValidatePrototype(pid, pidType, location.FileName, location.FileSize.Value, prototypeBytes.Value);
+    }
+
+    public async Task<Fallout2StandalonePrototypeInspection> InspectStandaloneEntryAsync(
+        ArchiveEntry entry,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+
+        if (!string.Equals(entry.Extension, ".PRO", StringComparison.OrdinalIgnoreCase))
+        {
+            return CreateStandaloneInspection(
+                entry,
+                "The selected archive entry is not a PRO file.",
+                _archive?.Game,
+                _archive?.Format,
+                null,
+                null,
+                null,
+                entry.UncompressedSize,
+                ReadOnlyMemory<byte>.Empty);
+        }
+
+        if (_archive is null)
+        {
+            return CreateStandaloneInspection(
+                entry,
+                "The selected archive is unavailable.",
+                null,
+                null,
+                null,
+                null,
+                null,
+                entry.UncompressedSize,
+                ReadOnlyMemory<byte>.Empty);
+        }
+
+        if (!TryReadEntrySize(
+                entry,
+                MaximumPrototypeSizeBytes,
+                out var size,
+                out _))
+        {
+            var sizeMessage = entry.UncompressedSize < 0
+                ? $"the archive reports a negative uncompressed size of {entry.UncompressedSize} bytes"
+                : $"the entry declares {entry.UncompressedSize:N0} bytes, exceeding the 1 MiB preview limit";
+            return CreateStandaloneInspection(
+                entry,
+                $"PRO preview rejected: {sizeMessage}. The entry was not read.",
+                _archive.Game,
+                _archive.Format,
+                null,
+                null,
+                null,
+                entry.UncompressedSize,
+                ReadOnlyMemory<byte>.Empty);
+        }
+
+        var readResult = await ReadStandaloneEntryAsync(
+            _archive,
+            entry,
+            size,
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+        var rawBytes = readResult.RawBytes;
+        if (!readResult.IsComplete)
+        {
+            return CreateStandaloneInspection(
+                entry,
+                readResult.Error!,
+                _archive.Game,
+                _archive.Format,
+                null,
+                null,
+                null,
+                entry.UncompressedSize,
+                rawBytes,
+                actualSize: readResult.ActualSize);
+        }
+
+        if (_archive.Game != FalloutGame.Fallout2
+            || _archive.Format != ArchiveFormat.Dat2)
+        {
+            return CreateStandaloneInspection(
+                entry,
+                $"Semantic PRO inspection is supported only for Fallout 2 DAT2 archives; "
+                    + $"this entry is {_archive.Game} {_archive.Format}. Raw bytes are shown without decoding.",
+                _archive.Game,
+                _archive.Format,
+                null,
+                null,
+                null,
+                size,
+                rawBytes,
+                actualSize: readResult.ActualSize,
+                isReadComplete: true,
+                outcome: PrototypeInspectionOutcome.Partial);
+        }
+
+        if (rawBytes.Length < sizeof(int))
+        {
+            return CreateStandaloneInspection(
+                entry,
+                "The Fallout 2 PRO entry is shorter than the 4-byte PID field.",
+                _archive.Game,
+                _archive.Format,
+                null,
+                null,
+                null,
+                size,
+                rawBytes,
+                actualSize: readResult.ActualSize,
+                isReadComplete: true,
+                outcome: PrototypeInspectionOutcome.Partial);
+        }
+
+        var prototypePid = BinaryPrimitives.ReadInt32BigEndian(rawBytes);
+        var pidType = (int)((uint)prototypePid >> 24);
+        if (pidType is not (0 or 2))
+        {
+            return CreateStandaloneInspection(
+                entry,
+                $"Unsupported Fallout 2 PRO PID type {pidType}; only Item (0) and Scenery (2) are decoded.",
+                _archive.Game,
+                _archive.Format,
+                prototypePid,
+                pidType,
+                null,
+                size,
+                rawBytes,
+                actualSize: readResult.ActualSize,
+                isReadComplete: true,
+                outcome: PrototypeInspectionOutcome.Partial);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var diagnostic = await Task.Run(
+            () => ValidatePrototype(
+                prototypePid,
+                pidType,
+                entry.Path,
+                size,
+                rawBytes),
+            cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        return CreateStandaloneInspection(
+            entry,
+            diagnostic.Status,
+            _archive.Game,
+            _archive.Format,
+            diagnostic.PrototypePid,
+            pidType,
+            diagnostic.Subtype,
+            size,
+            diagnostic.RawBytes,
+            diagnostic.HasSupportedSubtype,
+            diagnostic.ItemFields,
+            diagnostic.SceneryFields,
+            actualSize: readResult.ActualSize,
+            isReadComplete: true,
+            outcome: diagnostic.HasSupportedSubtype && diagnostic.HasExpectedSize
+                ? PrototypeInspectionOutcome.Success
+                : PrototypeInspectionOutcome.Partial);
     }
 
     private async Task<PrototypeLocation> ResolveLocationAsync(
@@ -184,7 +393,7 @@ public sealed class Fallout2PrototypeResolver
                     $"the {category} prototype '{prototypeName}' is missing"));
         }
 
-        if (!TryReadEntrySize(entry, MaximumPrototypeSize, out var size, out var sizeError))
+        if (!TryReadEntrySize(entry, MaximumPrototypeSizeBytes, out var size, out var sizeError))
         {
             return CacheLocation(
                 pid,
@@ -290,6 +499,69 @@ public sealed class Fallout2PrototypeResolver
         return new PrototypeListResult([.. lines], null);
     }
 
+    private Fallout2StandalonePrototypeInspection CreateStandaloneInspection(
+        ArchiveEntry entry,
+        string status,
+        FalloutGame? game,
+        ArchiveFormat? format,
+        int? prototypePid,
+        int? pidType,
+        int? subtype,
+        long? fileSize,
+        ReadOnlyMemory<byte> rawBytes,
+        bool hasSupportedSubtype = false,
+        IReadOnlyList<Fallout2PrototypeField>? itemFields = null,
+        IReadOnlyList<Fallout2PrototypeField>? sceneryFields = null,
+        long? actualSize = null,
+        bool isReadComplete = false,
+        PrototypeInspectionOutcome outcome = PrototypeInspectionOutcome.Error)
+    {
+        return new Fallout2StandalonePrototypeInspection(
+            entry.Path,
+            status,
+            game,
+            format,
+            prototypePid,
+            pidType,
+            subtype,
+            fileSize,
+            rawBytes)
+        {
+            PidTypeName = pidType switch
+            {
+                0 => "Item",
+                2 => "Scenery",
+                _ => null
+            },
+            SubtypeName = (pidType, subtype) switch
+            {
+                (0, 0) => "Armor",
+                (0, 1) => "Container",
+                (0, 2) => "Drug",
+                (0, 3) => "Weapon",
+                (0, 4) => "Ammo",
+                (0, 5) => "Misc",
+                (0, 6) => "Key",
+                (2, 0) => "Door",
+                (2, 1) => "Stairs",
+                (2, 2) => "Elevator",
+                (2, 3) => "Ladder Up",
+                (2, 4) => "Ladder Down",
+                (2, 5) => "Generic",
+                _ => null
+            },
+            HasSupportedSubtype = hasSupportedSubtype,
+            ItemFields = itemFields ?? [],
+            SceneryFields = sceneryFields ?? [],
+            ArchivePath = _archive?.Path,
+            ArchiveLocation = entry.ArchiveLocation,
+            CompressedSize = entry.CompressedSize,
+            ActualSize = actualSize,
+            IsReadComplete = isReadComplete,
+            Outcome = outcome
+        };
+    }
+
     private static Fallout2PrototypeDiagnostic ValidatePrototype(
         int requestedPid,
         int pidType,
@@ -378,6 +650,7 @@ public sealed class Fallout2PrototypeResolver
                 prototypeBytes)
             {
                 HasSupportedSubtype = true,
+                HasExpectedSize = prototypeBytes.Length == expectedItemSize,
                 ItemFields = itemFields
             };
         }
@@ -388,7 +661,7 @@ public sealed class Fallout2PrototypeResolver
         var sceneryFields = ReadSceneryFields(prototypeBytes.Span, subtype);
         var status = prototypeBytes.Length < expectedScenerySize
             ? $"the scenery prototype is shorter than {expectedScenerySize} bytes for subtype {subtype}"
-            : "Prototype PID and subtype validated.";
+            : "Prototype PID type and subtype recognized.";
 
         return new Fallout2PrototypeDiagnostic(
             requestedPid,
@@ -401,6 +674,7 @@ public sealed class Fallout2PrototypeResolver
             prototypeBytes)
         {
             HasSupportedSubtype = true,
+            HasExpectedSize = prototypeBytes.Length >= expectedScenerySize,
             SceneryFields = sceneryFields
         };
     }
@@ -428,6 +702,12 @@ public sealed class Fallout2PrototypeResolver
             "material",
             0x24,
             interpretationResolver: GetMaterialName);
+        AddUInt8Field(
+            fields,
+            prototypeBytes,
+            "field_34",
+            0x28,
+            "Uninterpreted byte; sound ID is not confirmed.");
 
         switch (subtype)
         {
@@ -450,7 +730,12 @@ public sealed class Fallout2PrototypeResolver
                 AddInt32Field(fields, prototypeBytes, "ladder.field_0", 0x29);
                 break;
             case 5:
-                AddInt32Field(fields, prototypeBytes, "generic.field_0", 0x29);
+                AddInt32Field(
+                    fields,
+                    prototypeBytes,
+                    "generic.field_0",
+                    0x29,
+                    interpretationResolver: _ => "Uninterpreted raw field; meaning is not confirmed.");
                 break;
         }
 
@@ -479,6 +764,12 @@ public sealed class Fallout2PrototypeResolver
         AddInt32Field(fields, prototypeBytes, "weight", 0x2C);
         AddInt32Field(fields, prototypeBytes, "cost", 0x30);
         AddInt32Field(fields, prototypeBytes, "inventoryFid", 0x34, displayAsHex: true);
+        AddUInt8Field(
+            fields,
+            prototypeBytes,
+            "field_80",
+            0x38,
+            "Uninterpreted byte; sound ID is not confirmed.");
 
         switch (subtype)
         {
@@ -601,7 +892,8 @@ public sealed class Fallout2PrototypeResolver
         List<Fallout2PrototypeField> fields,
         ReadOnlySpan<byte> prototypeBytes,
         string name,
-        int offset)
+        int offset,
+        string? interpretation = null)
     {
         if ((uint)offset >= (uint)prototypeBytes.Length)
         {
@@ -613,6 +905,7 @@ public sealed class Fallout2PrototypeResolver
             offset,
             sizeof(byte),
             prototypeBytes[offset],
+            Interpretation: interpretation,
             StorageType: "uint8"));
     }
 
@@ -749,6 +1042,55 @@ public sealed class Fallout2PrototypeResolver
 
         return stream.ToArray();
     }
+
+    private static async Task<StandaloneEntryReadResult> ReadStandaloneEntryAsync(
+        IGameArchive archive,
+        ArchiveEntry entry,
+        int expectedSize,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = new MemoryStream(expectedSize);
+        try
+        {
+            await archive.CopyEntryToAsync(entry, stream, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            var bytes = stream.ToArray();
+            if (stream.Length != expectedSize)
+            {
+                return new StandaloneEntryReadResult(
+                    bytes,
+                    stream.Length,
+                    false,
+                    $"Could not read standalone PRO entry: Archive entry '{entry.Path}' "
+                        + $"declared {expectedSize} bytes but yielded {stream.Length}.");
+            }
+
+            return new StandaloneEntryReadResult(bytes, stream.Length, true, null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (
+            exception is InvalidDataException
+            or IOException
+            or UnauthorizedAccessException
+            or NotSupportedException
+            or ArgumentException)
+        {
+            return new StandaloneEntryReadResult(
+                stream.ToArray(),
+                stream.Length,
+                false,
+                $"Could not read standalone PRO entry: {exception.Message}");
+        }
+    }
+
+    private sealed record StandaloneEntryReadResult(
+        byte[] RawBytes,
+        long ActualSize,
+        bool IsComplete,
+        string? Error);
 
     private sealed record PrototypeListResult(string[]? Lines, string? Error);
 

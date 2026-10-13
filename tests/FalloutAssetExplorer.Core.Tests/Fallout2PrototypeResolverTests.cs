@@ -31,6 +31,362 @@ public sealed class Fallout2PrototypeResolverTests
     }
 
     [Fact]
+    public async Task InspectStandaloneEntryAsync_ParsesItemWithoutPrototypeListVerification()
+    {
+        const int pid = 0x00000005;
+        var prototypeBytes = CreateItemPrototype(pid, subtype: 3);
+        WriteInt32(prototypeBytes, 0x14, unchecked((int)0xA1B2C3D4));
+        var archive = CreateArchive(
+            "items",
+            "items.lst",
+            string.Empty,
+            ("direct.pro", prototypeBytes));
+        var entry = Assert.Single(archive.BrowserEntries, item => item.Path.EndsWith("direct.pro"));
+
+        var result = await new Fallout2PrototypeResolver(archive)
+            .InspectStandaloneEntryAsync(entry);
+
+        Assert.Equal(entry.Path, result.EntryPath);
+        Assert.Equal(archive.Path, result.ArchivePath);
+        Assert.Equal(entry.ArchiveLocation, result.ArchiveLocation);
+        Assert.Equal(entry.CompressedSize, result.CompressedSize);
+        Assert.Equal(prototypeBytes.Length, result.ActualSize);
+        Assert.True(result.IsReadComplete);
+        Assert.Equal(PrototypeInspectionOutcome.Success, result.Outcome);
+        Assert.Contains("Selected directly from the archive", result.Provenance);
+        Assert.Equal("Item", result.PidTypeName);
+        Assert.Equal("Weapon", result.SubtypeName);
+        Assert.Equal(pid, result.PrototypePid);
+        Assert.True(result.HasSupportedSubtype);
+        Assert.Equal(prototypeBytes, result.RawBytes.ToArray());
+        Assert.Contains(result.ItemFields, field => field.Name == "flags" && field.Value == unchecked((int)0xA1B2C3D4));
+        Assert.Empty(result.SceneryFields);
+        Assert.Equal(0, archive.ReadCount("proto/items/items.lst"));
+        Assert.Equal(1, archive.ReadCount(entry.Path));
+    }
+
+    [Fact]
+    public async Task InspectStandaloneEntryAsync_ParsesSceneryFields()
+    {
+        const int pid = 0x02000005;
+        var prototypeBytes = CreateSceneryPrototype(pid, subtype: 5);
+        WriteInt32(prototypeBytes, 0x29, 0x12345678);
+        var archive = CreateArchive(
+            "scenery",
+            "scenery.lst",
+            string.Empty,
+            ("direct.pro", prototypeBytes));
+        var entry = Assert.Single(archive.BrowserEntries, item => item.Path.EndsWith("direct.pro"));
+
+        var result = await new Fallout2PrototypeResolver(archive)
+            .InspectStandaloneEntryAsync(entry);
+
+        Assert.Equal("Scenery", result.PidTypeName);
+        Assert.Equal("Generic", result.SubtypeName);
+        Assert.True(result.HasSupportedSubtype);
+        Assert.Equal("Prototype PID type and subtype recognized.", result.Status);
+        var genericField = Assert.Single(
+            result.SceneryFields,
+            field => field.Name == "generic.field_0");
+        Assert.Equal(0x12345678, genericField.Value);
+        Assert.Equal(0x29, genericField.Offset);
+        Assert.Equal(sizeof(int), genericField.SizeInBytes);
+        Assert.Equal("int32 BE", genericField.StorageType);
+        Assert.Equal(
+            new byte[] { 0x12, 0x34, 0x56, 0x78 },
+            result.RawBytes.Slice(0x29, sizeof(int)).ToArray());
+        Assert.Empty(result.ItemFields);
+        Assert.Equal(prototypeBytes, result.RawBytes.ToArray());
+    }
+
+    [Fact]
+    public async Task InspectStandaloneEntryAsync_ReportsShortGenericPayloadAndPreservesAvailableData()
+    {
+        const int pid = 0x02000005;
+        var prototypeBytes = CreateSceneryPrototype(pid, subtype: 5, size: 0x2C);
+        prototypeBytes[0x28] = 0x30;
+        var archive = CreateArchive(
+            "scenery",
+            "scenery.lst",
+            string.Empty,
+            ("short-generic.pro", prototypeBytes));
+        var entry = Assert.Single(
+            archive.BrowserEntries,
+            item => item.Path.EndsWith("short-generic.pro"));
+
+        var result = await new Fallout2PrototypeResolver(archive)
+            .InspectStandaloneEntryAsync(entry);
+
+        Assert.Equal(PrototypeInspectionOutcome.Partial, result.Outcome);
+        Assert.True(result.IsReadComplete);
+        Assert.Equal((long?)44, result.ActualSize);
+        Assert.Contains("shorter than 45 bytes for subtype 5", result.Status);
+        Assert.True(result.HasSupportedSubtype);
+        var field34 = Assert.Single(result.SceneryFields, field => field.Name == "field_34");
+        Assert.Equal(0x30, field34.Value);
+        Assert.Equal(0x28, field34.Offset);
+        Assert.DoesNotContain(result.SceneryFields, field => field.Name == "generic.field_0");
+        Assert.Equal(prototypeBytes, result.RawBytes.ToArray());
+    }
+
+    [Fact]
+    public async Task InspectStandaloneEntryAsync_PreservesUnknownPidTypeBytes()
+    {
+        var prototypeBytes = CreatePrototype(unchecked((int)0x01000001), subtype: 0);
+        var archive = CreateArchive(
+            "items",
+            "items.lst",
+            string.Empty,
+            ("unknown-type.pro", prototypeBytes));
+        var entry = Assert.Single(archive.BrowserEntries, item => item.Path.EndsWith("unknown-type.pro"));
+
+        var result = await new Fallout2PrototypeResolver(archive)
+            .InspectStandaloneEntryAsync(entry);
+
+        Assert.Equal(1, result.PidType);
+        Assert.Null(result.PidTypeName);
+        Assert.Null(result.Subtype);
+        Assert.False(result.HasSupportedSubtype);
+        Assert.Contains("Unsupported Fallout 2 PRO PID type 1", result.Status);
+        Assert.Equal(prototypeBytes, result.RawBytes.ToArray());
+    }
+
+    [Fact]
+    public async Task InspectStandaloneEntryAsync_PreservesUnknownSubtypeBytes()
+    {
+        const int pid = 0x00000001;
+        var prototypeBytes = CreatePrototype(pid, subtype: 7);
+        var archive = CreateArchive(
+            "items",
+            "items.lst",
+            string.Empty,
+            ("unknown-subtype.pro", prototypeBytes));
+        var entry = Assert.Single(archive.BrowserEntries, item => item.Path.EndsWith("unknown-subtype.pro"));
+
+        var result = await new Fallout2PrototypeResolver(archive)
+            .InspectStandaloneEntryAsync(entry);
+
+        Assert.Equal(7, result.Subtype);
+        Assert.Null(result.SubtypeName);
+        Assert.False(result.HasSupportedSubtype);
+        Assert.Contains("unsupported subtype 7", result.Status);
+        Assert.Equal(prototypeBytes, result.RawBytes.ToArray());
+    }
+
+    [Fact]
+    public async Task InspectStandaloneEntryAsync_PreservesTruncatedHeaderBytes()
+    {
+        byte[] prototypeBytes = [0x00, 0x01, 0x02];
+        var archive = CreateArchive(
+            "items",
+            "items.lst",
+            string.Empty,
+            ("truncated.pro", prototypeBytes));
+        var entry = Assert.Single(archive.BrowserEntries, item => item.Path.EndsWith("truncated.pro"));
+
+        var result = await new Fallout2PrototypeResolver(archive)
+            .InspectStandaloneEntryAsync(entry);
+
+        Assert.Null(result.PrototypePid);
+        Assert.Null(result.PidType);
+        Assert.Contains("shorter than the 4-byte PID field", result.Status);
+        Assert.Equal(prototypeBytes, result.RawBytes.ToArray());
+    }
+
+    [Fact]
+    public async Task InspectStandaloneEntryAsync_ReportsTruncatedItemPayloadAndOmitsIncompleteFields()
+    {
+        const int pid = 0x00000001;
+        var prototypeBytes = CreateItemPrototype(pid, subtype: 6, size: 0x3C);
+        var archive = CreateArchive(
+            "items",
+            "items.lst",
+            string.Empty,
+            ("short-item.pro", prototypeBytes));
+        var entry = Assert.Single(archive.BrowserEntries, item => item.Path.EndsWith("short-item.pro"));
+
+        var result = await new Fallout2PrototypeResolver(archive)
+            .InspectStandaloneEntryAsync(entry);
+
+        Assert.Contains("shorter than 61 bytes for subtype 6", result.Status);
+        Assert.True(result.HasSupportedSubtype);
+        Assert.DoesNotContain(result.ItemFields, field => field.Name == "keyCode");
+        Assert.Equal(prototypeBytes, result.RawBytes.ToArray());
+    }
+
+    [Fact]
+    public async Task InspectStandaloneEntryAsync_ReportsLongItemAndAcceptsSceneryTrailingBytes()
+    {
+        const int itemPid = 0x00000001;
+        var itemBytes = CreateItemPrototype(itemPid, subtype: 6, size: 0x3E);
+        var itemArchive = CreateArchive(
+            "items",
+            "items.lst",
+            string.Empty,
+            ("long-item.pro", itemBytes));
+        var itemEntry = Assert.Single(itemArchive.BrowserEntries, item => item.Path.EndsWith("long-item.pro"));
+
+        var itemResult = await new Fallout2PrototypeResolver(itemArchive)
+            .InspectStandaloneEntryAsync(itemEntry);
+
+        Assert.Contains("longer than expected 61 bytes", itemResult.Status);
+        Assert.Contains(itemResult.ItemFields, field => field.Name == "keyCode");
+        Assert.Equal(itemBytes, itemResult.RawBytes.ToArray());
+
+        const int sceneryPid = 0x02000001;
+        var sceneryBytes = CreateSceneryPrototype(sceneryPid, subtype: 5, size: 0x2D + 24);
+        var sceneryArchive = CreateArchive(
+            "scenery",
+            "scenery.lst",
+            string.Empty,
+            ("trailing-scenery.pro", sceneryBytes));
+        var sceneryEntry = Assert.Single(
+            sceneryArchive.BrowserEntries,
+            item => item.Path.EndsWith("trailing-scenery.pro"));
+
+        var sceneryResult = await new Fallout2PrototypeResolver(sceneryArchive)
+            .InspectStandaloneEntryAsync(sceneryEntry);
+
+        Assert.Equal("Prototype PID type and subtype recognized.", sceneryResult.Status);
+        Assert.True(sceneryResult.HasSupportedSubtype);
+        Assert.Equal(sceneryBytes.Length, sceneryResult.FileSize);
+        Assert.Equal(sceneryBytes, sceneryResult.RawBytes.ToArray());
+    }
+
+    [Fact]
+    public async Task InspectStandaloneEntryAsync_DoesNotDecodeFallout1AndPreservesRawBytes()
+    {
+        const int pid = 0x00000001;
+        var prototypeBytes = CreateItemPrototype(pid, subtype: 3);
+        var archive = CreateArchiveWithEntrySize(
+            "items",
+            "items.lst",
+            string.Empty,
+            FalloutGame.Fallout1,
+            ArchiveFormat.Dat1,
+            ("direct.pro", prototypeBytes, (long?)null));
+        var entry = Assert.Single(archive.BrowserEntries, item => item.Path.EndsWith("direct.pro"));
+
+        var result = await new Fallout2PrototypeResolver(archive)
+            .InspectStandaloneEntryAsync(entry);
+
+        Assert.Contains("only for Fallout 2 DAT2", result.Status);
+        Assert.Equal(FalloutGame.Fallout1, result.Game);
+        Assert.Null(result.PrototypePid);
+        Assert.Null(result.Subtype);
+        Assert.False(result.HasSupportedSubtype);
+        Assert.Empty(result.ItemFields);
+        Assert.Equal(prototypeBytes, result.RawBytes.ToArray());
+    }
+
+    [Fact]
+    public async Task InspectStandaloneEntryAsync_ReadsEntryAtLimitAndRejectsLargerMetadataBeforeRead()
+    {
+        const int pid = 0x00000001;
+        var maximumSizeBytes = Fallout2PrototypeResolver.MaximumPrototypeSizeBytes;
+        var atLimitBytes = CreateItemPrototype(pid, subtype: 6, size: maximumSizeBytes);
+        var atLimitArchive = CreateArchive(
+            "items",
+            "items.lst",
+            string.Empty,
+            ("at-limit.pro", atLimitBytes));
+        var atLimitEntry = Assert.Single(
+            atLimitArchive.BrowserEntries,
+            item => item.Path.EndsWith("at-limit.pro"));
+
+        var atLimitResult = await new Fallout2PrototypeResolver(atLimitArchive)
+            .InspectStandaloneEntryAsync(atLimitEntry);
+
+        Assert.Equal(1, atLimitArchive.ReadCount(atLimitEntry.Path));
+        Assert.Contains("longer than expected 61 bytes", atLimitResult.Status);
+        Assert.Equal(maximumSizeBytes, atLimitResult.RawBytes.Length);
+
+        var overLimitArchive = CreateArchiveWithEntrySize(
+            "items",
+            "items.lst",
+            string.Empty,
+            ("over-limit.pro", CreateItemPrototype(pid, subtype: 6), (long?)maximumSizeBytes + 1));
+        var overLimitEntry = Assert.Single(
+            overLimitArchive.BrowserEntries,
+            item => item.Path.EndsWith("over-limit.pro"));
+
+        var overLimitResult = await new Fallout2PrototypeResolver(overLimitArchive)
+            .InspectStandaloneEntryAsync(overLimitEntry);
+
+        Assert.Equal(0, overLimitArchive.ReadCount(overLimitEntry.Path));
+        Assert.Contains("1 MiB preview limit", overLimitResult.Status);
+        Assert.Empty(overLimitResult.RawBytes.ToArray());
+    }
+
+    [Fact]
+    public async Task InspectStandaloneEntryAsync_RejectsNegativeSizeMetadataBeforeRead()
+    {
+        var archive = CreateArchiveWithEntrySize(
+            "items",
+            "items.lst",
+            string.Empty,
+            ("negative-size.pro", CreatePrototype(1, subtype: 6), -1));
+        var entry = Assert.Single(
+            archive.BrowserEntries,
+            item => item.Path.EndsWith("negative-size.pro"));
+
+        var result = await new Fallout2PrototypeResolver(archive)
+            .InspectStandaloneEntryAsync(entry);
+
+        Assert.Equal(0, archive.ReadCount(entry.Path));
+        Assert.Contains("negative uncompressed size", result.Status);
+        Assert.Contains("The entry was not read.", result.Status);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_DecodesObservedGenericSceneryByteAndRawWordAtExactOffsets()
+    {
+        const int pid = 0x020002F5;
+        byte[] prototypeBytes = Convert.FromHexString(
+            "020002F5000127B4020002FF00000000000000002000001008002000FFFFFFFF000000050000000730CCCCCCCC");
+        Assert.Equal(45, prototypeBytes.Length);
+
+        var listContents = string.Join(
+            '\n',
+            Enumerable.Repeat("unused.pro", 756).Append("00000758.pro"));
+        var archive = CreateArchive(
+            "scenery",
+            "scenery.lst",
+            listContents,
+            ("00000758.pro", prototypeBytes));
+
+        var result = await new Fallout2PrototypeResolver(archive).ResolveAsync(pid);
+
+        Assert.Equal("00000758.pro", result.VerifiedFileName);
+        Assert.Equal(pid, result.PrototypePid);
+        Assert.Equal(5, result.Subtype);
+        Assert.Equal((long?)45, result.FileSize);
+        Assert.Equal("Prototype PID type and subtype recognized.", result.Status);
+        Assert.Equal(prototypeBytes, result.RawBytes.ToArray());
+
+        var fields = result.SceneryFields.ToDictionary(field => field.Name);
+        Assert.Equal(7, fields["material"].Value);
+        Assert.Equal(0x24, fields["material"].Offset);
+        Assert.Equal(0x30, fields["field_34"].Value);
+        Assert.Equal(0x28, fields["field_34"].Offset);
+        Assert.Equal(sizeof(byte), fields["field_34"].SizeInBytes);
+        Assert.Equal("uint8", fields["field_34"].StorageType);
+        Assert.Equal(
+            "Uninterpreted byte; sound ID is not confirmed.",
+            fields["field_34"].Interpretation);
+        Assert.Equal(unchecked((int)0xCCCCCCCC), fields["generic.field_0"].Value);
+        Assert.Equal(0x29, fields["generic.field_0"].Offset);
+        Assert.Equal(sizeof(int), fields["generic.field_0"].SizeInBytes);
+        Assert.Equal("int32 BE", fields["generic.field_0"].StorageType);
+        Assert.Equal(
+            new byte[] { 0xCC, 0xCC, 0xCC, 0xCC },
+            result.RawBytes.Slice(0x29, sizeof(int)).ToArray());
+        Assert.Contains(
+            "meaning is not confirmed",
+            fields["generic.field_0"].Interpretation ?? string.Empty);
+    }
+
+    [Fact]
     public async Task ResolveAsync_DecodesSceneryCommonFieldsAtExactOffsetsAsBigEndian()
     {
         const int pid = 0x02000001;
@@ -69,10 +425,16 @@ public sealed class Fallout2PrototypeResolverTests
         Assert.Equal(-1, fields["sid"].Value);
         Assert.Equal("No script", fields["sid"].Interpretation);
         Assert.Equal("Leather", fields["material"].Interpretation);
+        Assert.Equal(0xA5, fields["field_34"].Value);
+        Assert.Equal(0x28, fields["field_34"].Offset);
+        Assert.Equal(sizeof(byte), fields["field_34"].SizeInBytes);
+        Assert.Equal("uint8", fields["field_34"].StorageType);
+        Assert.Equal(
+            "Uninterpreted byte; sound ID is not confirmed.",
+            fields["field_34"].Interpretation);
         Assert.Equal(unchecked((int)0x80000001), fields["openFlags"].Value);
         Assert.True(fields["openFlags"].IsFlags);
         Assert.Equal(int.MaxValue, fields["keyCode"].Value);
-        Assert.DoesNotContain(result.SceneryFields, field => field.Name == "field_34");
     }
 
     [Theory]
@@ -105,7 +467,11 @@ public sealed class Fallout2PrototypeResolverTests
         var result = await new Fallout2PrototypeResolver(archive).ResolveAsync(pid);
 
         Assert.True(result.HasSupportedSubtype);
-        Assert.Equal("Prototype PID and subtype validated.", result.Status);
+        Assert.Equal("Prototype PID type and subtype recognized.", result.Status);
+        var byteField = Assert.Single(result.SceneryFields, field => field.Name == "field_34");
+        Assert.Equal(0x28, byteField.Offset);
+        Assert.Equal(sizeof(byte), byteField.SizeInBytes);
+        Assert.Equal("uint8", byteField.StorageType);
         var firstField = Assert.Single(result.SceneryFields, field => field.Name == firstFieldName);
         Assert.Equal(0x29, firstField.Offset);
         Assert.Equal(0x12345678, firstField.Value);
@@ -180,6 +546,9 @@ public sealed class Fallout2PrototypeResolverTests
                 field.SizeInBytes == sizeof(byte) ? "uint8" : "int32 BE",
                 field.StorageType);
         });
+        Assert.Equal(
+            "Uninterpreted byte; sound ID is not confirmed.",
+            result.ItemFields.Single(field => field.Name == "field_80").Interpretation);
     }
 
     [Theory]
@@ -296,6 +665,7 @@ public sealed class Fallout2PrototypeResolverTests
         Assert.True(result.HasSupportedSubtype);
         Assert.Equal(48, result.FileSize);
         Assert.Contains(result.SceneryFields, field => field.Name == "elevator.type" && field.Value == 42);
+        Assert.Contains(result.SceneryFields, field => field.Name == "field_34");
         Assert.DoesNotContain(result.SceneryFields, field => field.Name == "elevator.level");
         Assert.Equal(prototypeBytes, result.RawBytes.ToArray());
     }
@@ -321,7 +691,7 @@ public sealed class Fallout2PrototypeResolverTests
         var result = await new Fallout2PrototypeResolver(archive).ResolveAsync(pid);
 
         Assert.True(result.HasSupportedSubtype);
-        Assert.Equal("Prototype PID and subtype validated.", result.Status);
+        Assert.Equal("Prototype PID type and subtype recognized.", result.Status);
         Assert.Equal(nominalSize + 24, result.FileSize);
         Assert.Contains(
             result.SceneryFields,
@@ -491,6 +861,21 @@ public sealed class Fallout2PrototypeResolverTests
         string directory,
         string listFileName,
         string listContents,
+        params (string FileName, byte[] Bytes, long? DeclaredSize)[] prototypes) =>
+        CreateArchiveWithEntrySize(
+            directory,
+            listFileName,
+            listContents,
+            FalloutGame.Fallout2,
+            ArchiveFormat.Dat2,
+            prototypes);
+
+    private static InMemoryArchive CreateArchiveWithEntrySize(
+        string directory,
+        string listFileName,
+        string listContents,
+        FalloutGame game,
+        ArchiveFormat format,
         params (string FileName, byte[] Bytes, long? DeclaredSize)[] prototypes)
     {
         var entries = new Dictionary<string, (ArchiveEntry Entry, byte[] Bytes)>(
@@ -502,7 +887,11 @@ public sealed class Fallout2PrototypeResolverTests
             AddEntry($"proto/{directory}/{fileName}", bytes, declaredSize);
         }
 
-        return new InMemoryArchive(entries.Values.Select(item => item.Entry).ToArray(), entries);
+        return new InMemoryArchive(
+            entries.Values.Select(item => item.Entry).ToArray(),
+            entries,
+            game,
+            format);
 
         void AddEntry(string path, byte[] bytes, long? declaredSize = null)
         {
@@ -564,7 +953,8 @@ public sealed class Fallout2PrototypeResolverTests
             ("size", 0x28, sizeof(int)),
             ("weight", 0x2C, sizeof(int)),
             ("cost", 0x30, sizeof(int)),
-            ("inventoryFid", 0x34, sizeof(int))
+            ("inventoryFid", 0x34, sizeof(int)),
+            ("field_80", 0x38, sizeof(byte))
         };
 
         switch (subtype)
@@ -660,14 +1050,16 @@ public sealed class Fallout2PrototypeResolverTests
 
     private sealed class InMemoryArchive(
         IReadOnlyList<ArchiveEntry> browserEntries,
-        Dictionary<string, (ArchiveEntry Entry, byte[] Bytes)> entries) : IGameArchive
+        Dictionary<string, (ArchiveEntry Entry, byte[] Bytes)> entries,
+        FalloutGame game,
+        ArchiveFormat format) : IGameArchive
     {
         private readonly ConcurrentDictionary<string, int> _readCounts =
             new(StringComparer.OrdinalIgnoreCase);
 
         public string Path => "synthetic-fallout2.dat";
-        public FalloutGame Game => FalloutGame.Fallout2;
-        public ArchiveFormat Format => ArchiveFormat.Dat2;
+        public FalloutGame Game => game;
+        public ArchiveFormat Format => format;
         public IReadOnlyList<ArchiveEntry> BrowserEntries => browserEntries;
 
         public int ReadCount(string path) =>
