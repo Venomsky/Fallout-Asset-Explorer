@@ -1,4 +1,7 @@
 using System.ComponentModel;
+using System.Buffers.Binary;
+using System.Text;
+using System.Text.Json;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using FalloutAssetExplorer.App;
@@ -23,6 +26,7 @@ public sealed class FrmPreviewViewModelTests
         Assert.False(viewModel.HasPreview);
         Assert.False(viewModel.CanPlay);
         Assert.False(viewModel.CanExportPng);
+        Assert.False(viewModel.CanExportSpritesheet);
         Assert.Empty(viewModel.FrameOptions);
         Assert.Equal(0, viewModel.SelectedDirectionIndex);
         Assert.Equal(0, viewModel.SelectedFrameIndex);
@@ -35,6 +39,7 @@ public sealed class FrmPreviewViewModelTests
         Assert.True(viewModel.HasPreview);
         Assert.True(viewModel.CanPlay);
         Assert.True(viewModel.CanExportPng);
+        Assert.True(viewModel.CanExportSpritesheet);
 
         var displayedBitmap = viewModel.PreviewBitmap;
         viewModel.ClearPreview();
@@ -43,6 +48,7 @@ public sealed class FrmPreviewViewModelTests
         Assert.False(viewModel.HasPreview);
         Assert.False(viewModel.CanPlay);
         Assert.False(viewModel.CanExportPng);
+        Assert.False(viewModel.CanExportSpritesheet);
         Assert.Empty(viewModel.FrameOptions);
         Assert.Equal(0, viewModel.SelectedDirectionIndex);
         Assert.Equal(0, viewModel.SelectedFrameIndex);
@@ -122,6 +128,111 @@ public sealed class FrmPreviewViewModelTests
     }
 
     [Fact]
+    public async Task ExportSelectedFramePngAsync_NotifiesThatSpritesheetExportIsTemporarilyUnavailable()
+    {
+        using var viewModel = new FrmPreviewViewModel();
+        viewModel.SetPreview(CreateDocument(), CreatePalette(), "art/critters/test.frm");
+        var notifiedProperties = new List<string?>();
+        viewModel.PropertyChanged += OnPropertyChanged;
+        using var output = new BlockingWriteStream();
+
+        var export = viewModel.ExportSelectedFramePngAsync(output);
+        try
+        {
+            await output.WriteStarted;
+
+            Assert.False(viewModel.CanExportPng);
+            Assert.False(viewModel.CanExportSpritesheet);
+            Assert.Contains(nameof(viewModel.CanExportSpritesheet), notifiedProperties);
+        }
+        finally
+        {
+            output.Release();
+        }
+
+        await export;
+        Assert.True(viewModel.CanExportSpritesheet);
+
+        void OnPropertyChanged(object? sender, PropertyChangedEventArgs args) =>
+            notifiedProperties.Add(args.PropertyName);
+    }
+
+    [Fact]
+    public void CanExportSpritesheet_RequiresDocumentAndResolvedPalette()
+    {
+        using var viewModel = new FrmPreviewViewModel();
+        var notifiedProperties = new List<string?>();
+        viewModel.PropertyChanged += OnPropertyChanged;
+
+        viewModel.SetPreview(CreateDocument(), null, "art/critters/test.frm");
+        Assert.False(viewModel.CanExportSpritesheet);
+        Assert.Contains(nameof(viewModel.CanExportSpritesheet), notifiedProperties);
+
+        notifiedProperties.Clear();
+        viewModel.SetPreview(CreateDocument(), CreatePalette(), "art/critters/test.frm");
+
+        Assert.True(viewModel.CanExportSpritesheet);
+        Assert.Equal("test_spritesheet.png", viewModel.SuggestedSpritesheetPngFileName);
+        Assert.Contains(nameof(viewModel.CanExportSpritesheet), notifiedProperties);
+
+        notifiedProperties.Clear();
+        viewModel.ClearPreview();
+        Assert.False(viewModel.CanExportSpritesheet);
+        Assert.Contains(nameof(viewModel.CanExportSpritesheet), notifiedProperties);
+
+        void OnPropertyChanged(object? sender, PropertyChangedEventArgs args) =>
+            notifiedProperties.Add(args.PropertyName);
+    }
+
+    [Fact]
+    public async Task ExportSpritesheetPngAsync_WritesAllDirectionsWithArchiveEntryName()
+    {
+        using var viewModel = new FrmPreviewViewModel();
+        viewModel.SetPreview(CreateDocument(), CreatePalette(), "art/critters/test.frm");
+        using var output = new MemoryStream();
+
+        await viewModel.ExportSpritesheetPngAsync(output);
+
+        Assert.Equal(
+            new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A },
+            output.ToArray()[..8]);
+        using var metadata = ReadSpritesheetMetadata(output.ToArray());
+        var root = metadata.RootElement;
+        Assert.Equal("test.frm", root.GetProperty("assetName").GetString());
+        var directions = root.GetProperty("directions").EnumerateArray().ToArray();
+        Assert.Equal(2, directions.Length);
+        Assert.Equal(0, directions[0].GetProperty("index").GetInt32());
+        Assert.Equal(2, directions[0].GetProperty("frames").GetArrayLength());
+        Assert.Equal(1, directions[1].GetProperty("index").GetInt32());
+        Assert.Equal(1, directions[1].GetProperty("frames").GetArrayLength());
+        Assert.True(viewModel.CanExportSpritesheet);
+    }
+
+    [Fact]
+    public async Task ExportSpritesheetPngAsync_ReportsDestinationWriteFailureAndRestoresAvailability()
+    {
+        using var viewModel = new FrmPreviewViewModel();
+        viewModel.SetPreview(CreateDocument(), CreatePalette(), "art/critters/test.frm");
+
+        await Assert.ThrowsAsync<IOException>(() =>
+            viewModel.ExportSpritesheetPngAsync(new ThrowingWriteStream()));
+
+        Assert.True(viewModel.CanExportSpritesheet);
+        Assert.True(viewModel.CanExportPng);
+    }
+
+    [Fact]
+    public async Task ExportSpritesheetPngAsync_RejectsMissingPalette()
+    {
+        using var viewModel = new FrmPreviewViewModel();
+        viewModel.SetPreview(CreateDocument(), null, "art/critters/test.frm");
+
+        Assert.False(viewModel.CanExportSpritesheet);
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            viewModel.ExportSpritesheetPngAsync(new MemoryStream()));
+    }
+
+    [Fact]
     public void Dispose_ClearsOwnedBitmapAndRejectsFurtherPreviewState()
     {
         var viewModel = new FrmPreviewViewModel();
@@ -165,6 +276,31 @@ public sealed class FrmPreviewViewModelTests
     private static FalloutPalette CreatePalette() =>
         FalloutPalette.Parse(new byte[FalloutPalette.MinimalFileSize]);
 
+    private static JsonDocument ReadSpritesheetMetadata(byte[] png)
+    {
+        var offset = 8;
+        while (offset < png.Length)
+        {
+            var length = checked((int)BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(offset, sizeof(uint))));
+            var dataOffset = offset + 8;
+            var chunkType = Encoding.ASCII.GetString(png, offset + sizeof(uint), 4);
+            if (chunkType == "iTXt")
+            {
+                var keywordEnd = Array.IndexOf(png, (byte)0, dataOffset, length);
+                var textOffset = checked(keywordEnd - dataOffset + 1 + 2);
+                var languageEnd = Array.IndexOf(png, (byte)0, dataOffset + textOffset, length - textOffset);
+                textOffset = checked(languageEnd - dataOffset + 1);
+                var translatedEnd = Array.IndexOf(png, (byte)0, dataOffset + textOffset, length - textOffset);
+                textOffset = checked(translatedEnd - dataOffset + 1);
+                return JsonDocument.Parse(png.AsMemory(dataOffset + textOffset, length - textOffset));
+            }
+
+            offset = checked(offset + sizeof(uint) + 4 + length + sizeof(uint));
+        }
+
+        throw new InvalidDataException("PNG spritesheet has no iTXt metadata chunk.");
+    }
+
     private static void AssertBitmapDisposed(Bitmap bitmap) =>
         Assert.Throws<NullReferenceException>(() => bitmap.Save(Stream.Null));
 
@@ -173,6 +309,33 @@ public sealed class FrmPreviewViewModelTests
         using var output = new MemoryStream();
         bitmap.Save(output);
         Assert.NotEmpty(output.ToArray());
+    }
+
+    private sealed class ThrowingWriteStream : MemoryStream
+    {
+        public override void Write(ReadOnlySpan<byte> buffer) =>
+            throw new IOException("Simulated destination write failure.");
+
+        public override void Write(byte[] buffer, int offset, int count) =>
+            throw new IOException("Simulated destination write failure.");
+    }
+
+    private sealed class BlockingWriteStream : MemoryStream
+    {
+        private readonly TaskCompletionSource<bool> _writeStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly ManualResetEventSlim _release = new();
+
+        public Task WriteStarted => _writeStarted.Task;
+
+        public void Release() => _release.Set();
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            _writeStarted.TrySetResult(true);
+            _release.Wait();
+            base.Write(buffer);
+        }
     }
 }
 

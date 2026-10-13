@@ -337,6 +337,51 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void ExportSpritesheet_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ArchiveBrowserViewModel viewModel
+            || !viewModel.FrmPreview.CanExportSpritesheet)
+        {
+            return;
+        }
+
+        try
+        {
+            var pngFileType = new FilePickerFileType("PNG image")
+            {
+                Patterns = ["*.png"]
+            };
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Export FRM spritesheet as PNG",
+                SuggestedFileName = viewModel.FrmPreview.SuggestedSpritesheetPngFileName,
+                DefaultExtension = "png",
+                FileTypeChoices = [pngFileType],
+                SuggestedFileType = pngFileType,
+                ShowOverwritePrompt = true
+            });
+
+            if (file is null)
+            {
+                return;
+            }
+
+            await using var destination = await file.OpenWriteAsync();
+            await viewModel.FrmPreview.ExportSpritesheetPngAsync(destination);
+            viewModel.ReportError($"Exported spritesheet PNG: {file.Name}");
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or InvalidOperationException
+            or NotSupportedException
+            or ArgumentException
+            or InvalidDataException)
+        {
+            viewModel.ReportError($"Could not export spritesheet PNG: {exception.Message}");
+        }
+    }
+
     private async Task TryExtractAsync(
         ArchiveBrowserViewModel viewModel,
         IReadOnlyList<ArchiveEntry> entries,

@@ -5,7 +5,7 @@ namespace FalloutAssetExplorer.Core;
 
 public static class FrmPngExporter
 {
-    private static ReadOnlySpan<byte> Signature => [137, 80, 78, 71, 13, 10, 26, 10];
+    internal static ReadOnlySpan<byte> Signature => [137, 80, 78, 71, 13, 10, 26, 10];
 
     private static readonly uint[] CrcTable = CreateCrcTable();
 
@@ -96,7 +96,7 @@ public static class FrmPngExporter
         WriteChunk(destination, "IEND"u8, ReadOnlySpan<byte>.Empty);
     }
 
-    private static void WriteChunk(Stream destination, ReadOnlySpan<byte> type, ReadOnlySpan<byte> data)
+    internal static void WriteChunk(Stream destination, ReadOnlySpan<byte> type, ReadOnlySpan<byte> data)
     {
         Span<byte> lengthBytes = stackalloc byte[sizeof(uint)];
         BinaryPrimitives.WriteUInt32BigEndian(lengthBytes, checked((uint)data.Length));
@@ -140,7 +140,7 @@ public static class FrmPngExporter
         return table;
     }
 
-    private sealed class IdatChunkStream(Stream destination) : Stream
+    internal sealed class IdatChunkStream(Stream destination) : Stream
     {
         private const int ChunkBufferSize = 64 * 1024;
         private readonly byte[] _buffer = new byte[ChunkBufferSize];

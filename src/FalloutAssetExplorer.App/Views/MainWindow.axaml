@@ -118,7 +118,7 @@
             x:Name="PreviewLayoutGrid"
             RowDefinitions="Auto,Auto,*,6,*"
             RowSpacing="4">
-          <Grid ColumnDefinitions="*,Auto">
+          <Grid ColumnDefinitions="*,Auto,Auto">
             <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding PreviewTitle}" />
             <Button
                 Grid.Column="1"
@@ -126,6 +126,12 @@
                 Click="ExportPng_Click"
                 IsEnabled="{Binding FrmPreview.CanExportPng}"
                 AutomationProperties.Name="Export selected FRM frame as PNG" />
+            <Button
+                Grid.Column="2"
+                Content="Export spritesheet..."
+                Click="ExportSpritesheet_Click"
+                IsEnabled="{Binding FrmPreview.CanExportSpritesheet}"
+                AutomationProperties.Name="Export all FRM directions and frames as a spritesheet PNG" />
           </Grid>
           <TextBlock Grid.Row="1" Text="{Binding PreviewMessage}" TextWrapping="Wrap" />
           <Grid
