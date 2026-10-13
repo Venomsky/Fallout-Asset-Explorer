@@ -2,9 +2,9 @@
 
 ## Explore the files behind the wasteland.
 
-Fallout Asset Explorer is a desktop tool for browsing and inspecting assets stored in Fallout 1 and Fallout 2 game archives. Find files by name or type, preview supported graphics, explore map data and selected Fallout 2 prototype records, export images for reference, and extract files for further analysis or modding.
+A desktop tool for exploring the files behind Fallout 1 and Fallout 2. Browse game archives, preview graphics and animations, export PNGs, inspect map data, and extract assets for modding or further research.
 
-You do not need to know how a game archive works to start exploring. The app opens archives you choose on your computer; it does not include game assets or modify the archive.
+**No archive-format expertise required.** Open a game archive on your computer and start exploring. The app does not bundle game assets or modify your archives.
 
 ![Fallout Asset Explorer showing a Fallout 2 archive with the MAP Inspector open](docs/images/FullApp.png)
 
