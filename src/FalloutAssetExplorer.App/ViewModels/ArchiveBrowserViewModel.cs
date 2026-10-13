@@ -8,7 +8,6 @@ using System.Threading;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
-using Avalonia.Threading;
 using FalloutAssetExplorer.App.Views;
 using FalloutAssetExplorer.Core;
 
@@ -17,7 +16,6 @@ namespace FalloutAssetExplorer.App.ViewModels;
 public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposable
 {
     private static readonly string[] SupportedExtensions = [".FRM", ".MAP", ".PRO", ".LST", ".INT"];
-    private static readonly string[] DirectionNames = ["NE", "E", "SE", "SW", "W", "NW"];
 
     private string _searchText = string.Empty;
     private bool _isReplacingMapObjectPlacements;
@@ -30,16 +28,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private bool _isExtracting;
     private IGameArchive? _archive;
     private readonly FalloutPaletteResolver _paletteResolver = new();
-    private readonly FrmPlaybackController _playback = new();
-    private readonly DispatcherTimer _playbackTimer;
     private CancellationTokenSource? _previewCancellation;
     private CancellationTokenSource? _mapFloorTileCancellation;
     private CancellationTokenSource? _mapObjectPrototypeDiagnosticCancellation;
-    private FrmDocument? _previewDocument;
-    private Bitmap? _previewBitmap;
-    private FalloutPalette? _falloutPalette;
     private string? _gameDataDirectory;
-    private byte[] _renderBuffer = [];
     private MapTileGridData? _mapTileGridData;
     private MapScopedAssetCache<Bitmap> _mapFloorBitmapCache =
         new(MapScopedAssetCache<Bitmap>.DefaultByteLimit, bitmap => bitmap.Dispose());
@@ -58,23 +50,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private string _previewDetails = "Select a .FRM or .MAP entry to inspect.";
     private string _previewTitle = "Resource Inspector";
     private string _paletteStatus = "Palette discovery uses the open archive or a configured game-data folder.";
-    private int _selectedDirectionIndex;
-    private int _selectedFrameIndex;
-    private bool _isCheckerboardBackground;
     private bool _isDisposed;
-    private bool _isExportingPng;
 
     public ArchiveBrowserViewModel()
     {
         ExtensionOptions = new ObservableCollection<string>(
             new[] { ArchiveEntryFilter.AllExtensions }.Concat(SupportedExtensions));
-        DirectionOptions = new ObservableCollection<string>(
-            DirectionNames.Select((name, index) => $"{name} ({index})"));
-        _playbackTimer = new DispatcherTimer
-        {
-            Interval = GetPlaybackInterval()
-        };
-        _playbackTimer.Tick += PlaybackTimer_Tick;
         MapObjectPlacements.CollectionChanged += MapObjectPlacements_CollectionChanged;
         MapInspector.PropertyChanged += MapInspector_PropertyChanged;
         MapInspector.SelectedMapObjectChanged += MapInspector_SelectedMapObjectChanged;
@@ -88,14 +69,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     public ObservableCollection<string> ExtensionOptions { get; }
 
-    public ObservableCollection<string> DirectionOptions { get; }
-
     public ObservableCollection<string> OverwritePolicyOptions { get; } =
         ["Skip existing", "Overwrite existing", "Cancel operation"];
 
-    public ObservableCollection<int> FrameOptions { get; } = [];
-
     public MapInspectorViewModel MapInspector { get; } = new();
+
+    public FrmPreviewViewModel FrmPreview { get; } = new();
 
     public ObservableCollection<MapObjectPlacement> MapObjectPlacements { get; } = [];
 
@@ -185,109 +164,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         get => _selectedEntry;
         set => SetProperty(ref _selectedEntry, value);
-    }
-
-    public Bitmap? PreviewBitmap
-    {
-        get => _previewBitmap;
-        private set
-        {
-            if (SetProperty(ref _previewBitmap, value))
-            {
-                OnPropertyChanged(nameof(HasPreview));
-            }
-        }
-    }
-
-    public bool HasPreview => PreviewBitmap is not null;
-
-    public bool CanPlay => _previewDocument is not null && _playback.CanPlay;
-
-    public bool CanExportPng =>
-        !_isDisposed
-        && !_isExportingPng
-        && _previewDocument is not null
-        && _falloutPalette is not null
-        && (uint)_selectedDirectionIndex < (uint)_previewDocument.Directions.Count
-        && (uint)_selectedFrameIndex
-            < (uint)_previewDocument.Directions[_selectedDirectionIndex].Frames.Count;
-
-    public string SuggestedPngFileName
-    {
-        get
-        {
-            var fileName = SelectedEntry is null
-                ? "FRM"
-                : Path.GetFileNameWithoutExtension(SelectedEntry.Path);
-            var directionName = _previewDocument is not null
-                && (uint)_selectedDirectionIndex < (uint)_previewDocument.Directions.Count
-                ? _previewDocument.Directions[_selectedDirectionIndex].Name
-                : DirectionNames[0];
-            var unsanitized = $"{fileName}_{directionName}_Frame{_selectedFrameIndex + 1:D2}";
-            var invalidCharacters = Path.GetInvalidFileNameChars()
-                .Concat("<>:\"/\\|?*")
-                .ToHashSet();
-            var sanitized = new string(unsanitized
-                .Select(character => invalidCharacters.Contains(character) ? '_' : character)
-                .ToArray())
-                .TrimEnd('.', ' ');
-            return $"{(string.IsNullOrWhiteSpace(sanitized) ? "FRM" : sanitized)}.png";
-        }
-    }
-
-    public bool IsPlaying => _playback.IsPlaying;
-
-    public string PlayPauseButtonText => IsPlaying ? "Pause" : "Play";
-
-    public string CurrentFrameDisplay => _previewDocument is null
-        ? "Frame —"
-        : $"Frame {_playback.CurrentFrameIndex + 1} / {_playback.CurrentDirectionFrameCount}";
-
-    public bool IsLoopEnabled
-    {
-        get => _playback.IsLoopEnabled;
-        set
-        {
-            if (_playback.IsLoopEnabled == value)
-            {
-                return;
-            }
-
-            _playback.IsLoopEnabled = value;
-            OnPropertyChanged();
-        }
-    }
-
-    public double PlaybackSpeed
-    {
-        get => _playback.FramesPerSecond;
-        set
-        {
-            if (value is < FrmPlaybackController.MinimumFramesPerSecond
-                or > FrmPlaybackController.MaximumFramesPerSecond)
-            {
-                return;
-            }
-
-            var framesPerSecond = (int)Math.Round(value);
-            if (_playback.FramesPerSecond == framesPerSecond)
-            {
-                return;
-            }
-
-            _playback.FramesPerSecond = framesPerSecond;
-            _playbackTimer.Interval = GetPlaybackInterval();
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(PlaybackSpeedDisplay));
-        }
-    }
-
-    public string PlaybackSpeedDisplay => $"{_playback.FramesPerSecond} FPS";
-
-    public bool IsCheckerboardBackground
-    {
-        get => _isCheckerboardBackground;
-        set => SetProperty(ref _isCheckerboardBackground, value);
     }
 
     public string PreviewMessage
@@ -414,99 +290,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         private set => SetProperty(ref _mapObjectStatusDisplay, value);
     }
 
-    public int SelectedDirectionIndex
-    {
-        get => _selectedDirectionIndex;
-        set
-        {
-            if (_previewDocument is null
-                || value < 0
-                || value >= _previewDocument.Directions.Count
-                || value == _selectedDirectionIndex)
-            {
-                return;
-            }
-
-            _playback.SelectDirection(value);
-            _playbackTimer.Stop();
-            SetProperty(ref _selectedDirectionIndex, value);
-            SetProperty(ref _selectedFrameIndex, _playback.CurrentFrameIndex, nameof(SelectedFrameIndex));
-            RefreshPreviewFrame();
-            NotifyPlaybackState();
-            OnPropertyChanged(nameof(SuggestedPngFileName));
-        }
-    }
-
-    public int SelectedFrameIndex
-    {
-        get => _selectedFrameIndex;
-        set
-        {
-            if (_previewDocument is null
-                || value < 0
-                || value >= _playback.CurrentDirectionFrameCount
-                || value == _selectedFrameIndex)
-            {
-                return;
-            }
-
-            _playback.SelectFrame(value);
-            _playbackTimer.Stop();
-            SetProperty(ref _selectedFrameIndex, value);
-            RefreshPreviewFrame();
-            NotifyPlaybackState();
-            OnPropertyChanged(nameof(SuggestedPngFileName));
-        }
-    }
-
-    public void TogglePlayback()
-    {
-        if (_isDisposed)
-        {
-            return;
-        }
-
-        if (_playback.IsPlaying)
-        {
-            _playback.Pause();
-            _playbackTimer.Stop();
-        }
-        else if (_playback.Play())
-        {
-            _playbackTimer.Start();
-        }
-
-        NotifyPlaybackState();
-    }
-
-    public async Task ExportSelectedFramePngAsync(Stream destination)
-    {
-        ArgumentNullException.ThrowIfNull(destination);
-        if (!CanExportPng || _previewDocument is null || _falloutPalette is null)
-        {
-            throw new InvalidOperationException(
-                "PNG export requires a selected, valid FRM frame and a resolved Fallout COLOR.PAL.");
-        }
-
-        var document = _previewDocument;
-        var palette = _falloutPalette;
-        var directionIndex = _selectedDirectionIndex;
-        var frameIndex = _selectedFrameIndex;
-        _isExportingPng = true;
-        OnPropertyChanged(nameof(CanExportPng));
-
-        try
-        {
-            await Task.Run(
-                () => FrmPngExporter.Write(document, directionIndex, frameIndex, palette, destination));
-        }
-        finally
-        {
-            _isExportingPng = false;
-            OnPropertyChanged(nameof(CanExportPng));
-        }
-    }
-
     public async Task ExtractSelectedEntriesAsync(
         string destinationDirectory,
         IEnumerable<ArchiveEntry>? selectedEntries = null,
@@ -624,8 +407,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
 
         _isDisposed = true;
-        _playbackTimer.Stop();
-        _playbackTimer.Tick -= PlaybackTimer_Tick;
+        FrmPreview.Dispose();
         _previewCancellation?.Cancel();
         _previewCancellation = null;
         _mapFloorTileCancellation?.Cancel();
@@ -821,31 +603,13 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
             var paletteResolution = await ResolvePaletteAsync(archive, cancellation.Token);
             cancellation.Token.ThrowIfCancellationRequested();
-            _previewDocument = document;
-            _falloutPalette = paletteResolution.Palette;
-            _playback.SetFrameCounts(document.Directions.Select(direction => direction.Frames.Count).ToArray());
-            _playbackTimer.Stop();
-            _selectedDirectionIndex = _playback.DirectionIndex;
-            _selectedFrameIndex = _playback.CurrentFrameIndex;
-            OnPropertyChanged(nameof(SelectedDirectionIndex));
-            OnPropertyChanged(nameof(SelectedFrameIndex));
-            FrameOptions.Clear();
-            for (var index = 0; index < document.FramesPerDirection; index++)
-            {
-                FrameOptions.Add(index);
-            }
-
-            PreviewDetails = BuildPreviewDetails(document, 0, 0);
             PreviewMessage = selectedEntry.Path;
             PaletteStatus = paletteResolution.Palette is null
                 ? paletteResolution.Diagnostic ?? "No valid Fallout palette is available; showing diagnostic grayscale."
                 : archive.Game == FalloutGame.Fallout2
                     ? "Fallout 2 COLOR.PAL applied; visual color match is not verified."
                     : $"Full-color Fallout 1 palette: {paletteResolution.Source}";
-            NotifyPlaybackState();
-            OnPropertyChanged(nameof(CanExportPng));
-            OnPropertyChanged(nameof(SuggestedPngFileName));
-            RefreshPreviewFrame();
+            FrmPreview.SetPreview(document, paletteResolution.Palette, selectedEntry.Path);
         }
         catch (OperationCanceledException)
         {
@@ -1004,7 +768,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 return;
             }
 
-            _falloutPalette = palette;
             PaletteStatus = archive.Game == FalloutGame.Fallout2
                 ? $"Fallout 2 palette applied from {paletteResolution.Source ?? "the available game data"}; visual color match is not verified."
                 : $"Fallout palette applied from {paletteResolution.Source ?? "the available game data"}.";
@@ -1213,72 +976,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         OnPropertyChanged(nameof(CanExtractAll));
     }
 
-    private void RefreshPreviewFrame()
-    {
-        if (_previewDocument is null)
-        {
-            return;
-        }
-
-        var direction = _previewDocument.Directions[SelectedDirectionIndex];
-        var frame = direction.Frames[SelectedFrameIndex];
-        var requiredLength = checked(frame.Pixels.Length * 4);
-        if (_renderBuffer.Length < requiredLength)
-        {
-            Array.Resize(ref _renderBuffer, requiredLength);
-        }
-
-        var rgba = _renderBuffer.AsSpan(0, requiredLength);
-        if (_falloutPalette is not null)
-        {
-            _falloutPalette.CopyRgba(frame, rgba);
-        }
-        else
-        {
-            for (var index = 0; index < frame.Pixels.Length; index++)
-            {
-                var pixel = frame.Pixels[index];
-                var outputIndex = index * 4;
-                rgba[outputIndex] = pixel;
-                rgba[outputIndex + 1] = pixel;
-                rgba[outputIndex + 2] = pixel;
-                rgba[outputIndex + 3] = pixel == 0 ? (byte)0 : byte.MaxValue;
-            }
-        }
-
-        var bitmap = new WriteableBitmap(
-            new PixelSize(frame.Width, frame.Height),
-            new Vector(96, 96),
-            PixelFormat.Rgba8888,
-            AlphaFormat.Premul);
-        using (var framebuffer = bitmap.Lock())
-        {
-            if (framebuffer.RowBytes == frame.Width * 4)
-            {
-                System.Runtime.InteropServices.Marshal.Copy(_renderBuffer, 0, framebuffer.Address, requiredLength);
-            }
-            else
-            {
-                for (var row = 0; row < frame.Height; row++)
-                {
-                    System.Runtime.InteropServices.Marshal.Copy(
-                        _renderBuffer,
-                        row * frame.Width * 4,
-                        framebuffer.Address + row * framebuffer.RowBytes,
-                        frame.Width * 4);
-                }
-            }
-        }
-
-        var previousBitmap = PreviewBitmap;
-        PreviewBitmap = bitmap;
-        previousBitmap?.Dispose();
-        PreviewDetails = BuildPreviewDetails(_previewDocument, SelectedDirectionIndex, SelectedFrameIndex);
-        OnPropertyChanged(nameof(CurrentFrameDisplay));
-        OnPropertyChanged(nameof(CanExportPng));
-        OnPropertyChanged(nameof(SuggestedPngFileName));
-    }
-
     private static Bitmap CreateTileBitmap(FrmFrame frame, FalloutPalette palette)
     {
         var byteCount = checked(frame.Pixels.Length * 4);
@@ -1311,61 +1008,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
     }
 
-    private void PlaybackTimer_Tick(object? sender, EventArgs e)
-    {
-        if (_isDisposed)
-        {
-            return;
-        }
-
-        if (_playback.Advance())
-        {
-            SetProperty(
-                ref _selectedFrameIndex,
-                _playback.CurrentFrameIndex,
-                nameof(SelectedFrameIndex));
-            RefreshPreviewFrame();
-            if (!_playback.IsPlaying)
-            {
-                _playbackTimer.Stop();
-                NotifyPlaybackState();
-            }
-        }
-        else if (!_playback.IsPlaying)
-        {
-            _playbackTimer.Stop();
-            NotifyPlaybackState();
-        }
-    }
-
-    private void NotifyPlaybackState()
-    {
-        OnPropertyChanged(nameof(CanPlay));
-        OnPropertyChanged(nameof(IsPlaying));
-        OnPropertyChanged(nameof(PlayPauseButtonText));
-        OnPropertyChanged(nameof(CurrentFrameDisplay));
-    }
-
-    private TimeSpan GetPlaybackInterval() =>
-        TimeSpan.FromMilliseconds(1000d / _playback.FramesPerSecond);
-
     private async Task<FalloutPaletteResolution> ResolvePaletteAsync(
         IGameArchive archive,
         CancellationToken cancellationToken) =>
         await _paletteResolver.ResolveAsync(archive, _gameDataDirectory, cancellationToken);
-
-    private static string BuildPreviewDetails(FrmDocument document, int directionIndex, int frameIndex)
-    {
-        var direction = document.Directions[directionIndex];
-        var frame = direction.Frames[frameIndex];
-        return $"Version {document.Version} | FRM rate metadata {document.FramesPerSecond} FPS | Action frame {document.ActionFrame}"
-            + Environment.NewLine
-            + $"Direction {direction.Name} | {frameIndex + 1}/{document.FramesPerDirection}"
-            + Environment.NewLine
-            + $"Frame {frame.Width} x {frame.Height} | Frame offset ({frame.OffsetX}, {frame.OffsetY})"
-            + Environment.NewLine
-            + $"Direction shift ({direction.ShiftX}, {direction.ShiftY})";
-    }
 
     private static string BuildMapHeaderDetails(
         MapHeaderMetadata metadata,
@@ -1451,24 +1097,14 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MapGridCellDisplay = "Click a grid cell to keep its square-grid coordinates and raw value selected.";
         MapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
         MapObjectStatusDisplay = "MAP objects have not been read.";
-        _playbackTimer.Stop();
-        _playback.SetFrameCounts([]);
-        var previousBitmap = PreviewBitmap;
-        PreviewBitmap = null;
-        previousBitmap?.Dispose();
-        _previewDocument = null;
-        _falloutPalette = null;
-        FrameOptions.Clear();
-        _selectedFrameIndex = 0;
-        _selectedDirectionIndex = 0;
-        OnPropertyChanged(nameof(SelectedFrameIndex));
-        OnPropertyChanged(nameof(SelectedDirectionIndex));
+        if (!_isDisposed)
+        {
+            FrmPreview.ClearPreview();
+        }
+
         PreviewDetails = "Select a .FRM or .MAP entry to inspect.";
         PreviewTitle = "Resource Inspector";
         PaletteStatus = "Palette discovery uses the open archive or a configured game-data folder.";
-        NotifyPlaybackState();
-        OnPropertyChanged(nameof(CanExportPng));
-        OnPropertyChanged(nameof(SuggestedPngFileName));
     }
 
     private void UpdateSelectedMapGridDisplay()

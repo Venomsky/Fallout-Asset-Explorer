@@ -124,7 +124,7 @@
                 Grid.Column="1"
                 Content="Export PNG..."
                 Click="ExportPng_Click"
-                IsEnabled="{Binding CanExportPng}"
+                IsEnabled="{Binding FrmPreview.CanExportPng}"
                 AutomationProperties.Name="Export selected FRM frame as PNG" />
           </Grid>
           <TextBlock Grid.Row="1" Text="{Binding PreviewMessage}" TextWrapping="Wrap" />
@@ -135,12 +135,12 @@
               RowSpacing="4"
               MinHeight="56">
             <Border Grid.Row="0" Background="#171A1F" ClipToBounds="True" MinHeight="32">
-              <Grid IsVisible="{Binding HasPreview}">
+              <Grid IsVisible="{Binding FrmPreview.HasPreview}">
                 <local:CheckerboardBackground
-                    IsVisible="{Binding IsCheckerboardBackground}"
+                    IsVisible="{Binding FrmPreview.IsCheckerboardBackground}"
                     IsHitTestVisible="False" />
                 <Image
-                    Source="{Binding PreviewBitmap}"
+                    Source="{Binding FrmPreview.PreviewBitmap}"
                     Stretch="Uniform"
                     RenderOptions.BitmapInterpolationMode="None"
                     AutomationProperties.Name="FRM color preview" />
@@ -150,50 +150,50 @@
                 Grid.Row="1"
                 Orientation="Horizontal"
                 Spacing="8"
-                IsVisible="{Binding HasPreview}">
+                IsVisible="{Binding FrmPreview.HasPreview}">
               <TextBlock VerticalAlignment="Center" Text="Direction" />
               <ComboBox
                   Width="130"
-                  ItemsSource="{Binding DirectionOptions}"
-                  SelectedIndex="{Binding SelectedDirectionIndex}"
-                  IsEnabled="{Binding HasPreview}"
+                  ItemsSource="{Binding FrmPreview.DirectionOptions}"
+                  SelectedIndex="{Binding FrmPreview.SelectedDirectionIndex}"
+                  IsEnabled="{Binding FrmPreview.HasPreview}"
                   AutomationProperties.Name="FRM direction" />
               <TextBlock VerticalAlignment="Center" Text="Frame" />
               <ComboBox
                   Width="90"
-                  ItemsSource="{Binding FrameOptions}"
-                  SelectedItem="{Binding SelectedFrameIndex}"
-                  IsEnabled="{Binding HasPreview}"
+                  ItemsSource="{Binding FrmPreview.FrameOptions}"
+                  SelectedItem="{Binding FrmPreview.SelectedFrameIndex}"
+                  IsEnabled="{Binding FrmPreview.HasPreview}"
                   AutomationProperties.Name="FRM frame" />
               <CheckBox
                   Margin="4,0,0,0"
                   VerticalAlignment="Center"
                   Content="Checkerboard"
-                  IsChecked="{Binding IsCheckerboardBackground}"
-                  IsEnabled="{Binding HasPreview}"
+                  IsChecked="{Binding FrmPreview.IsCheckerboardBackground}"
+                  IsEnabled="{Binding FrmPreview.HasPreview}"
                   AutomationProperties.Name="Checkerboard transparency background" />
             </StackPanel>
             <Grid
                 Grid.Row="2"
                 ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto"
                 ColumnSpacing="8"
-                IsVisible="{Binding HasPreview}">
+                IsVisible="{Binding FrmPreview.HasPreview}">
               <Button
-                  Content="{Binding PlayPauseButtonText}"
+                  Content="{Binding FrmPreview.PlayPauseButtonText}"
                   Click="TogglePlayback_Click"
-                  IsEnabled="{Binding CanPlay}"
+                  IsEnabled="{Binding FrmPreview.CanPlay}"
                   AutomationProperties.Name="Play or pause FRM animation" />
               <CheckBox
                   Grid.Column="1"
                   VerticalAlignment="Center"
                   Content="Loop"
-                  IsChecked="{Binding IsLoopEnabled}"
-                  IsEnabled="{Binding CanPlay}"
+                  IsChecked="{Binding FrmPreview.IsLoopEnabled}"
+                  IsEnabled="{Binding FrmPreview.CanPlay}"
                   AutomationProperties.Name="Loop FRM animation" />
               <TextBlock
                   Grid.Column="2"
                   VerticalAlignment="Center"
-                  Text="{Binding CurrentFrameDisplay}"
+                  Text="{Binding FrmPreview.CurrentFrameDisplay}"
                   AutomationProperties.Name="Current FRM frame" />
               <TextBlock
                   Grid.Column="3"
@@ -205,12 +205,12 @@
                   Maximum="30"
                   TickFrequency="1"
                   IsSnapToTickEnabled="True"
-                  Value="{Binding PlaybackSpeed}"
+                  Value="{Binding FrmPreview.PlaybackSpeed}"
                   AutomationProperties.Name="FRM preview playback speed" />
               <TextBlock
                   Grid.Column="5"
                   VerticalAlignment="Center"
-                  Text="{Binding PlaybackSpeedDisplay}" />
+                  Text="{Binding FrmPreview.PlaybackSpeedDisplay}" />
             </Grid>
           </Grid>
           <GridSplitter
@@ -231,14 +231,14 @@
             <ScrollViewer
                 Grid.Row="0"
                 Grid.RowSpan="3"
-                IsVisible="{Binding HasPreview}"
+                IsVisible="{Binding FrmPreview.HasPreview}"
                 HorizontalScrollBarVisibility="Disabled"
                 VerticalScrollBarVisibility="Auto">
               <StackPanel Spacing="8">
                 <TextBlock
                     Foreground="#AAB2BF"
                     FontSize="12"
-                    Text="{Binding PreviewDetails}"
+                    Text="{Binding FrmPreview.PreviewDetails}"
                     TextWrapping="Wrap" />
                 <TextBlock
                     Foreground="#AAB2BF"

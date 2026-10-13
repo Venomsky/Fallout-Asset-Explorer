@@ -289,13 +289,13 @@ public partial class MainWindow : Window
     {
         if (DataContext is ArchiveBrowserViewModel viewModel)
         {
-            viewModel.TogglePlayback();
+            viewModel.FrmPreview.TogglePlayback();
         }
     }
 
     private async void ExportPng_Click(object? sender, RoutedEventArgs e)
     {
-        if (DataContext is not ArchiveBrowserViewModel viewModel || !viewModel.CanExportPng)
+        if (DataContext is not ArchiveBrowserViewModel viewModel || !viewModel.FrmPreview.CanExportPng)
         {
             return;
         }
@@ -309,7 +309,7 @@ public partial class MainWindow : Window
             var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
                 Title = "Export FRM frame as PNG",
-                SuggestedFileName = viewModel.SuggestedPngFileName,
+                SuggestedFileName = viewModel.FrmPreview.SuggestedPngFileName,
                 DefaultExtension = "png",
                 FileTypeChoices = [pngFileType],
                 SuggestedFileType = pngFileType,
@@ -322,7 +322,7 @@ public partial class MainWindow : Window
             }
 
             await using var destination = await file.OpenWriteAsync();
-            await viewModel.ExportSelectedFramePngAsync(destination);
+            await viewModel.FrmPreview.ExportSelectedFramePngAsync(destination);
             viewModel.ReportError($"Exported PNG: {file.Name}");
         }
         catch (Exception exception) when (
