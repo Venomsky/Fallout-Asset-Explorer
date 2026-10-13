@@ -89,18 +89,25 @@ public partial class MapInspectorView : UserControl
     private void MapFloorTileView_ObjectSelected(
         object? sender,
         MapObjectPlacementSelectedEventArgs e) =>
-        ViewModel?.SelectMapObjectFromFloorMarker(e.Placement);
+        ViewModel?.MapInspector.SelectMapObjectFromFloorMarker(e.Placement);
 
     private void MapIsometricFloorView_ObjectSelectionChanged(
         object? sender,
-        MapObjectMarkerSelectionChangedEventArgs e) =>
-        ViewModel?.SelectMapObjectFromIsometricMarker(e.RecordIndex);
+        MapObjectMarkerSelectionChangedEventArgs e)
+    {
+        if (ViewModel is { } viewModel)
+        {
+            viewModel.MapInspector.SelectMapObjectFromIsometricMarker(
+                e.RecordIndex,
+                viewModel.SelectedMapElevationIndex);
+        }
+    }
 
     private void ClearMapObjectSearch_Click(object? sender, RoutedEventArgs e)
     {
         if (ViewModel is { } viewModel)
         {
-            viewModel.MapObjectSearchText = string.Empty;
+            viewModel.MapInspector.MapObjectSearchText = string.Empty;
         }
     }
 

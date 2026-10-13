@@ -16,9 +16,6 @@ namespace FalloutAssetExplorer.App.ViewModels;
 
 public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposable
 {
-    private static readonly MapObjectTypeFilterOption AllMapObjectTypes = new("All types", null);
-    private static readonly MapObjectListSortOption DefaultMapObjectListSort =
-        new("Record index (asc)", MapObjectListSortMode.RecordIndexAscending);
     private static readonly string[] SupportedExtensions = [".FRM", ".MAP", ".PRO", ".LST", ".INT"];
     private static readonly string[] DirectionNames = ["NE", "E", "SE", "SW", "W", "NW"];
     private const int MapFloorTilesDiagnosticLayerIndex = 2;
@@ -26,13 +23,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private const int MapIsometricObjectMarkersDiagnosticLayerIndex = 4;
 
     private string _searchText = string.Empty;
-    private string _mapObjectSearchText = string.Empty;
-    private MapObjectTypeFilterOption _selectedMapObjectTypeFilter = AllMapObjectTypes;
-    private MapObjectListSortOption _selectedMapObjectListSort = DefaultMapObjectListSort;
-    private IReadOnlyList<MapObjectPlacement> _filteredMapObjectPlacements = [];
     private bool _isReplacingMapObjectPlacements;
-    private bool _isReorderingSortedMapObjectPlacements;
-    private bool _sortedListReportedTransientSelectionClear;
     private string _selectedExtension = ArchiveEntryFilter.AllExtensions;
     private string? _archivePath;
     private string _statusMessage = "Open a Fallout DAT archive to begin.";
@@ -57,7 +48,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         new(MapScopedAssetCache<Bitmap>.DefaultByteLimit, bitmap => bitmap.Dispose());
     private readonly Dictionary<uint, Bitmap> _mapFloorTileBitmaps = [];
     private readonly HashSet<uint> _unavailableMapFloorIds = [];
-    private MapObjectPlacement? _selectedMapObject;
     private Fallout2PrototypeResolver? _mapPrototypeResolver;
     private int? _selectedMapElevationIndex;
     private int _selectedMapDiagnosticLayerIndex;
@@ -69,7 +59,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private string _mapGridCellDisplay = "Click a grid cell to keep its square-grid coordinates and raw value selected.";
     private string _mapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
     private string _mapObjectStatusDisplay = "MAP objects have not been read.";
-    private string _mapObjectDetailsDisplay = "Select a parsed object to inspect its raw fields.";
     private string _mapObjectPrototypeDiagnosticStatus = "Select an Item or Scenery object to inspect its Fallout 2 prototype.";
     private string _mapObjectPrototypeDiagnosticDetails = string.Empty;
     private string _mapObjectPrototypeSceneryFieldsDisplay = string.Empty;
@@ -98,24 +87,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         };
         _playbackTimer.Tick += PlaybackTimer_Tick;
         MapObjectPlacements.CollectionChanged += MapObjectPlacements_CollectionChanged;
+        MapInspector.SelectedMapObjectChanged += MapInspector_SelectedMapObjectChanged;
     }
-
-    public sealed record MapObjectTypeFilterOption(string DisplayName, int? PidTypeIdentifier);
-
-    public enum MapObjectListSortMode
-    {
-        RecordIndexAscending,
-        RecordIndexDescending,
-        PidAscending,
-        PidDescending,
-        ObjectTypeAscending,
-        HexCoordinatesAscending,
-        HexCoordinatesDescending,
-        ByteOffsetAscending,
-        ByteOffsetDescending
-    }
-
-    public sealed record MapObjectListSortOption(string DisplayName, MapObjectListSortMode SortMode);
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -134,6 +107,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     public ObservableCollection<int> MapElevationOptions { get; } = [];
 
+    public MapInspectorViewModel MapInspector { get; } = new();
+
     public ObservableCollection<string> MapDiagnosticLayerOptions { get; } =
         [
             "Square tiles 100 x 100",
@@ -144,111 +119,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         ];
 
     public ObservableCollection<MapObjectPlacement> MapObjectPlacements { get; } = [];
-
-    public IReadOnlyList<MapObjectTypeFilterOption> MapObjectTypeFilterOptions { get; } =
-    [
-        AllMapObjectTypes,
-        new("Item", 0),
-        new("Critter", 1),
-        new("Scenery", 2),
-        new("Wall", 3),
-        new("Tile", 4),
-        new("Miscellaneous", 5),
-        new("Interface", 6),
-        new("Inventory", 7),
-        new("Head", 8),
-        new("Background", 9),
-        new("Skilldex", 10)
-    ];
-
-    public IReadOnlyList<MapObjectListSortOption> MapObjectListSortOptions { get; } =
-    [
-        DefaultMapObjectListSort,
-        new("Record index (desc)", MapObjectListSortMode.RecordIndexDescending),
-        new("PID (asc)", MapObjectListSortMode.PidAscending),
-        new("PID (desc)", MapObjectListSortMode.PidDescending),
-        new("Object type (A-Z)", MapObjectListSortMode.ObjectTypeAscending),
-        new("Hex coordinates (Y, X, asc)", MapObjectListSortMode.HexCoordinatesAscending),
-        new("Hex coordinates (Y, X, desc)", MapObjectListSortMode.HexCoordinatesDescending),
-        new("Byte offset (asc)", MapObjectListSortMode.ByteOffsetAscending),
-        new("Byte offset (desc)", MapObjectListSortMode.ByteOffsetDescending)
-    ];
-
-    public IReadOnlyList<MapObjectPlacement> FilteredMapObjectPlacements =>
-        !HasActiveMapObjectFilters
-            ? MapObjectPlacements
-            : _filteredMapObjectPlacements;
-
-    public ObservableCollection<MapObjectPlacement> SortedMapObjectPlacements { get; } = [];
-
-    public string MapObjectSearchResultCountDisplay =>
-        string.Format(
-            CultureInfo.CurrentCulture,
-            "{0} / {1} objects",
-            FilteredMapObjectPlacements.Count,
-            MapObjectPlacements.Count);
-
-    public bool HasNoMatchingMapObjects =>
-        HasActiveMapObjectFilters
-        && FilteredMapObjectPlacements.Count == 0;
-
-    public MapObjectTypeFilterOption SelectedMapObjectTypeFilter
-    {
-        get => _selectedMapObjectTypeFilter;
-        set
-        {
-            var selectedOption = value is not null && MapObjectTypeFilterOptions.Contains(value)
-                ? value
-                : AllMapObjectTypes;
-            if (!SetProperty(ref _selectedMapObjectTypeFilter, selectedOption))
-            {
-                return;
-            }
-
-            if (_selectedMapObject is not null && !MatchesMapObjectFilters(_selectedMapObject))
-            {
-                SetSelectedMapObject(null);
-            }
-
-            RefreshFilteredMapObjectPlacements();
-        }
-    }
-
-    public MapObjectListSortOption SelectedMapObjectListSort
-    {
-        get => _selectedMapObjectListSort;
-        set
-        {
-            var selectedOption = value is not null && MapObjectListSortOptions.Contains(value)
-                ? value
-                : DefaultMapObjectListSort;
-            if (SetProperty(ref _selectedMapObjectListSort, selectedOption))
-            {
-                RefreshSortedMapObjectPlacements();
-            }
-        }
-    }
-
-    public string MapObjectSearchText
-    {
-        get => _mapObjectSearchText;
-        set
-        {
-            if (!SetProperty(ref _mapObjectSearchText, value ?? string.Empty))
-            {
-                return;
-            }
-
-            var query = _mapObjectSearchText.Trim();
-            if (_selectedMapObject is not null
-                && !MatchesMapObjectFilters(_selectedMapObject))
-            {
-                SetSelectedMapObject(null);
-            }
-
-            RefreshFilteredMapObjectPlacements();
-        }
-    }
 
     public string SearchText
     {
@@ -479,10 +349,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
             if (SetProperty(ref _selectedMapElevationIndex, value))
             {
-                if (_selectedMapObject is not null
-                    && _selectedMapObject.ElevationGroup != value)
+                if (MapInspector.SelectedMapObject is not null
+                    && MapInspector.SelectedMapObject.ElevationGroup != value)
                 {
-                    SetSelectedMapObject(null);
+                    MapInspector.ClearSelectedMapObject();
                 }
 
                 OnPropertyChanged(nameof(SelectedMapGridValues));
@@ -627,67 +497,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         get => _mapObjectStatusDisplay;
         private set => SetProperty(ref _mapObjectStatusDisplay, value);
-    }
-
-    public MapObjectPlacement? SelectedMapObject
-    {
-        get => _selectedMapObject;
-        set
-        {
-            if (value is null
-                && _isReorderingSortedMapObjectPlacements
-                && _selectedMapObject is not null
-                && FilteredMapObjectPlacements.Any(
-                    placement => placement.RecordIndex == _selectedMapObject.RecordIndex))
-            {
-                _sortedListReportedTransientSelectionClear = true;
-                return;
-            }
-
-            if (value is not null
-                && !MatchesMapObjectFilters(value))
-            {
-                SetSelectedMapObject(null);
-                return;
-            }
-
-            if (value is not null)
-            {
-                if (MapElevationOptions.Contains(value.ElevationGroup))
-                {
-                    SelectedMapElevationIndex = value.ElevationGroup;
-                }
-
-                SelectedMapDiagnosticLayerIndex = 1;
-            }
-
-            SetSelectedMapObject(value);
-        }
-    }
-
-    public int? SelectedMapObjectRecordIndex => _selectedMapObject?.RecordIndex;
-
-    public void SelectMapObjectFromFloorMarker(MapObjectPlacement placement)
-    {
-        ArgumentNullException.ThrowIfNull(placement);
-        SetSelectedMapObject(placement);
-    }
-
-    public void SelectMapObjectFromIsometricMarker(int? recordIndex)
-    {
-        var placement = recordIndex is int selectedRecordIndex
-            ? MapObjectPlacements.FirstOrDefault(candidate =>
-                candidate.RecordIndex == selectedRecordIndex
-                && candidate.ElevationGroup == SelectedMapElevationIndex
-                && candidate.ParentRecordIndex is null)
-            : null;
-        SetSelectedMapObject(placement);
-    }
-
-    public string MapObjectDetailsDisplay
-    {
-        get => _mapObjectDetailsDisplay;
-        private set => SetProperty(ref _mapObjectDetailsDisplay, value);
     }
 
     public string MapObjectPrototypeDiagnosticStatus
@@ -961,6 +770,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         _previewCancellation?.Cancel();
         _previewCancellation = null;
         _mapFloorTileCancellation?.Cancel();
+        MapInspector.SelectedMapObjectChanged -= MapInspector_SelectedMapObjectChanged;
+        MapObjectPlacements.CollectionChanged -= MapObjectPlacements_CollectionChanged;
         ClearPreview();
     }
 
@@ -1107,9 +918,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                     _isReplacingMapObjectPlacements = false;
                 }
 
-                RefreshFilteredMapObjectPlacements();
-
-                SelectedMapObject = null;
+                MapInspector.SetMapObjectPlacements(MapObjectPlacements);
+                MapInspector.ClearSelectedMapObject();
                 MapObjectStatusDisplay = objectPlacementError
                     ?? objectPlacements?.StatusDisplay
                     ?? "MAP object data is unavailable.";
@@ -1720,7 +1530,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         NotifyMapFloorTileAssetsChanged();
         _mapTileGridData = null;
         MapObjectPlacements.Clear();
-        SelectedMapObject = null;
+        MapInspector.SetMapObjectPlacements(MapObjectPlacements);
+        MapInspector.ClearSelectedMapObject();
         _selectedMapElevationIndex = null;
         _selectedMapGridIndex = null;
         _selectedMapDiagnosticLayerIndex = 0;
@@ -1746,7 +1557,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MapGridCellDisplay = "Click a grid cell to keep its square-grid coordinates and raw value selected.";
         MapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
         MapObjectStatusDisplay = "MAP objects have not been read.";
-        MapObjectDetailsDisplay = "Select a parsed object to inspect its raw fields.";
         MapObjectPrototypeDiagnosticStatus =
             "Select an Item or Scenery object to inspect its Fallout 2 prototype.";
         MapObjectPrototypeDiagnosticDetails = string.Empty;
@@ -1813,23 +1623,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         return true;
     }
 
-    private void SetSelectedMapObject(MapObjectPlacement? placement)
-    {
-        if (placement is not null
-            && !MatchesMapObjectFilters(placement))
-        {
-            placement = null;
-        }
-
-        if (SetProperty(ref _selectedMapObject, placement, nameof(SelectedMapObject)))
-        {
-            OnPropertyChanged(nameof(SelectedMapObjectRecordIndex));
-            MapObjectDetailsDisplay = placement?.Details
-                ?? "Select a parsed object to inspect its raw fields.";
-            UpdateMapObjectPrototypeDiagnostic(placement);
-        }
-    }
-
     private void UpdateMapObjectPrototypeDiagnostic(MapObjectPlacement? placement)
     {
         _mapObjectPrototypeDiagnosticCancellation?.Cancel();
@@ -1892,7 +1685,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (!ReferenceEquals(_selectedMapObject, placement)
+            if (!ReferenceEquals(MapInspector.SelectedMapObject, placement)
                 || !ReferenceEquals(_mapPrototypeResolver, resolver))
             {
                 return;
@@ -1910,7 +1703,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         catch (Exception exception) when (
             exception is InvalidDataException or IOException or UnauthorizedAccessException)
         {
-            if (ReferenceEquals(_selectedMapObject, placement)
+            if (ReferenceEquals(MapInspector.SelectedMapObject, placement)
                 && ReferenceEquals(_mapPrototypeResolver, resolver))
             {
                 MapObjectPrototypeDiagnosticStatus =
@@ -2036,246 +1829,29 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         object? sender,
         System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
-        if (_selectedMapObject is not null
-            && !MapObjectPlacements.Any(
-                placement => placement.RecordIndex == _selectedMapObject.RecordIndex))
-        {
-            SetSelectedMapObject(null);
-        }
-
         if (!_isReplacingMapObjectPlacements)
         {
-            if (!HasActiveMapObjectFilters)
-            {
-                RefreshSortedMapObjectPlacements();
-                NotifyMapObjectSearchFeedbackChanged();
-            }
-            else
-            {
-                RefreshFilteredMapObjectPlacements();
-            }
+            MapInspector.SetMapObjectPlacements(MapObjectPlacements);
         }
     }
 
-    private void RefreshFilteredMapObjectPlacements()
+    private void MapInspector_SelectedMapObjectChanged(
+        object? sender,
+        MapInspectorViewModel.MapObjectSelectionChangedEventArgs e)
     {
-        _filteredMapObjectPlacements = !HasActiveMapObjectFilters
-            ? []
-            : MapObjectPlacements
-                .Where(MatchesMapObjectFilters)
-                .ToArray();
-        OnPropertyChanged(nameof(FilteredMapObjectPlacements));
-        RefreshSortedMapObjectPlacements();
-        NotifyMapObjectSearchFeedbackChanged();
-    }
-
-    private void RefreshSortedMapObjectPlacements()
-    {
-        var placements = FilteredMapObjectPlacements;
-        var selectedRecordIndex = _selectedMapObject?.RecordIndex;
-        _sortedListReportedTransientSelectionClear = false;
-        var sortedPlacements = _selectedMapObjectListSort.SortMode switch
+        if (e.Source == MapInspectorViewModel.MapObjectSelectionSource.List
+            && e.Placement is { } placement)
         {
-            MapObjectListSortMode.RecordIndexAscending =>
-                placements.OrderBy(placement => placement.RecordIndex).ToArray(),
-            MapObjectListSortMode.RecordIndexDescending =>
-                placements.OrderByDescending(placement => placement.RecordIndex)
-                    .ThenBy(placement => placement.RecordIndex)
-                    .ToArray(),
-            MapObjectListSortMode.PidAscending =>
-                placements.OrderBy(placement => unchecked((uint)placement.RawPid))
-                    .ThenBy(placement => placement.RecordIndex)
-                    .ToArray(),
-            MapObjectListSortMode.PidDescending =>
-                placements.OrderByDescending(placement => unchecked((uint)placement.RawPid))
-                    .ThenBy(placement => placement.RecordIndex)
-                    .ToArray(),
-            MapObjectListSortMode.ObjectTypeAscending =>
-                placements.OrderBy(placement => placement.ObjectTypeDisplay, StringComparer.OrdinalIgnoreCase)
-                    .ThenBy(placement => placement.PidTypeIdentifier)
-                    .ThenBy(placement => placement.RecordIndex)
-                    .ToArray(),
-            MapObjectListSortMode.HexCoordinatesAscending =>
-                placements.OrderBy(placement => HasCoordinates(placement) ? 0 : 1)
-                    .ThenBy(placement => placement.HexY)
-                    .ThenBy(placement => placement.HexX)
-                    .ThenBy(placement => placement.RecordIndex)
-                    .ToArray(),
-            MapObjectListSortMode.HexCoordinatesDescending =>
-                placements.OrderBy(placement => HasCoordinates(placement) ? 0 : 1)
-                    .ThenByDescending(placement => placement.HexY)
-                    .ThenByDescending(placement => placement.HexX)
-                    .ThenBy(placement => placement.RecordIndex)
-                    .ToArray(),
-            MapObjectListSortMode.ByteOffsetAscending =>
-                placements.OrderBy(placement => placement.RecordOffset)
-                    .ThenBy(placement => placement.RecordIndex)
-                    .ToArray(),
-            MapObjectListSortMode.ByteOffsetDescending =>
-                placements.OrderByDescending(placement => placement.RecordOffset)
-                    .ThenBy(placement => placement.RecordIndex)
-                    .ToArray(),
-            _ => placements.OrderBy(placement => placement.RecordIndex).ToArray()
-        };
-
-        _isReorderingSortedMapObjectPlacements = true;
-        try
-        {
-            for (var targetIndex = 0; targetIndex < sortedPlacements.Length; targetIndex++)
+            if (MapElevationOptions.Contains(placement.ElevationGroup))
             {
-                var targetPlacement = sortedPlacements[targetIndex];
-                if (targetIndex < SortedMapObjectPlacements.Count
-                    && ReferenceEquals(SortedMapObjectPlacements[targetIndex], targetPlacement))
-                {
-                    continue;
-                }
-
-                var currentIndex = -1;
-                for (var index = targetIndex + 1; index < SortedMapObjectPlacements.Count; index++)
-                {
-                    if (ReferenceEquals(SortedMapObjectPlacements[index], targetPlacement))
-                    {
-                        currentIndex = index;
-                        break;
-                    }
-                }
-
-                if (currentIndex >= 0)
-                {
-                    SortedMapObjectPlacements.Move(currentIndex, targetIndex);
-                }
-                else
-                {
-                    SortedMapObjectPlacements.Insert(targetIndex, targetPlacement);
-                }
+                SelectedMapElevationIndex = placement.ElevationGroup;
             }
 
-            while (SortedMapObjectPlacements.Count > sortedPlacements.Length)
-            {
-                SortedMapObjectPlacements.RemoveAt(SortedMapObjectPlacements.Count - 1);
-            }
-        }
-        finally
-        {
-            _isReorderingSortedMapObjectPlacements = false;
+            SelectedMapDiagnosticLayerIndex = 1;
         }
 
-        if (selectedRecordIndex is int recordIndex)
-        {
-            var retainedSelection = SortedMapObjectPlacements.FirstOrDefault(
-                placement => placement.RecordIndex == recordIndex);
-            if (retainedSelection is not null)
-            {
-                if (!ReferenceEquals(_selectedMapObject, retainedSelection))
-                {
-                    SetSelectedMapObject(retainedSelection);
-                }
-                else
-                {
-                    if (_sortedListReportedTransientSelectionClear)
-                    {
-                        OnPropertyChanged(nameof(SelectedMapObject));
-                    }
-                }
-            }
-        }
-
-        _sortedListReportedTransientSelectionClear = false;
+        UpdateMapObjectPrototypeDiagnostic(e.Placement);
     }
-
-    private static bool HasCoordinates(MapObjectPlacement placement) =>
-        placement.HexY.HasValue && placement.HexX.HasValue;
-
-    private void NotifyMapObjectSearchFeedbackChanged()
-    {
-        OnPropertyChanged(nameof(MapObjectSearchResultCountDisplay));
-        OnPropertyChanged(nameof(HasNoMatchingMapObjects));
-    }
-
-    private bool HasActiveMapObjectFilters =>
-        !string.IsNullOrWhiteSpace(_mapObjectSearchText)
-        || _selectedMapObjectTypeFilter.PidTypeIdentifier.HasValue;
-
-    private bool MatchesMapObjectFilters(MapObjectPlacement placement)
-    {
-        return (!_selectedMapObjectTypeFilter.PidTypeIdentifier.HasValue
-                || placement.PidTypeIdentifier == _selectedMapObjectTypeFilter.PidTypeIdentifier.Value)
-            && MatchesMapObjectSearch(placement, _mapObjectSearchText.Trim());
-    }
-
-    private static bool MatchesMapObjectSearch(
-        MapObjectPlacement placement,
-        string query)
-    {
-        return query.Length == 0
-            || ContainsSearchText(placement.PrototypeFileName, query)
-            || ContainsSearchText(placement.ObjectTypeDisplay, query)
-            || ContainsNumber(placement.PidTypeIdentifier, query)
-            || ContainsSearchText(
-                string.Concat("PID type ", FormatNumber(placement.PidTypeIdentifier)),
-                query)
-            || ContainsNumber(placement.RecordIndex, query)
-            || ContainsSearchText(
-                string.Concat("record #", FormatNumber(placement.RecordIndex)),
-                query)
-            || ContainsHexNumber(placement.RawPid, query)
-            || ContainsHexNumber(placement.RawFid, query)
-            || ContainsNumber(placement.RawHexIndex, query)
-            || ContainsSearchText(
-                string.Concat("hex index ", FormatNumber(placement.RawHexIndex)),
-                query)
-            || ContainsNumber(placement.HexX, query)
-            || ContainsNumber(placement.HexY, query)
-            || ContainsCoordinates(placement.HexX, placement.HexY, query)
-            || ContainsNumber(placement.ElevationGroup, query)
-            || ContainsSearchText(
-                string.Concat("elevation ", FormatNumber(placement.ElevationGroup)),
-                query)
-            || ContainsSearchText(
-                string.Concat("elevation group ", FormatNumber(placement.ElevationGroup)),
-                query)
-            || ContainsNumber(placement.StoredElevation, query)
-            || ContainsSearchText(
-                string.Concat("stored elevation ", FormatNumber(placement.StoredElevation)),
-                query)
-            || ContainsNumber(placement.RecordOffset, query)
-            || ContainsSearchText(
-                string.Concat("byte offset ", FormatNumber(placement.RecordOffset)),
-                query);
-    }
-
-    private static bool ContainsCoordinates(int? hexX, int? hexY, string query)
-    {
-        if (hexX is not int x || hexY is not int y)
-        {
-            return false;
-        }
-
-        var xText = FormatNumber(x);
-        var yText = FormatNumber(y);
-        return ContainsSearchText(string.Concat(xText, ", ", yText), query)
-            || ContainsSearchText(string.Concat(xText, ",", yText), query);
-    }
-
-    private static bool ContainsNumber(int value, string query) =>
-        ContainsSearchText(FormatNumber(value), query);
-
-    private static bool ContainsNumber(int? value, string query) =>
-        value is int number && ContainsNumber(number, query);
-
-    private static bool ContainsHexNumber(int value, string query)
-    {
-        var hexadecimal = unchecked((uint)value).ToString("X8", CultureInfo.InvariantCulture);
-        return ContainsSearchText(string.Concat("0x", hexadecimal), query)
-            || ContainsSearchText(hexadecimal, query);
-    }
-
-    private static string FormatNumber(int value) =>
-        value.ToString(CultureInfo.InvariantCulture);
-
-    private static bool ContainsSearchText(string? value, string query) =>
-        !string.IsNullOrWhiteSpace(value)
-        && value.Contains(query, StringComparison.OrdinalIgnoreCase);
 
     private void NotifyMapFloorTileAssetsChanged()
     {

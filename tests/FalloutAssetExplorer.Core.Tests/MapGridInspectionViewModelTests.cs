@@ -73,11 +73,11 @@ public sealed class MapGridInspectionViewModelTests
             null,
             null);
 
-        viewModel.SelectedMapObject = placement;
+        viewModel.MapInspector.SelectedMapObject = placement;
 
         Assert.Equal(1, viewModel.SelectedMapElevationIndex);
         Assert.Equal(1, viewModel.SelectedMapDiagnosticLayerIndex);
-        Assert.Equal(placement.Details, viewModel.MapObjectDetailsDisplay);
+        Assert.Equal(placement.Details, viewModel.MapInspector.MapObjectDetailsDisplay);
     }
 
     [Fact]
@@ -95,26 +95,52 @@ public sealed class MapGridInspectionViewModelTests
             PidTypeIdentifier = 2
         };
 
-        viewModel.SelectedMapObject = item;
+        viewModel.MapInspector.SelectedMapObject = item;
 
         Assert.Contains("0x00000023", viewModel.MapObjectPrototypeDiagnosticDetails);
         Assert.Equal(
             "Prototype diagnostics require an open Fallout 2 DAT2 archive.",
             viewModel.MapObjectPrototypeDiagnosticStatus);
 
-        viewModel.SelectedMapObject = scenery;
+        viewModel.MapInspector.SelectedMapObject = scenery;
 
         Assert.Contains("0x02000045", viewModel.MapObjectPrototypeDiagnosticDetails);
         Assert.DoesNotContain("0x00000023", viewModel.MapObjectPrototypeDiagnosticDetails);
         Assert.Empty(viewModel.MapObjectPrototypeRawByteLines);
 
-        viewModel.SelectedMapObject = null;
+        viewModel.MapInspector.SelectedMapObject = null;
 
         Assert.Equal(
             "Select an Item or Scenery object to inspect its Fallout 2 prototype.",
             viewModel.MapObjectPrototypeDiagnosticStatus);
         Assert.Empty(viewModel.MapObjectPrototypeDiagnosticDetails);
         Assert.Empty(viewModel.MapObjectPrototypeRawByteLines);
+    }
+
+    [Fact]
+    public void ClearingMapPlacements_ClearsChildSelectionAndParentPrototypeDiagnostic()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var item = CreateMarkerPlacement(1, elevation: 0) with
+        {
+            RawPid = 0x00000023,
+            PidTypeIdentifier = 0
+        };
+        viewModel.MapObjectPlacements.Add(item);
+        viewModel.MapInspector.SelectedMapObject = item;
+
+        Assert.Equal(
+            "Prototype diagnostics require an open Fallout 2 DAT2 archive.",
+            viewModel.MapObjectPrototypeDiagnosticStatus);
+
+        viewModel.MapObjectPlacements.Clear();
+
+        Assert.Null(viewModel.MapInspector.SelectedMapObject);
+        Assert.Empty(viewModel.MapInspector.SortedMapObjectPlacements);
+        Assert.Equal("Select a parsed object to inspect its raw fields.", viewModel.MapInspector.MapObjectDetailsDisplay);
+        Assert.Equal(
+            "Select an Item or Scenery object to inspect its Fallout 2 prototype.",
+            viewModel.MapObjectPrototypeDiagnosticStatus);
     }
 
     [Fact]
@@ -181,12 +207,12 @@ public sealed class MapGridInspectionViewModelTests
             null,
             null);
 
-        viewModel.SelectMapObjectFromFloorMarker(placement);
+        viewModel.MapInspector.SelectMapObjectFromFloorMarker(placement);
 
         Assert.Equal(2, viewModel.SelectedMapDiagnosticLayerIndex);
         Assert.Equal(0, viewModel.SelectedMapElevationIndex);
-        Assert.Same(placement, viewModel.SelectedMapObject);
-        Assert.Equal(placement.Details, viewModel.MapObjectDetailsDisplay);
+        Assert.Same(placement, viewModel.MapInspector.SelectedMapObject);
+        Assert.Equal(placement.Details, viewModel.MapInspector.MapObjectDetailsDisplay);
     }
 
     [Fact]
@@ -199,15 +225,17 @@ public sealed class MapGridInspectionViewModelTests
         var placement = CreateMarkerPlacement(21, elevation: 0);
         viewModel.MapObjectPlacements.Add(placement);
 
-        viewModel.SelectMapObjectFromIsometricMarker(placement.RecordIndex);
+        viewModel.MapInspector.SelectMapObjectFromIsometricMarker(
+            placement.RecordIndex,
+            viewModel.SelectedMapElevationIndex);
 
-        Assert.Same(placement, viewModel.SelectedMapObject);
-        Assert.Equal(placement.RecordIndex, viewModel.SelectedMapObjectRecordIndex);
+        Assert.Same(placement, viewModel.MapInspector.SelectedMapObject);
+        Assert.Equal(placement.RecordIndex, viewModel.MapInspector.SelectedMapObjectRecordIndex);
 
         viewModel.SelectedMapElevationIndex = 1;
 
-        Assert.Null(viewModel.SelectedMapObject);
-        Assert.Null(viewModel.SelectedMapObjectRecordIndex);
+        Assert.Null(viewModel.MapInspector.SelectedMapObject);
+        Assert.Null(viewModel.MapInspector.SelectedMapObjectRecordIndex);
     }
 
     [Fact]
@@ -218,12 +246,14 @@ public sealed class MapGridInspectionViewModelTests
         viewModel.SelectedMapElevationIndex = 0;
         var placement = CreateMarkerPlacement(21, elevation: 0);
         viewModel.MapObjectPlacements.Add(placement);
-        viewModel.SelectMapObjectFromIsometricMarker(placement.RecordIndex);
+        viewModel.MapInspector.SelectMapObjectFromIsometricMarker(
+            placement.RecordIndex,
+            viewModel.SelectedMapElevationIndex);
 
         viewModel.MapObjectPlacements.Remove(placement);
 
-        Assert.Null(viewModel.SelectedMapObject);
-        Assert.Null(viewModel.SelectedMapObjectRecordIndex);
+        Assert.Null(viewModel.MapInspector.SelectedMapObject);
+        Assert.Null(viewModel.MapInspector.SelectedMapObjectRecordIndex);
     }
 
     [Fact]
@@ -234,12 +264,16 @@ public sealed class MapGridInspectionViewModelTests
         viewModel.SelectedMapElevationIndex = 0;
         var placement = CreateMarkerPlacement(21, elevation: 0);
         viewModel.MapObjectPlacements.Add(placement);
-        viewModel.SelectMapObjectFromIsometricMarker(placement.RecordIndex);
+        viewModel.MapInspector.SelectMapObjectFromIsometricMarker(
+            placement.RecordIndex,
+            viewModel.SelectedMapElevationIndex);
 
-        viewModel.SelectMapObjectFromIsometricMarker(null);
+        viewModel.MapInspector.SelectMapObjectFromIsometricMarker(
+            null,
+            viewModel.SelectedMapElevationIndex);
 
-        Assert.Null(viewModel.SelectedMapObject);
-        Assert.Null(viewModel.SelectedMapObjectRecordIndex);
+        Assert.Null(viewModel.MapInspector.SelectedMapObject);
+        Assert.Null(viewModel.MapInspector.SelectedMapObjectRecordIndex);
     }
 
     [Fact]
@@ -257,13 +291,13 @@ public sealed class MapGridInspectionViewModelTests
         viewModel.MapObjectPlacements.Add(scenery);
         viewModel.MapObjectPlacements.Add(item);
 
-        viewModel.MapObjectSearchText = "SCENERY/00000345";
+        viewModel.MapInspector.MapObjectSearchText = "SCENERY/00000345";
 
-        Assert.Equal([scenery], viewModel.FilteredMapObjectPlacements);
+        Assert.Equal([scenery], viewModel.MapInspector.FilteredMapObjectPlacements);
 
-        viewModel.MapObjectSearchText = "AMPLE.PR";
+        viewModel.MapInspector.MapObjectSearchText = "AMPLE.PR";
 
-        Assert.Equal([item], viewModel.FilteredMapObjectPlacements);
+        Assert.Equal([item], viewModel.MapInspector.FilteredMapObjectPlacements);
     }
 
     [Fact]
@@ -287,13 +321,13 @@ public sealed class MapGridInspectionViewModelTests
         viewModel.MapObjectPlacements.Add(unnamed);
         viewModel.MapObjectPlacements.Add(emptyName);
 
-        viewModel.MapObjectSearchText = "example";
+        viewModel.MapInspector.MapObjectSearchText = "example";
 
-        Assert.Equal([named], viewModel.FilteredMapObjectPlacements);
+        Assert.Equal([named], viewModel.MapInspector.FilteredMapObjectPlacements);
 
-        viewModel.MapObjectSearchText = "sCeNeRy";
+        viewModel.MapInspector.MapObjectSearchText = "sCeNeRy";
 
-        Assert.Equal([unnamed], viewModel.FilteredMapObjectPlacements);
+        Assert.Equal([unnamed], viewModel.MapInspector.FilteredMapObjectPlacements);
     }
 
     [Fact]
@@ -306,9 +340,9 @@ public sealed class MapGridInspectionViewModelTests
         };
         viewModel.MapObjectPlacements.Add(scenery);
 
-        viewModel.MapObjectSearchText = "sCeNeRy";
+        viewModel.MapInspector.MapObjectSearchText = "sCeNeRy";
 
-        Assert.Equal([scenery], viewModel.FilteredMapObjectPlacements);
+        Assert.Equal([scenery], viewModel.MapInspector.FilteredMapObjectPlacements);
     }
 
     [Fact]
@@ -318,9 +352,9 @@ public sealed class MapGridInspectionViewModelTests
         var placement = CreateMarkerPlacement(287, elevation: 0);
         viewModel.MapObjectPlacements.Add(placement);
 
-        viewModel.MapObjectSearchText = "287";
+        viewModel.MapInspector.MapObjectSearchText = "287";
 
-        Assert.Equal([placement], viewModel.FilteredMapObjectPlacements);
+        Assert.Equal([placement], viewModel.MapInspector.FilteredMapObjectPlacements);
     }
 
     [Fact]
@@ -336,8 +370,8 @@ public sealed class MapGridInspectionViewModelTests
 
         foreach (var query in new[] { "0x0200039A", "0200039A", "0xA1B2C3D4", "A1B2C3D4" })
         {
-            viewModel.MapObjectSearchText = query;
-            Assert.Equal([placement], viewModel.FilteredMapObjectPlacements);
+            viewModel.MapInspector.MapObjectSearchText = query;
+            Assert.Equal([placement], viewModel.MapInspector.FilteredMapObjectPlacements);
         }
     }
 
@@ -353,14 +387,14 @@ public sealed class MapGridInspectionViewModelTests
         };
         viewModel.MapObjectPlacements.Add(placement);
 
-        viewModel.MapObjectSearchText = "12345";
-        Assert.Equal([placement], viewModel.FilteredMapObjectPlacements);
+        viewModel.MapInspector.MapObjectSearchText = "12345";
+        Assert.Equal([placement], viewModel.MapInspector.FilteredMapObjectPlacements);
 
-        viewModel.MapObjectSearchText = "114, 103";
-        Assert.Equal([placement], viewModel.FilteredMapObjectPlacements);
+        viewModel.MapInspector.MapObjectSearchText = "114, 103";
+        Assert.Equal([placement], viewModel.MapInspector.FilteredMapObjectPlacements);
 
-        viewModel.MapObjectSearchText = "114,103";
-        Assert.Equal([placement], viewModel.FilteredMapObjectPlacements);
+        viewModel.MapInspector.MapObjectSearchText = "114,103";
+        Assert.Equal([placement], viewModel.MapInspector.FilteredMapObjectPlacements);
     }
 
     [Fact]
@@ -374,14 +408,14 @@ public sealed class MapGridInspectionViewModelTests
         };
         viewModel.MapObjectPlacements.Add(placement);
 
-        viewModel.MapObjectSearchText = "elevation 0";
-        Assert.Equal([placement], viewModel.FilteredMapObjectPlacements);
+        viewModel.MapInspector.MapObjectSearchText = "elevation 0";
+        Assert.Equal([placement], viewModel.MapInspector.FilteredMapObjectPlacements);
 
-        viewModel.MapObjectSearchText = "stored elevation 1";
-        Assert.Equal([placement], viewModel.FilteredMapObjectPlacements);
+        viewModel.MapInspector.MapObjectSearchText = "stored elevation 1";
+        Assert.Equal([placement], viewModel.MapInspector.FilteredMapObjectPlacements);
 
-        viewModel.MapObjectSearchText = "byte offset 12345";
-        Assert.Equal([placement], viewModel.FilteredMapObjectPlacements);
+        viewModel.MapInspector.MapObjectSearchText = "byte offset 12345";
+        Assert.Equal([placement], viewModel.MapInspector.FilteredMapObjectPlacements);
     }
 
     [Fact]
@@ -394,15 +428,15 @@ public sealed class MapGridInspectionViewModelTests
         };
         viewModel.MapObjectPlacements.Add(placement);
 
-        viewModel.MapObjectSearchText = "missing";
-        Assert.Empty(viewModel.FilteredMapObjectPlacements);
+        viewModel.MapInspector.MapObjectSearchText = "missing";
+        Assert.Empty(viewModel.MapInspector.FilteredMapObjectPlacements);
 
-        viewModel.MapObjectSearchText = " \t ";
+        viewModel.MapInspector.MapObjectSearchText = " \t ";
 
-        Assert.Same(viewModel.MapObjectPlacements, viewModel.FilteredMapObjectPlacements);
-        viewModel.MapObjectSearchText = "example";
-        viewModel.MapObjectSearchText = string.Empty;
-        Assert.Same(viewModel.MapObjectPlacements, viewModel.FilteredMapObjectPlacements);
+        Assert.Same(viewModel.MapObjectPlacements, viewModel.MapInspector.FilteredMapObjectPlacements);
+        viewModel.MapInspector.MapObjectSearchText = "example";
+        viewModel.MapInspector.MapObjectSearchText = string.Empty;
+        Assert.Same(viewModel.MapObjectPlacements, viewModel.MapInspector.FilteredMapObjectPlacements);
     }
 
     [Fact]
@@ -420,18 +454,18 @@ public sealed class MapGridInspectionViewModelTests
         viewModel.MapObjectPlacements.Add(scenery);
         viewModel.MapObjectPlacements.Add(item);
 
-        Assert.Equal("2 / 2 objects", viewModel.MapObjectSearchResultCountDisplay);
-        Assert.False(viewModel.HasNoMatchingMapObjects);
+        Assert.Equal("2 / 2 objects", viewModel.MapInspector.MapObjectSearchResultCountDisplay);
+        Assert.False(viewModel.MapInspector.HasNoMatchingMapObjects);
 
-        viewModel.MapObjectSearchText = "scenery";
+        viewModel.MapInspector.MapObjectSearchText = "scenery";
 
-        Assert.Equal("1 / 2 objects", viewModel.MapObjectSearchResultCountDisplay);
-        Assert.False(viewModel.HasNoMatchingMapObjects);
+        Assert.Equal("1 / 2 objects", viewModel.MapInspector.MapObjectSearchResultCountDisplay);
+        Assert.False(viewModel.MapInspector.HasNoMatchingMapObjects);
 
-        viewModel.MapObjectSearchText = "no-match";
+        viewModel.MapInspector.MapObjectSearchText = "no-match";
 
-        Assert.Equal("0 / 2 objects", viewModel.MapObjectSearchResultCountDisplay);
-        Assert.True(viewModel.HasNoMatchingMapObjects);
+        Assert.Equal("0 / 2 objects", viewModel.MapInspector.MapObjectSearchResultCountDisplay);
+        Assert.True(viewModel.MapInspector.HasNoMatchingMapObjects);
     }
 
     [Fact]
@@ -439,8 +473,39 @@ public sealed class MapGridInspectionViewModelTests
     {
         using var viewModel = new ArchiveBrowserViewModel();
 
-        Assert.Equal("0 / 0 objects", viewModel.MapObjectSearchResultCountDisplay);
-        Assert.False(viewModel.HasNoMatchingMapObjects);
+        Assert.Equal("0 / 0 objects", viewModel.MapInspector.MapObjectSearchResultCountDisplay);
+        Assert.False(viewModel.MapInspector.HasNoMatchingMapObjects);
+    }
+
+    [Fact]
+    public void FilteringAndSorting_DoNotChangeArchiveOrFloorAssetOperationState()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        viewModel.MapObjectPlacements.Add(CreateMarkerPlacement(1, elevation: 0) with
+        {
+            PidTypeIdentifier = 2,
+            PrototypeFileName = "proto/scenery/tree.pro"
+        });
+        viewModel.MapObjectPlacements.Add(CreateMarkerPlacement(2, elevation: 0) with
+        {
+            PidTypeIdentifier = 0,
+            PrototypeFileName = "proto/items/armor.pro"
+        });
+        var archivePath = viewModel.ArchivePathDisplay;
+        var operationStatus = viewModel.StatusMessage;
+        var floorStatus = viewModel.MapFloorTilesStatusDisplay;
+
+        viewModel.MapInspector.MapObjectSearchText = "tree";
+        viewModel.MapInspector.SelectedMapObjectTypeFilter = viewModel.MapInspector.MapObjectTypeFilterOptions
+            .Single(option => option.PidTypeIdentifier == 2);
+        viewModel.MapInspector.SelectedMapObjectListSort = GetMapObjectSortOption(
+            viewModel,
+            MapInspectorViewModel.MapObjectListSortMode.ByteOffsetDescending);
+
+        Assert.Equal(archivePath, viewModel.ArchivePathDisplay);
+        Assert.Equal(operationStatus, viewModel.StatusMessage);
+        Assert.Equal(floorStatus, viewModel.MapFloorTilesStatusDisplay);
+        Assert.Equal(0, viewModel.SelectedMapDiagnosticLayerIndex);
     }
 
     [Fact]
@@ -449,7 +514,7 @@ public sealed class MapGridInspectionViewModelTests
         using var viewModel = new ArchiveBrowserViewModel();
         Assert.Equal(
             new int?[] { null, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 },
-            viewModel.MapObjectTypeFilterOptions.Select(option => option.PidTypeIdentifier));
+            viewModel.MapInspector.MapObjectTypeFilterOptions.Select(option => option.PidTypeIdentifier));
 
         var item = CreateMarkerPlacement(31, elevation: 0) with { PidTypeIdentifier = 0 };
         var scenery = CreateMarkerPlacement(32, elevation: 0) with { PidTypeIdentifier = 2 };
@@ -458,14 +523,14 @@ public sealed class MapGridInspectionViewModelTests
         viewModel.MapObjectPlacements.Add(scenery);
         viewModel.MapObjectPlacements.Add(unknown);
 
-        viewModel.SelectedMapObjectTypeFilter = viewModel.MapObjectTypeFilterOptions
+        viewModel.MapInspector.SelectedMapObjectTypeFilter = viewModel.MapInspector.MapObjectTypeFilterOptions
             .Single(option => option.PidTypeIdentifier == 2);
 
-        Assert.Equal([scenery], viewModel.FilteredMapObjectPlacements);
+        Assert.Equal([scenery], viewModel.MapInspector.FilteredMapObjectPlacements);
 
-        viewModel.SelectedMapObjectTypeFilter = viewModel.MapObjectTypeFilterOptions[0];
+        viewModel.MapInspector.SelectedMapObjectTypeFilter = viewModel.MapInspector.MapObjectTypeFilterOptions[0];
 
-        Assert.Equal([item, scenery, unknown], viewModel.FilteredMapObjectPlacements);
+        Assert.Equal([item, scenery, unknown], viewModel.MapInspector.FilteredMapObjectPlacements);
     }
 
     [Fact]
@@ -491,11 +556,11 @@ public sealed class MapGridInspectionViewModelTests
         viewModel.MapObjectPlacements.Add(otherScenery);
         viewModel.MapObjectPlacements.Add(matchingItem);
 
-        viewModel.SelectedMapObjectTypeFilter = viewModel.MapObjectTypeFilterOptions
+        viewModel.MapInspector.SelectedMapObjectTypeFilter = viewModel.MapInspector.MapObjectTypeFilterOptions
             .Single(option => option.PidTypeIdentifier == 2);
-        viewModel.MapObjectSearchText = "oak";
+        viewModel.MapInspector.MapObjectSearchText = "oak";
 
-        Assert.Equal([matchingScenery], viewModel.FilteredMapObjectPlacements);
+        Assert.Equal([matchingScenery], viewModel.MapInspector.FilteredMapObjectPlacements);
     }
 
     [Fact]
@@ -506,22 +571,22 @@ public sealed class MapGridInspectionViewModelTests
         var scenery = CreateMarkerPlacement(32, elevation: 0) with { PidTypeIdentifier = 2 };
         viewModel.MapObjectPlacements.Add(item);
         viewModel.MapObjectPlacements.Add(scenery);
-        viewModel.SelectedMapObject = item;
+        viewModel.MapInspector.SelectedMapObject = item;
 
-        viewModel.SelectedMapObjectTypeFilter = viewModel.MapObjectTypeFilterOptions
+        viewModel.MapInspector.SelectedMapObjectTypeFilter = viewModel.MapInspector.MapObjectTypeFilterOptions
             .Single(option => option.PidTypeIdentifier == 2);
 
-        Assert.Null(viewModel.SelectedMapObject);
-        Assert.Null(viewModel.SelectedMapObjectRecordIndex);
-        Assert.Equal("Select a parsed object to inspect its raw fields.", viewModel.MapObjectDetailsDisplay);
-        Assert.Equal([scenery], viewModel.FilteredMapObjectPlacements);
+        Assert.Null(viewModel.MapInspector.SelectedMapObject);
+        Assert.Null(viewModel.MapInspector.SelectedMapObjectRecordIndex);
+        Assert.Equal("Select a parsed object to inspect its raw fields.", viewModel.MapInspector.MapObjectDetailsDisplay);
+        Assert.Equal([scenery], viewModel.MapInspector.FilteredMapObjectPlacements);
 
-        viewModel.SelectedMapObject = scenery;
-        Assert.Same(scenery, viewModel.SelectedMapObject);
+        viewModel.MapInspector.SelectedMapObject = scenery;
+        Assert.Same(scenery, viewModel.MapInspector.SelectedMapObject);
 
-        viewModel.SelectedMapObjectTypeFilter = viewModel.MapObjectTypeFilterOptions[0];
+        viewModel.MapInspector.SelectedMapObjectTypeFilter = viewModel.MapInspector.MapObjectTypeFilterOptions[0];
 
-        Assert.Equal([item, scenery], viewModel.FilteredMapObjectPlacements);
+        Assert.Equal([item, scenery], viewModel.MapInspector.FilteredMapObjectPlacements);
     }
 
     [Fact]
@@ -544,19 +609,19 @@ public sealed class MapGridInspectionViewModelTests
         viewModel.MapObjectPlacements.Add(lowPid);
         viewModel.MapObjectPlacements.Add(middlePid);
 
-        viewModel.SelectedMapObjectListSort = GetMapObjectSortOption(
+        viewModel.MapInspector.SelectedMapObjectListSort = GetMapObjectSortOption(
             viewModel,
-            ArchiveBrowserViewModel.MapObjectListSortMode.PidAscending);
+            MapInspectorViewModel.MapObjectListSortMode.PidAscending);
 
-        Assert.Equal([lowPid, middlePid, highPid], viewModel.SortedMapObjectPlacements);
+        Assert.Equal([lowPid, middlePid, highPid], viewModel.MapInspector.SortedMapObjectPlacements);
 
-        viewModel.SelectedMapObjectListSort = GetMapObjectSortOption(
+        viewModel.MapInspector.SelectedMapObjectListSort = GetMapObjectSortOption(
             viewModel,
-            ArchiveBrowserViewModel.MapObjectListSortMode.PidDescending);
-        Assert.Equal([highPid, middlePid, lowPid], viewModel.SortedMapObjectPlacements);
+            MapInspectorViewModel.MapObjectListSortMode.PidDescending);
+        Assert.Equal([highPid, middlePid, lowPid], viewModel.MapInspector.SortedMapObjectPlacements);
 
-        Assert.Equal([highPid, lowPid, middlePid], viewModel.FilteredMapObjectPlacements);
-        Assert.Same(viewModel.MapObjectPlacements, viewModel.FilteredMapObjectPlacements);
+        Assert.Equal([highPid, lowPid, middlePid], viewModel.MapInspector.FilteredMapObjectPlacements);
+        Assert.Same(viewModel.MapObjectPlacements, viewModel.MapInspector.FilteredMapObjectPlacements);
     }
 
     [Fact]
@@ -570,17 +635,17 @@ public sealed class MapGridInspectionViewModelTests
         viewModel.MapObjectPlacements.Add(first);
         viewModel.MapObjectPlacements.Add(second);
 
-        Assert.Equal([first, second, third], viewModel.SortedMapObjectPlacements);
+        Assert.Equal([first, second, third], viewModel.MapInspector.SortedMapObjectPlacements);
 
-        viewModel.SelectedMapObjectListSort = GetMapObjectSortOption(
+        viewModel.MapInspector.SelectedMapObjectListSort = GetMapObjectSortOption(
             viewModel,
-            ArchiveBrowserViewModel.MapObjectListSortMode.RecordIndexDescending);
-        Assert.Equal([third, second, first], viewModel.SortedMapObjectPlacements);
+            MapInspectorViewModel.MapObjectListSortMode.RecordIndexDescending);
+        Assert.Equal([third, second, first], viewModel.MapInspector.SortedMapObjectPlacements);
 
-        viewModel.SelectedMapObjectListSort = GetMapObjectSortOption(
+        viewModel.MapInspector.SelectedMapObjectListSort = GetMapObjectSortOption(
             viewModel,
-            ArchiveBrowserViewModel.MapObjectListSortMode.RecordIndexAscending);
-        Assert.Equal([first, second, third], viewModel.SortedMapObjectPlacements);
+            MapInspectorViewModel.MapObjectListSortMode.RecordIndexAscending);
+        Assert.Equal([first, second, third], viewModel.MapInspector.SortedMapObjectPlacements);
     }
 
     [Fact]
@@ -596,15 +661,15 @@ public sealed class MapGridInspectionViewModelTests
         viewModel.MapObjectPlacements.Add(y4x1);
         viewModel.MapObjectPlacements.Add(missing);
 
-        viewModel.SelectedMapObjectListSort = GetMapObjectSortOption(
+        viewModel.MapInspector.SelectedMapObjectListSort = GetMapObjectSortOption(
             viewModel,
-            ArchiveBrowserViewModel.MapObjectListSortMode.HexCoordinatesAscending);
-        Assert.Equal([y3x9, y4x1, y4x9, missing], viewModel.SortedMapObjectPlacements);
+            MapInspectorViewModel.MapObjectListSortMode.HexCoordinatesAscending);
+        Assert.Equal([y3x9, y4x1, y4x9, missing], viewModel.MapInspector.SortedMapObjectPlacements);
 
-        viewModel.SelectedMapObjectListSort = GetMapObjectSortOption(
+        viewModel.MapInspector.SelectedMapObjectListSort = GetMapObjectSortOption(
             viewModel,
-            ArchiveBrowserViewModel.MapObjectListSortMode.HexCoordinatesDescending);
-        Assert.Equal([y4x9, y4x1, y3x9, missing], viewModel.SortedMapObjectPlacements);
+            MapInspectorViewModel.MapObjectListSortMode.HexCoordinatesDescending);
+        Assert.Equal([y4x9, y4x1, y3x9, missing], viewModel.MapInspector.SortedMapObjectPlacements);
     }
 
     [Fact]
@@ -639,16 +704,16 @@ public sealed class MapGridInspectionViewModelTests
         viewModel.MapObjectPlacements.Add(pine);
         viewModel.MapObjectPlacements.Add(oakEarlyOtherType);
         viewModel.MapObjectPlacements.Add(oakEarly);
-        viewModel.SelectedMapObjectTypeFilter = viewModel.MapObjectTypeFilterOptions
+        viewModel.MapInspector.SelectedMapObjectTypeFilter = viewModel.MapInspector.MapObjectTypeFilterOptions
             .Single(option => option.PidTypeIdentifier == 2);
-        viewModel.MapObjectSearchText = "oak";
+        viewModel.MapInspector.MapObjectSearchText = "oak";
 
-        viewModel.SelectedMapObjectListSort = GetMapObjectSortOption(
+        viewModel.MapInspector.SelectedMapObjectListSort = GetMapObjectSortOption(
             viewModel,
-            ArchiveBrowserViewModel.MapObjectListSortMode.ByteOffsetAscending);
+            MapInspectorViewModel.MapObjectListSortMode.ByteOffsetAscending);
 
-        Assert.Equal([oakLate, oakEarly], viewModel.FilteredMapObjectPlacements);
-        Assert.Equal([oakEarly, oakLate], viewModel.SortedMapObjectPlacements);
+        Assert.Equal([oakLate, oakEarly], viewModel.MapInspector.FilteredMapObjectPlacements);
+        Assert.Equal([oakEarly, oakLate], viewModel.MapInspector.SortedMapObjectPlacements);
     }
 
     [Fact]
@@ -665,27 +730,27 @@ public sealed class MapGridInspectionViewModelTests
         };
         viewModel.MapObjectPlacements.Add(selected);
         viewModel.MapObjectPlacements.Add(other);
-        viewModel.SelectedMapObject = selected;
+        viewModel.MapInspector.SelectedMapObject = selected;
         var moveEvents = 0;
-        viewModel.SortedMapObjectPlacements.CollectionChanged += (_, args) =>
+        viewModel.MapInspector.SortedMapObjectPlacements.CollectionChanged += (_, args) =>
         {
             if (args.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Move)
             {
                 moveEvents++;
-                viewModel.SelectedMapObject = null;
+                viewModel.MapInspector.SelectedMapObject = null;
             }
         };
 
-        viewModel.SelectedMapObjectListSort = GetMapObjectSortOption(
+        viewModel.MapInspector.SelectedMapObjectListSort = GetMapObjectSortOption(
             viewModel,
-            ArchiveBrowserViewModel.MapObjectListSortMode.PidAscending);
+            MapInspectorViewModel.MapObjectListSortMode.PidAscending);
 
         Assert.True(moveEvents > 0);
-        Assert.Same(selected, viewModel.SelectedMapObject);
-        Assert.Equal(selected.RecordIndex, viewModel.SelectedMapObjectRecordIndex);
-        Assert.Same(selected, viewModel.SortedMapObjectPlacements[0]);
-        Assert.Same(other, viewModel.SortedMapObjectPlacements[1]);
-        Assert.Equal(selected.Details, viewModel.MapObjectDetailsDisplay);
+        Assert.Same(selected, viewModel.MapInspector.SelectedMapObject);
+        Assert.Equal(selected.RecordIndex, viewModel.MapInspector.SelectedMapObjectRecordIndex);
+        Assert.Same(selected, viewModel.MapInspector.SortedMapObjectPlacements[0]);
+        Assert.Same(other, viewModel.MapInspector.SortedMapObjectPlacements[1]);
+        Assert.Equal(selected.Details, viewModel.MapInspector.MapObjectDetailsDisplay);
     }
 
     [Fact]
@@ -711,20 +776,20 @@ public sealed class MapGridInspectionViewModelTests
         viewModel.MapObjectPlacements.Add(item);
         viewModel.MapObjectPlacements.Add(scenery);
 
-        viewModel.SelectedMapObjectListSort = GetMapObjectSortOption(
+        viewModel.MapInspector.SelectedMapObjectListSort = GetMapObjectSortOption(
             viewModel,
-            ArchiveBrowserViewModel.MapObjectListSortMode.ObjectTypeAscending);
-        Assert.Equal([item, scenery, wall], viewModel.SortedMapObjectPlacements);
+            MapInspectorViewModel.MapObjectListSortMode.ObjectTypeAscending);
+        Assert.Equal([item, scenery, wall], viewModel.MapInspector.SortedMapObjectPlacements);
 
-        viewModel.SelectedMapObjectListSort = GetMapObjectSortOption(
+        viewModel.MapInspector.SelectedMapObjectListSort = GetMapObjectSortOption(
             viewModel,
-            ArchiveBrowserViewModel.MapObjectListSortMode.ByteOffsetAscending);
-        Assert.Equal([scenery, item, wall], viewModel.SortedMapObjectPlacements);
+            MapInspectorViewModel.MapObjectListSortMode.ByteOffsetAscending);
+        Assert.Equal([scenery, item, wall], viewModel.MapInspector.SortedMapObjectPlacements);
 
-        viewModel.SelectedMapObjectListSort = GetMapObjectSortOption(
+        viewModel.MapInspector.SelectedMapObjectListSort = GetMapObjectSortOption(
             viewModel,
-            ArchiveBrowserViewModel.MapObjectListSortMode.ByteOffsetDescending);
-        Assert.Equal([wall, item, scenery], viewModel.SortedMapObjectPlacements);
+            MapInspectorViewModel.MapObjectListSortMode.ByteOffsetDescending);
+        Assert.Equal([wall, item, scenery], viewModel.MapInspector.SortedMapObjectPlacements);
     }
 
     [Fact]
@@ -741,29 +806,29 @@ public sealed class MapGridInspectionViewModelTests
         };
         viewModel.MapObjectPlacements.Add(selected);
         viewModel.MapObjectPlacements.Add(visible);
-        viewModel.SelectedMapObject = selected;
+        viewModel.MapInspector.SelectedMapObject = selected;
 
-        viewModel.MapObjectSearchText = "armor";
+        viewModel.MapInspector.MapObjectSearchText = "armor";
 
-        Assert.Null(viewModel.SelectedMapObject);
-        Assert.Null(viewModel.SelectedMapObjectRecordIndex);
-        Assert.Equal("Select a parsed object to inspect its raw fields.", viewModel.MapObjectDetailsDisplay);
-        Assert.Equal([visible], viewModel.FilteredMapObjectPlacements);
+        Assert.Null(viewModel.MapInspector.SelectedMapObject);
+        Assert.Null(viewModel.MapInspector.SelectedMapObjectRecordIndex);
+        Assert.Equal("Select a parsed object to inspect its raw fields.", viewModel.MapInspector.MapObjectDetailsDisplay);
+        Assert.Equal([visible], viewModel.MapInspector.FilteredMapObjectPlacements);
         Assert.Equal(2, viewModel.MapObjectPlacements.Count);
 
-        viewModel.SelectMapObjectFromFloorMarker(selected);
+        viewModel.MapInspector.SelectMapObjectFromFloorMarker(selected);
 
-        Assert.Null(viewModel.SelectedMapObject);
-        Assert.Equal("Select a parsed object to inspect its raw fields.", viewModel.MapObjectDetailsDisplay);
+        Assert.Null(viewModel.MapInspector.SelectedMapObject);
+        Assert.Equal("Select a parsed object to inspect its raw fields.", viewModel.MapInspector.MapObjectDetailsDisplay);
 
-        viewModel.SelectedMapObject = visible;
-        Assert.Same(visible, viewModel.SelectedMapObject);
-        Assert.Equal(visible.RecordIndex, viewModel.SelectedMapObjectRecordIndex);
+        viewModel.MapInspector.SelectedMapObject = visible;
+        Assert.Same(visible, viewModel.MapInspector.SelectedMapObject);
+        Assert.Equal(visible.RecordIndex, viewModel.MapInspector.SelectedMapObjectRecordIndex);
 
-        viewModel.MapObjectSearchText = string.Empty;
+        viewModel.MapInspector.MapObjectSearchText = string.Empty;
 
-        Assert.Same(viewModel.MapObjectPlacements, viewModel.FilteredMapObjectPlacements);
-        Assert.Equal(2, viewModel.FilteredMapObjectPlacements.Count);
+        Assert.Same(viewModel.MapObjectPlacements, viewModel.MapInspector.FilteredMapObjectPlacements);
+        Assert.Equal(2, viewModel.MapInspector.FilteredMapObjectPlacements.Count);
     }
 
     private static MapObjectPlacement CreateMarkerPlacement(int recordIndex, int elevation) =>
@@ -799,8 +864,8 @@ public sealed class MapGridInspectionViewModelTests
             Warning: null,
             UnsupportedReason: null);
 
-    private static ArchiveBrowserViewModel.MapObjectListSortOption GetMapObjectSortOption(
+    private static MapInspectorViewModel.MapObjectListSortOption GetMapObjectSortOption(
         ArchiveBrowserViewModel viewModel,
-        ArchiveBrowserViewModel.MapObjectListSortMode sortMode) =>
-        viewModel.MapObjectListSortOptions.Single(option => option.SortMode == sortMode);
+        MapInspectorViewModel.MapObjectListSortMode sortMode) =>
+        viewModel.MapInspector.MapObjectListSortOptions.Single(option => option.SortMode == sortMode);
 }

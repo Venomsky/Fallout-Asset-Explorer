@@ -32,7 +32,7 @@
                 UnavailableFloorIds="{Binding UnavailableMapFloorIds}"
                 Placements="{Binding MapObjectPlacements}"
                 Elevation="{Binding SelectedMapElevationIndex}"
-                SelectedObject="{Binding SelectedMapObject, Mode=OneWay}"
+                SelectedObject="{Binding MapInspector.SelectedMapObject, Mode=OneWay}"
                 SelectedIndex="{Binding SelectedMapGridIndex, Mode=TwoWay}"
                 CellInspected="MapGridView_CellInspected"
                 CellSelected="MapGridView_CellSelected"
@@ -46,10 +46,10 @@
                 Values="{Binding SelectedMapGridValues}"
                 TileBitmaps="{Binding MapFloorTileBitmaps}"
                 AssetRevision="{Binding MapFloorTilesRevision}"
-                Placements="{Binding FilteredMapObjectPlacements}"
+                Placements="{Binding MapInspector.FilteredMapObjectPlacements}"
                 Elevation="{Binding SelectedMapElevationIndex}"
                 ShowObjectMarkers="{Binding IsMapIsometricObjectMarkerLayerVisible}"
-                SelectedRecordIndex="{Binding SelectedMapObjectRecordIndex}"
+                SelectedRecordIndex="{Binding MapInspector.SelectedMapObjectRecordIndex}"
                 ObjectSelectionChanged="MapIsometricFloorView_ObjectSelectionChanged"
                 RenderOptions.BitmapInterpolationMode="None"
                 IsHitTestVisible="True"
@@ -59,7 +59,7 @@
                 x:Name="MapHexGridView"
                 Placements="{Binding MapObjectPlacements}"
                 Elevation="{Binding SelectedMapElevationIndex}"
-                SelectedObject="{Binding SelectedMapObject, Mode=TwoWay}"
+                SelectedObject="{Binding MapInspector.SelectedMapObject, Mode=TwoWay}"
                 IsHitTestVisible="True"
                 IsVisible="{Binding IsMapHexGridVisible}"
                 AutomationProperties.Name="MAP object hex-grid diagnostic" />
@@ -189,7 +189,7 @@
               <TextBlock
                   Foreground="#E7EAF0"
                   FontSize="11"
-                  Text="{Binding MapObjectDetailsDisplay}"
+                  Text="{Binding MapInspector.MapObjectDetailsDisplay}"
                   TextWrapping="Wrap" />
             </Border>
             <TextBlock
@@ -274,8 +274,8 @@
                 ColumnSpacing="6">
               <ComboBox
                   Width="150"
-                  ItemsSource="{Binding MapObjectTypeFilterOptions}"
-                  SelectedItem="{Binding SelectedMapObjectTypeFilter, Mode=TwoWay}"
+                  ItemsSource="{Binding MapInspector.MapObjectTypeFilterOptions}"
+                  SelectedItem="{Binding MapInspector.SelectedMapObjectTypeFilter, Mode=TwoWay}"
                   AutomationProperties.Name="Filter MAP objects by type">
                 <ComboBox.ItemTemplate>
                   <DataTemplate>
@@ -286,8 +286,8 @@
               <ComboBox
                   Grid.Column="1"
                   Width="190"
-                  ItemsSource="{Binding MapObjectListSortOptions}"
-                  SelectedItem="{Binding SelectedMapObjectListSort, Mode=TwoWay}"
+                  ItemsSource="{Binding MapInspector.MapObjectListSortOptions}"
+                  SelectedItem="{Binding MapInspector.SelectedMapObjectListSort, Mode=TwoWay}"
                   AutomationProperties.Name="Sort MAP object records">
                 <ComboBox.ItemTemplate>
                   <DataTemplate>
@@ -298,14 +298,14 @@
               <TextBox
                   Grid.Column="2"
                   Watermark="Search MAP objects..."
-                  Text="{Binding MapObjectSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                  Text="{Binding MapInspector.MapObjectSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                   AutomationProperties.Name="Search MAP object metadata" />
               <TextBlock
                   Grid.Column="3"
                   VerticalAlignment="Center"
                   FontSize="11"
                   Foreground="#AAB1BE"
-                  Text="{Binding MapObjectSearchResultCountDisplay}"
+                  Text="{Binding MapInspector.MapObjectSearchResultCountDisplay}"
                   AutomationProperties.Name="MAP object search result count" />
               <Button
                   Grid.Column="4"
@@ -315,15 +315,15 @@
             </Grid>
             <Grid Grid.Row="2">
               <ListBox
-                  ItemsSource="{Binding SortedMapObjectPlacements}"
-                  SelectedItem="{Binding SelectedMapObject, Mode=TwoWay}"
+                  ItemsSource="{Binding MapInspector.SortedMapObjectPlacements}"
+                  SelectedItem="{Binding MapInspector.SelectedMapObject, Mode=TwoWay}"
                   ScrollViewer.VerticalScrollBarVisibility="Auto"
                   AutomationProperties.Name="MAP object placements">
                 <ListBox.ItemTemplate>
                   <DataTemplate>
                     <local:MapObjectSearchHighlightTextBlock
                         DisplayText="{Binding DisplayText}"
-                        SearchText="{Binding DataContext.MapObjectSearchText, RelativeSource={RelativeSource AncestorType=Window}}"
+                        SearchText="{Binding DataContext.MapInspector.MapObjectSearchText, RelativeSource={RelativeSource AncestorType=Window}}"
                         TextTrimming="CharacterEllipsis" />
                   </DataTemplate>
                 </ListBox.ItemTemplate>
@@ -334,7 +334,7 @@
                   BorderThickness="1"
                   CornerRadius="4"
                   Padding="8"
-                  IsVisible="{Binding HasNoMatchingMapObjects}"
+                  IsVisible="{Binding MapInspector.HasNoMatchingMapObjects}"
                   AutomationProperties.Name="No matching MAP objects">
                 <TextBlock
                     HorizontalAlignment="Center"
