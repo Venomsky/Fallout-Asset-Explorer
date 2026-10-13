@@ -374,27 +374,27 @@
                   <TextBlock
                       Foreground="#AAB1BE"
                       FontSize="11"
-                      Text="{Binding MapObjectPrototypeDiagnosticStatus}"
+                      Text="{Binding MapInspector.MapObjectPrototypeDiagnosticStatus}"
                       TextWrapping="Wrap" />
                   <TextBlock
                       Foreground="#E7EAF0"
                       FontFamily="Consolas"
                       FontSize="10"
-                      Text="{Binding MapObjectPrototypeDiagnosticDetails}"
+                      Text="{Binding MapInspector.MapObjectPrototypeDiagnosticDetails}"
                       TextWrapping="Wrap" />
                   <TextBlock
                       Foreground="#E7EAF0"
                       FontFamily="Consolas"
                       FontSize="9"
-                      IsVisible="{Binding HasMapObjectPrototypeSceneryFields}"
-                      Text="{Binding MapObjectPrototypeSceneryFieldsDisplay}"
+                      IsVisible="{Binding MapInspector.HasMapObjectPrototypeSceneryFields}"
+                      Text="{Binding MapInspector.MapObjectPrototypeSceneryFieldsDisplay}"
                       TextWrapping="Wrap" />
                   <TextBlock
                       Foreground="#E7EAF0"
                       FontFamily="Consolas"
                       FontSize="9"
-                      IsVisible="{Binding HasMapObjectPrototypeItemFields}"
-                      Text="{Binding MapObjectPrototypeItemFieldsDisplay}"
+                      IsVisible="{Binding MapInspector.HasMapObjectPrototypeItemFields}"
+                      Text="{Binding MapInspector.MapObjectPrototypeItemFieldsDisplay}"
                       TextWrapping="Wrap" />
                 </StackPanel>
               </ScrollViewer>
@@ -408,8 +408,8 @@
                   AutomationProperties.Name="Resize prototype fields and raw bytes" />
               <ListBox
                   Grid.Row="2"
-                  ItemsSource="{Binding MapObjectPrototypeRawByteLines}"
-                  IsVisible="{Binding HasMapObjectPrototypeRawBytes}"
+                  ItemsSource="{Binding MapInspector.MapObjectPrototypeRawByteLines}"
+                  IsVisible="{Binding MapInspector.HasMapObjectPrototypeRawBytes}"
                   VerticalAlignment="Stretch"
                   ScrollViewer.VerticalScrollBarVisibility="Auto"
                   ScrollViewer.HorizontalScrollBarVisibility="Auto"

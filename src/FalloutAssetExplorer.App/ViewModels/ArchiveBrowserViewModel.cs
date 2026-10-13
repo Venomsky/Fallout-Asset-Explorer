@@ -53,11 +53,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private string _mapGridCellDisplay = "Click a grid cell to keep its square-grid coordinates and raw value selected.";
     private string _mapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
     private string _mapObjectStatusDisplay = "MAP objects have not been read.";
-    private string _mapObjectPrototypeDiagnosticStatus = "Select an Item or Scenery object to inspect its Fallout 2 prototype.";
-    private string _mapObjectPrototypeDiagnosticDetails = string.Empty;
-    private string _mapObjectPrototypeSceneryFieldsDisplay = string.Empty;
-    private string _mapObjectPrototypeItemFieldsDisplay = string.Empty;
-    private IReadOnlyList<string> _mapObjectPrototypeRawByteLines = [];
     private string _mapFloorTilesStatusDisplay = "Select the floor-tile diagnostic layer to load this map's tiles.";
     private string _previewMessage = "Select a .FRM or .MAP entry to inspect.";
     private string _previewDetails = "Select a .FRM or .MAP entry to inspect.";
@@ -418,62 +413,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         get => _mapObjectStatusDisplay;
         private set => SetProperty(ref _mapObjectStatusDisplay, value);
     }
-
-    public string MapObjectPrototypeDiagnosticStatus
-    {
-        get => _mapObjectPrototypeDiagnosticStatus;
-        private set => SetProperty(ref _mapObjectPrototypeDiagnosticStatus, value);
-    }
-
-    public string MapObjectPrototypeDiagnosticDetails
-    {
-        get => _mapObjectPrototypeDiagnosticDetails;
-        private set => SetProperty(ref _mapObjectPrototypeDiagnosticDetails, value);
-    }
-
-    public string MapObjectPrototypeSceneryFieldsDisplay
-    {
-        get => _mapObjectPrototypeSceneryFieldsDisplay;
-        private set
-        {
-            if (SetProperty(ref _mapObjectPrototypeSceneryFieldsDisplay, value))
-            {
-                OnPropertyChanged(nameof(HasMapObjectPrototypeSceneryFields));
-            }
-        }
-    }
-
-    public bool HasMapObjectPrototypeSceneryFields =>
-        !string.IsNullOrEmpty(MapObjectPrototypeSceneryFieldsDisplay);
-
-    public string MapObjectPrototypeItemFieldsDisplay
-    {
-        get => _mapObjectPrototypeItemFieldsDisplay;
-        private set
-        {
-            if (SetProperty(ref _mapObjectPrototypeItemFieldsDisplay, value))
-            {
-                OnPropertyChanged(nameof(HasMapObjectPrototypeItemFields));
-            }
-        }
-    }
-
-    public bool HasMapObjectPrototypeItemFields =>
-        !string.IsNullOrEmpty(MapObjectPrototypeItemFieldsDisplay);
-
-    public IReadOnlyList<string> MapObjectPrototypeRawByteLines
-    {
-        get => _mapObjectPrototypeRawByteLines;
-        private set
-        {
-            if (SetProperty(ref _mapObjectPrototypeRawByteLines, value))
-            {
-                OnPropertyChanged(nameof(HasMapObjectPrototypeRawBytes));
-            }
-        }
-    }
-
-    public bool HasMapObjectPrototypeRawBytes => MapObjectPrototypeRawByteLines.Count > 0;
 
     public int SelectedDirectionIndex
     {
@@ -1006,6 +945,11 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
         try
         {
+            if (!IsCurrentMapFloorTileLoad(cancellation, archive, mapTileGridData))
+            {
+                return;
+            }
+
             if (archive.Game != FalloutGame.Fallout2 || archive.Format != ArchiveFormat.Dat2)
             {
                 _mapFloorTilesLoaded = true;
@@ -1027,9 +971,18 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 floorIds,
                 cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
+            if (!IsCurrentMapFloorTileLoad(cancellation, archive, mapTileGridData))
+            {
+                return;
+            }
 
             var paletteResolution = await ResolvePaletteAsync(archive, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
+            if (!IsCurrentMapFloorTileLoad(cancellation, archive, mapTileGridData))
+            {
+                return;
+            }
+
             var palette = paletteResolution.Palette;
             if (palette is null)
             {
@@ -1041,6 +994,11 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 _mapFloorTilesLoaded = true;
                 PaletteStatus = paletteResolution.Diagnostic
                     ?? "No Fallout palette is available; floor tiles cannot be color-decoded.";
+                if (!IsCurrentMapFloorTileLoad(cancellation, archive, mapTileGridData))
+                {
+                    return;
+                }
+
                 MapFloorTilesStatusDisplay =
                     $"Could not render {floorIds.Count} distinct floor IDs because no Fallout palette is available.";
                 return;
@@ -1055,6 +1013,11 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             foreach (var floorId in floorIds)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                if (!IsCurrentMapFloorTileLoad(cancellation, archive, mapTileGridData))
+                {
+                    return;
+                }
+
                 var floorIdKey = checked((uint)floorId);
                 if (!resolutions.TryGetValue(floorId, out var resolution) || !resolution.Success)
                 {
@@ -1092,6 +1055,11 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                         () => FrmDecoder.Decode(buffer.GetBuffer().AsMemory(0, checked((int)buffer.Length))),
                         cancellationToken);
                     cancellationToken.ThrowIfCancellationRequested();
+                    if (!IsCurrentMapFloorTileLoad(cancellation, archive, mapTileGridData))
+                    {
+                        return;
+                    }
+
                     if (document.Directions.Count == 0 || document.Directions[0].Frames.Count == 0)
                     {
                         throw new InvalidDataException("FRM has no frame in its first direction.");
@@ -1123,9 +1091,19 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                     or OverflowException
                     or InvalidOperationException)
                 {
+                    if (!IsCurrentMapFloorTileLoad(cancellation, archive, mapTileGridData))
+                    {
+                        return;
+                    }
+
                     _unavailableMapFloorIds.Add(floorIdKey);
                     failures.Add($"ID {floorId}: {exception.Message}");
                 }
+            }
+
+            if (!IsCurrentMapFloorTileLoad(cancellation, archive, mapTileGridData))
+            {
+                return;
             }
 
             _mapFloorTilesLoaded = true;
@@ -1144,28 +1122,39 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             or NotSupportedException
             or InvalidOperationException)
         {
-            _mapFloorTilesLoaded = true;
-            if (_mapTileGridData is not null)
+            if (!IsCurrentMapFloorTileLoad(cancellation, archive, mapTileGridData))
             {
-                foreach (var floorId in MapFloorTileDiagnosticGeometry.GetDrawableFloorIds(
-                             _mapTileGridData.Grids.SelectMany(grid => grid.RawValues)))
-                {
-                    _unavailableMapFloorIds.Add(checked((uint)floorId));
-                }
+                return;
+            }
+
+            _mapFloorTilesLoaded = true;
+            foreach (var floorId in MapFloorTileDiagnosticGeometry.GetDrawableFloorIds(
+                         mapTileGridData.Grids.SelectMany(grid => grid.RawValues)))
+            {
+                _unavailableMapFloorIds.Add(checked((uint)floorId));
             }
 
             MapFloorTilesStatusDisplay = $"Could not load floor tiles: {exception.Message}";
         }
         finally
         {
-            if (ReferenceEquals(_mapFloorTileCancellation, cancellation))
+            if (IsCurrentMapFloorTileLoad(cancellation, archive, mapTileGridData))
             {
                 _mapFloorTileCancellation = null;
+                NotifyMapFloorTileAssetsChanged();
             }
-
-            NotifyMapFloorTileAssetsChanged();
         }
     }
+
+    private bool IsCurrentMapFloorTileLoad(
+        CancellationTokenSource cancellation,
+        IGameArchive archive,
+        MapTileGridData mapTileGridData) =>
+        !_isDisposed
+        && IsMapInspector
+        && ReferenceEquals(_mapFloorTileCancellation, cancellation)
+        && ReferenceEquals(_archive, archive)
+        && ReferenceEquals(_mapTileGridData, mapTileGridData);
 
     public void UpdateSelectionCount(int count)
     {
@@ -1462,12 +1451,6 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MapGridCellDisplay = "Click a grid cell to keep its square-grid coordinates and raw value selected.";
         MapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
         MapObjectStatusDisplay = "MAP objects have not been read.";
-        MapObjectPrototypeDiagnosticStatus =
-            "Select an Item or Scenery object to inspect its Fallout 2 prototype.";
-        MapObjectPrototypeDiagnosticDetails = string.Empty;
-        MapObjectPrototypeSceneryFieldsDisplay = string.Empty;
-        MapObjectPrototypeItemFieldsDisplay = string.Empty;
-        MapObjectPrototypeRawByteLines = [];
         _playbackTimer.Stop();
         _playback.SetFrameCounts([]);
         var previousBitmap = PreviewBitmap;
@@ -1532,38 +1515,45 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         _mapObjectPrototypeDiagnosticCancellation?.Cancel();
         _mapObjectPrototypeDiagnosticCancellation = null;
-        MapObjectPrototypeDiagnosticDetails = string.Empty;
-        MapObjectPrototypeSceneryFieldsDisplay = string.Empty;
-        MapObjectPrototypeItemFieldsDisplay = string.Empty;
-        MapObjectPrototypeRawByteLines = [];
 
         if (placement is null)
         {
-            MapObjectPrototypeDiagnosticStatus =
-                "Select an Item or Scenery object to inspect its Fallout 2 prototype.";
+            MapInspector.ClearMapObjectPrototypeDiagnostic();
             return;
         }
 
-        MapObjectPrototypeDiagnosticDetails =
-            $"Selected object PID: 0x{unchecked((uint)placement.RawPid):X8}";
+        var details = $"Selected object PID: 0x{unchecked((uint)placement.RawPid):X8}";
         if (placement.PidTypeIdentifier is not (0 or 2))
         {
-            MapObjectPrototypeDiagnosticStatus =
-                "Prototype diagnostics are supported only for Fallout 2 Item and Scenery objects.";
+            MapInspector.SetMapObjectPrototypeDiagnostic(
+                "Prototype diagnostics are supported only for Fallout 2 Item and Scenery objects.",
+                details,
+                string.Empty,
+                string.Empty,
+                []);
             return;
         }
 
         var resolver = _mapPrototypeResolver;
         if (resolver is null)
         {
-            MapObjectPrototypeDiagnosticStatus =
-                "Prototype diagnostics require an open Fallout 2 DAT2 archive.";
+            MapInspector.SetMapObjectPrototypeDiagnostic(
+                "Prototype diagnostics require an open Fallout 2 DAT2 archive.",
+                details,
+                string.Empty,
+                string.Empty,
+                []);
             return;
         }
 
         var cancellation = new CancellationTokenSource();
         _mapObjectPrototypeDiagnosticCancellation = cancellation;
-        MapObjectPrototypeDiagnosticStatus = "Loading prototype diagnostics...";
+        MapInspector.SetMapObjectPrototypeDiagnostic(
+            "Loading prototype diagnostics...",
+            details,
+            string.Empty,
+            string.Empty,
+            []);
         _ = LoadMapObjectPrototypeDiagnosticAsync(
             placement,
             resolver,
@@ -1596,11 +1586,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 return;
             }
 
-            MapObjectPrototypeDiagnosticStatus = diagnostic.Status;
-            MapObjectPrototypeDiagnosticDetails = formatted.Details;
-            MapObjectPrototypeSceneryFieldsDisplay = formatted.SceneryFields;
-            MapObjectPrototypeItemFieldsDisplay = formatted.ItemFields;
-            MapObjectPrototypeRawByteLines = formatted.ByteLines;
+            MapInspector.SetMapObjectPrototypeDiagnostic(
+                diagnostic.Status,
+                formatted.Details,
+                formatted.SceneryFields,
+                formatted.ItemFields,
+                formatted.ByteLines);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1611,8 +1602,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             if (ReferenceEquals(MapInspector.SelectedMapObject, placement)
                 && ReferenceEquals(_mapPrototypeResolver, resolver))
             {
-                MapObjectPrototypeDiagnosticStatus =
-                    $"Could not load prototype diagnostics: {exception.Message}";
+                MapInspector.SetMapObjectPrototypeDiagnostic(
+                    $"Could not load prototype diagnostics: {exception.Message}",
+                    $"Selected object PID: 0x{unchecked((uint)placement.RawPid):X8}",
+                    string.Empty,
+                    string.Empty,
+                    []);
             }
         }
         finally

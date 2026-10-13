@@ -1,3 +1,4 @@
+using System.Text;
 using FalloutAssetExplorer.Core;
 using FalloutAssetExplorer.App.ViewModels;
 using Xunit;
@@ -96,28 +97,46 @@ public sealed class MapGridInspectionViewModelTests
 
         viewModel.MapInspector.SelectedMapObject = item;
 
-        Assert.Contains("0x00000023", viewModel.MapObjectPrototypeDiagnosticDetails);
+        Assert.Contains("0x00000023", viewModel.MapInspector.MapObjectPrototypeDiagnosticDetails);
         Assert.Equal(
             "Prototype diagnostics require an open Fallout 2 DAT2 archive.",
-            viewModel.MapObjectPrototypeDiagnosticStatus);
+            viewModel.MapInspector.MapObjectPrototypeDiagnosticStatus);
 
         viewModel.MapInspector.SelectedMapObject = scenery;
 
-        Assert.Contains("0x02000045", viewModel.MapObjectPrototypeDiagnosticDetails);
-        Assert.DoesNotContain("0x00000023", viewModel.MapObjectPrototypeDiagnosticDetails);
-        Assert.Empty(viewModel.MapObjectPrototypeRawByteLines);
+        Assert.Contains("0x02000045", viewModel.MapInspector.MapObjectPrototypeDiagnosticDetails);
+        Assert.DoesNotContain("0x00000023", viewModel.MapInspector.MapObjectPrototypeDiagnosticDetails);
+        Assert.Empty(viewModel.MapInspector.MapObjectPrototypeRawByteLines);
+
+        var inspector = viewModel.MapInspector;
+        inspector.SetMapObjectPrototypeDiagnostic(
+            "Loaded",
+            "Resolved details",
+            "Scenery fields",
+            "Item fields",
+            ["00000000"]);
+        var changedProperties = new List<string?>();
+        inspector.PropertyChanged += (_, args) => changedProperties.Add(args.PropertyName);
 
         viewModel.MapInspector.SelectedMapObject = null;
 
         Assert.Equal(
             "Select an Item or Scenery object to inspect its Fallout 2 prototype.",
-            viewModel.MapObjectPrototypeDiagnosticStatus);
-        Assert.Empty(viewModel.MapObjectPrototypeDiagnosticDetails);
-        Assert.Empty(viewModel.MapObjectPrototypeRawByteLines);
+            inspector.MapObjectPrototypeDiagnosticStatus);
+        Assert.Empty(inspector.MapObjectPrototypeDiagnosticDetails);
+        Assert.Empty(inspector.MapObjectPrototypeSceneryFieldsDisplay);
+        Assert.Empty(inspector.MapObjectPrototypeItemFieldsDisplay);
+        Assert.Empty(inspector.MapObjectPrototypeRawByteLines);
+        Assert.False(inspector.HasMapObjectPrototypeSceneryFields);
+        Assert.False(inspector.HasMapObjectPrototypeItemFields);
+        Assert.False(inspector.HasMapObjectPrototypeRawBytes);
+        Assert.Contains(nameof(inspector.HasMapObjectPrototypeSceneryFields), changedProperties);
+        Assert.Contains(nameof(inspector.HasMapObjectPrototypeItemFields), changedProperties);
+        Assert.Contains(nameof(inspector.HasMapObjectPrototypeRawBytes), changedProperties);
     }
 
     [Fact]
-    public void ClearingMapPlacements_ClearsChildSelectionAndParentPrototypeDiagnostic()
+    public void ClearingMapPlacements_ClearsChildSelectionAndPrototypeDiagnostic()
     {
         using var viewModel = new ArchiveBrowserViewModel();
         var item = CreateMarkerPlacement(1, elevation: 0) with
@@ -130,7 +149,7 @@ public sealed class MapGridInspectionViewModelTests
 
         Assert.Equal(
             "Prototype diagnostics require an open Fallout 2 DAT2 archive.",
-            viewModel.MapObjectPrototypeDiagnosticStatus);
+            viewModel.MapInspector.MapObjectPrototypeDiagnosticStatus);
 
         viewModel.MapObjectPlacements.Clear();
 
@@ -139,7 +158,7 @@ public sealed class MapGridInspectionViewModelTests
         Assert.Equal("Select a parsed object to inspect its raw fields.", viewModel.MapInspector.MapObjectDetailsDisplay);
         Assert.Equal(
             "Select an Item or Scenery object to inspect its Fallout 2 prototype.",
-            viewModel.MapObjectPrototypeDiagnosticStatus);
+            viewModel.MapInspector.MapObjectPrototypeDiagnosticStatus);
     }
 
     [Fact]
@@ -403,7 +422,7 @@ public sealed class MapGridInspectionViewModelTests
         Assert.Null(viewModel.MapInspector.SelectedMapObject);
         Assert.Equal(
             "Select an Item or Scenery object to inspect its Fallout 2 prototype.",
-            viewModel.MapObjectPrototypeDiagnosticStatus);
+            viewModel.MapInspector.MapObjectPrototypeDiagnosticStatus);
         Assert.Equal("tree", viewModel.MapInspector.MapObjectSearchText);
         Assert.Equal(2, viewModel.MapInspector.SelectedMapObjectTypeFilter.PidTypeIdentifier);
         Assert.Equal(
@@ -432,6 +451,115 @@ public sealed class MapGridInspectionViewModelTests
                 ? "No decoded MAP tile grids are available."
                 : "Select the floor-tile diagnostic layer to load this map's tiles.",
             viewModel.MapFloorTilesStatusDisplay);
+    }
+
+    [Fact]
+    public async Task PrepareMapFloorTiles_StaleTileIoCannotMutateOrNotifyNewMap()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var oldArchive = new ControlledMapTileArchive(
+            "old.frm",
+            floorId: 3,
+            includeTileAsset: true,
+            blockTileAssetRead: true,
+            throwTileAssetIo: true);
+        var newArchive = new ControlledMapTileArchive(
+            "new.frm",
+            floorId: 7,
+            includeTileAsset: false,
+            blockTileListRead: true);
+        Task? oldLoad = null;
+        Task? newLoad = null;
+        Task? duplicateLoad = null;
+
+        try
+        {
+            SetMapFloorTileState(viewModel, oldArchive, floorId: 3);
+            oldLoad = viewModel.PrepareMapFloorTilesAsync();
+            await oldArchive.TileAssetReadStarted.WaitAsync(TimeSpan.FromSeconds(10));
+
+            InvokeClearPreview(viewModel);
+            SetMapFloorTileState(viewModel, newArchive, floorId: 7);
+
+            var changedProperties = new List<string?>();
+            viewModel.PropertyChanged += (_, args) => changedProperties.Add(args.PropertyName);
+            newLoad = viewModel.PrepareMapFloorTilesAsync();
+            await newArchive.TileListReadStarted.WaitAsync(TimeSpan.FromSeconds(10));
+
+            var currentCancellation = GetPrivateField<CancellationTokenSource?>(
+                viewModel,
+                "_mapFloorTileCancellation");
+            var currentRevision = viewModel.MapFloorTilesRevision;
+            changedProperties.Clear();
+
+            oldArchive.ReleaseTileAssetRead();
+            await oldLoad.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Equal(
+                "Resolving floor tile IDs and loading unique FRM assets...",
+                viewModel.MapFloorTilesStatusDisplay);
+            Assert.Empty(viewModel.UnavailableMapFloorIds);
+            Assert.False(GetPrivateField<bool>(viewModel, "_mapFloorTilesLoaded"));
+            Assert.Same(
+                currentCancellation,
+                GetPrivateField<CancellationTokenSource?>(viewModel, "_mapFloorTileCancellation"));
+            Assert.Equal(currentRevision, viewModel.MapFloorTilesRevision);
+            Assert.DoesNotContain(nameof(viewModel.MapFloorTilesStatusDisplay), changedProperties);
+            Assert.DoesNotContain(nameof(viewModel.MapFloorTileBitmaps), changedProperties);
+            Assert.DoesNotContain(nameof(viewModel.UnavailableMapFloorIds), changedProperties);
+            Assert.DoesNotContain(nameof(viewModel.MapFloorTilesRevision), changedProperties);
+
+            duplicateLoad = viewModel.PrepareMapFloorTilesAsync();
+            var newMapTileListReadCount = newArchive.TileListReadCount;
+            newArchive.ReleaseTileListRead();
+            await Task.WhenAll(newLoad, duplicateLoad);
+
+            Assert.Equal(1, newMapTileListReadCount);
+            Assert.Equal(1, newArchive.TileListReadCount);
+            Assert.True(GetPrivateField<bool>(viewModel, "_mapFloorTilesLoaded"));
+            Assert.Contains(7u, viewModel.UnavailableMapFloorIds);
+            Assert.Contains("ID 7:", viewModel.MapFloorTilesStatusDisplay);
+        }
+        finally
+        {
+            oldArchive.ReleaseTileAssetRead();
+            newArchive.ReleaseTileListRead();
+            if (oldLoad is not null)
+            {
+                await oldLoad;
+            }
+
+            if (newLoad is not null)
+            {
+                await newLoad;
+            }
+
+            if (duplicateLoad is not null)
+            {
+                await duplicateLoad;
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PrepareMapFloorTiles_CurrentTileIoFailureStillUpdatesStatusAndUnavailableIds()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var archive = new ControlledMapTileArchive(
+            "broken.frm",
+            floorId: 23,
+            includeTileAsset: true,
+            throwTileAssetIo: true);
+        SetMapFloorTileState(viewModel, archive, floorId: 23);
+
+        await viewModel.PrepareMapFloorTilesAsync();
+
+        Assert.True(GetPrivateField<bool>(viewModel, "_mapFloorTilesLoaded"));
+        Assert.Contains(23u, viewModel.UnavailableMapFloorIds);
+        Assert.Contains(
+            "Loaded 0 of 1 distinct drawable floor IDs; 1 unavailable.",
+            viewModel.MapFloorTilesStatusDisplay);
+        Assert.Contains("ID 23: controlled floor-tile I/O failure", viewModel.MapFloorTilesStatusDisplay);
     }
 
     [Fact]
@@ -1134,4 +1262,169 @@ public sealed class MapGridInspectionViewModelTests
         ArchiveBrowserViewModel viewModel,
         MapInspectorViewModel.MapObjectListSortMode sortMode) =>
         viewModel.MapInspector.MapObjectListSortOptions.Single(option => option.SortMode == sortMode);
+
+    private static void SetMapFloorTileState(
+        ArchiveBrowserViewModel viewModel,
+        IGameArchive archive,
+        int floorId)
+    {
+        var mapBytes = new byte[MapHeaderDecoder.HeaderSize + MapHeaderDecoder.BytesPerElevation];
+        mapBytes[3] = 20;
+        mapBytes[0x2B] = 0x0C;
+        var header = MapHeaderDecoder.Decode(mapBytes, FalloutGame.Fallout2);
+        var values = new uint[MapTileGridDecoder.ValuesPerGrid];
+        Array.Fill(values, checked((uint)floorId));
+        var gridData = new MapTileGridData(header, [new MapTileGrid(0, values)]);
+
+        SetPrivateField(viewModel, "_archive", archive);
+        SetPrivateField(viewModel, "_mapTileGridData", gridData);
+        SetPrivateField(viewModel, "_isMapGridDataLoaded", true);
+        viewModel.MapInspector.SetAvailableElevations([0], preferredElevationIndex: 0);
+        viewModel.MapInspector.SetMapInspectorActive(true);
+        viewModel.MapInspector.SelectedMapDiagnosticLayerIndex =
+            MapInspectorViewModel.FloorTilesLayerIndex;
+    }
+
+    private static void InvokeClearPreview(ArchiveBrowserViewModel viewModel)
+    {
+        var method = typeof(ArchiveBrowserViewModel).GetMethod(
+            "ClearPreview",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        method.Invoke(viewModel, null);
+    }
+
+    private static T GetPrivateField<T>(ArchiveBrowserViewModel viewModel, string fieldName)
+    {
+        var field = typeof(ArchiveBrowserViewModel).GetField(
+            fieldName,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        return (T)field.GetValue(viewModel)!;
+    }
+
+    private static void SetPrivateField<T>(
+        ArchiveBrowserViewModel viewModel,
+        string fieldName,
+        T value)
+    {
+        var field = typeof(ArchiveBrowserViewModel).GetField(
+            fieldName,
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        field.SetValue(viewModel, value);
+    }
+
+    private sealed class ControlledMapTileArchive : IGameArchive
+    {
+        private const string TileListPath = "art/tiles/tiles.lst";
+        private const string PalettePath = "COLOR.PAL";
+        private readonly Dictionary<string, (ArchiveEntry Entry, byte[] Bytes)> _entries =
+            new(StringComparer.OrdinalIgnoreCase);
+        private readonly byte[] _tileListBytes;
+        private readonly string _tileAssetPath;
+        private readonly byte[] _paletteBytes = new byte[FalloutPalette.MinimalFileSize];
+        private readonly bool _includeTileAsset;
+        private readonly bool _blockTileListRead;
+        private readonly bool _blockTileAssetRead;
+        private readonly bool _throwTileAssetIo;
+        private readonly TaskCompletionSource<bool> _tileListReadStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _tileAssetReadStarted =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _releaseTileListRead =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _releaseTileAssetRead =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _tileListReadCount;
+
+        public ControlledMapTileArchive(
+            string tileName,
+            int floorId,
+            bool includeTileAsset,
+            bool blockTileListRead = false,
+            bool blockTileAssetRead = false,
+            bool throwTileAssetIo = false)
+        {
+            Path = typeof(MapGridInspectionViewModelTests).Assembly.Location;
+            var tileNames = Enumerable.Repeat("unused.frm", floorId + 1).ToArray();
+            tileNames[floorId] = tileName;
+            _tileListBytes = Encoding.ASCII.GetBytes($"{string.Join('\n', tileNames)}\n");
+            _tileAssetPath = $"art/tiles/{tileName}";
+            _includeTileAsset = includeTileAsset;
+            _blockTileListRead = blockTileListRead;
+            _blockTileAssetRead = blockTileAssetRead;
+            _throwTileAssetIo = throwTileAssetIo;
+            AddEntry(TileListPath, _tileListBytes);
+            AddEntry(PalettePath, _paletteBytes);
+            if (_includeTileAsset)
+            {
+                AddEntry(_tileAssetPath, [0]);
+            }
+
+            BrowserEntries = _entries.Values.Select(value => value.Entry).ToArray();
+        }
+
+        public string Path { get; }
+
+        public FalloutGame Game => FalloutGame.Fallout2;
+
+        public ArchiveFormat Format => ArchiveFormat.Dat2;
+
+        public IReadOnlyList<ArchiveEntry> BrowserEntries { get; }
+
+        public Task TileListReadStarted => _tileListReadStarted.Task;
+
+        public Task TileAssetReadStarted => _tileAssetReadStarted.Task;
+
+        public int TileListReadCount => Volatile.Read(ref _tileListReadCount);
+
+        public void ReleaseTileListRead() => _releaseTileListRead.TrySetResult(true);
+
+        public void ReleaseTileAssetRead() => _releaseTileAssetRead.TrySetResult(true);
+
+        public async Task CopyEntryToAsync(
+            ArchiveEntry entry,
+            Stream destination,
+            CancellationToken cancellationToken = default)
+        {
+            var path = entry.Path.Replace('\\', '/');
+            if (string.Equals(path, TileListPath, StringComparison.OrdinalIgnoreCase))
+            {
+                Interlocked.Increment(ref _tileListReadCount);
+                if (_blockTileListRead)
+                {
+                    _tileListReadStarted.TrySetResult(true);
+                    await _releaseTileListRead.Task.ConfigureAwait(false);
+                }
+            }
+            else if (string.Equals(path, _tileAssetPath, StringComparison.OrdinalIgnoreCase))
+            {
+                if (_blockTileAssetRead)
+                {
+                    _tileAssetReadStarted.TrySetResult(true);
+                    await _releaseTileAssetRead.Task.ConfigureAwait(false);
+                }
+
+                if (_throwTileAssetIo)
+                {
+                    throw new IOException("controlled floor-tile I/O failure");
+                }
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!_entries.TryGetValue(path, out var content))
+            {
+                throw new IOException($"Unexpected archive entry request: {path}");
+            }
+
+            await destination.WriteAsync(content.Bytes, cancellationToken);
+        }
+
+        private void AddEntry(string path, byte[] bytes)
+        {
+            var entry = new ArchiveEntry(path, bytes.Length, null, Path);
+            _entries.Add(path, (entry, bytes));
+        }
+    }
 }

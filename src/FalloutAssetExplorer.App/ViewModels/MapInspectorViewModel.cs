@@ -8,6 +8,9 @@ namespace FalloutAssetExplorer.App.ViewModels;
 
 public sealed class MapInspectorViewModel : INotifyPropertyChanged
 {
+    private const string DefaultMapObjectPrototypeDiagnosticStatus =
+        "Select an Item or Scenery object to inspect its Fallout 2 prototype.";
+
     public const int SquareTilesLayerIndex = 0;
     public const int ObjectHexesLayerIndex = 1;
     public const int FloorTilesLayerIndex = 2;
@@ -30,6 +33,11 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
     private bool _sortedListReportedTransientSelectionClear;
     private MapObjectPlacement? _selectedMapObject;
     private string _mapObjectDetailsDisplay = "Select a parsed object to inspect its raw fields.";
+    private string _mapObjectPrototypeDiagnosticStatus = DefaultMapObjectPrototypeDiagnosticStatus;
+    private string _mapObjectPrototypeDiagnosticDetails = string.Empty;
+    private string _mapObjectPrototypeSceneryFieldsDisplay = string.Empty;
+    private string _mapObjectPrototypeItemFieldsDisplay = string.Empty;
+    private IReadOnlyList<string> _mapObjectPrototypeRawByteLines = [];
 
     public sealed record MapObjectTypeFilterOption(string DisplayName, int? PidTypeIdentifier);
 
@@ -248,6 +256,85 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
         private set => SetProperty(ref _mapObjectDetailsDisplay, value);
     }
 
+    public string MapObjectPrototypeDiagnosticStatus
+    {
+        get => _mapObjectPrototypeDiagnosticStatus;
+        private set => SetProperty(ref _mapObjectPrototypeDiagnosticStatus, value);
+    }
+
+    public string MapObjectPrototypeDiagnosticDetails
+    {
+        get => _mapObjectPrototypeDiagnosticDetails;
+        private set => SetProperty(ref _mapObjectPrototypeDiagnosticDetails, value);
+    }
+
+    public string MapObjectPrototypeSceneryFieldsDisplay
+    {
+        get => _mapObjectPrototypeSceneryFieldsDisplay;
+        private set
+        {
+            if (SetProperty(ref _mapObjectPrototypeSceneryFieldsDisplay, value))
+            {
+                OnPropertyChanged(nameof(HasMapObjectPrototypeSceneryFields));
+            }
+        }
+    }
+
+    public bool HasMapObjectPrototypeSceneryFields =>
+        !string.IsNullOrEmpty(MapObjectPrototypeSceneryFieldsDisplay);
+
+    public string MapObjectPrototypeItemFieldsDisplay
+    {
+        get => _mapObjectPrototypeItemFieldsDisplay;
+        private set
+        {
+            if (SetProperty(ref _mapObjectPrototypeItemFieldsDisplay, value))
+            {
+                OnPropertyChanged(nameof(HasMapObjectPrototypeItemFields));
+            }
+        }
+    }
+
+    public bool HasMapObjectPrototypeItemFields =>
+        !string.IsNullOrEmpty(MapObjectPrototypeItemFieldsDisplay);
+
+    public IReadOnlyList<string> MapObjectPrototypeRawByteLines
+    {
+        get => _mapObjectPrototypeRawByteLines;
+        private set
+        {
+            if (SetProperty(ref _mapObjectPrototypeRawByteLines, value))
+            {
+                OnPropertyChanged(nameof(HasMapObjectPrototypeRawBytes));
+            }
+        }
+    }
+
+    public bool HasMapObjectPrototypeRawBytes => MapObjectPrototypeRawByteLines.Count > 0;
+
+    public void SetMapObjectPrototypeDiagnostic(
+        string status,
+        string details,
+        string sceneryFields,
+        string itemFields,
+        IReadOnlyList<string> rawByteLines)
+    {
+        ArgumentNullException.ThrowIfNull(rawByteLines);
+        MapObjectPrototypeDiagnosticStatus = status;
+        MapObjectPrototypeDiagnosticDetails = details;
+        MapObjectPrototypeSceneryFieldsDisplay = sceneryFields;
+        MapObjectPrototypeItemFieldsDisplay = itemFields;
+        MapObjectPrototypeRawByteLines = rawByteLines;
+    }
+
+    public void ClearMapObjectPrototypeDiagnostic() =>
+        SetMapObjectPrototypeDiagnostic(
+            DefaultMapObjectPrototypeDiagnosticStatus,
+            string.Empty,
+            string.Empty,
+            string.Empty,
+            []);
+
     public void SetAvailableElevations(
         IEnumerable<int> elevations,
         int? preferredElevationIndex)
@@ -276,6 +363,7 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
         ClearSelectedMapObject();
         SelectedMapDiagnosticLayerIndex = SquareTilesLayerIndex;
         SetAvailableElevations([], preferredElevationIndex: null);
+        ClearMapObjectPrototypeDiagnostic();
     }
 
     public void SetMapInspectorActive(bool isActive)
