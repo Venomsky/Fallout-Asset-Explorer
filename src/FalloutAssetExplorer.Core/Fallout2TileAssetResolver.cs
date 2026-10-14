@@ -221,7 +221,7 @@ public static class Fallout2TileAssetResolver
     private static string NormalizeArchivePath(string path) =>
         path.Replace('\\', '/');
 
-    private static List<string> ReadCeListNames(byte[] bytes)
+    internal static List<string> ReadCeListNames(byte[] bytes)
     {
         var names = new List<string>();
         var offset = 0;
