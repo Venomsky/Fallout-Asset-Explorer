@@ -56,6 +56,10 @@ public sealed class MapIsometricFloorView : Control
     public static readonly StyledProperty<int?> SelectedRecordIndexProperty =
         AvaloniaProperty.Register<MapIsometricFloorView, int?>(nameof(SelectedRecordIndex));
 
+    public static readonly StyledProperty<MapIsometricObjectSprite?> SelectedObjectSpriteProperty =
+        AvaloniaProperty.Register<MapIsometricFloorView, MapIsometricObjectSprite?>(
+            nameof(SelectedObjectSprite));
+
     private MapIsometricFloorCameraTransform? _cameraTransform;
     private IReadOnlyList<MapIsometricObjectMarker>? _objectMarkers;
     private MapIsometricFloorViewTransform? _objectMarkersProjection;
@@ -105,6 +109,12 @@ public sealed class MapIsometricFloorView : Control
     {
         get => GetValue(SelectedRecordIndexProperty);
         set => SetValue(SelectedRecordIndexProperty, value);
+    }
+
+    public MapIsometricObjectSprite? SelectedObjectSprite
+    {
+        get => GetValue(SelectedObjectSpriteProperty);
+        set => SetValue(SelectedObjectSpriteProperty, value);
     }
 
     public event EventHandler<MapObjectMarkerSelectionChangedEventArgs>? ObjectSelectionChanged;
@@ -210,7 +220,8 @@ public sealed class MapIsometricFloorView : Control
             || change.Property == PlacementsProperty
             || change.Property == ElevationProperty
             || change.Property == ShowObjectMarkersProperty
-            || change.Property == SelectedRecordIndexProperty)
+            || change.Property == SelectedRecordIndexProperty
+            || change.Property == SelectedObjectSpriteProperty)
         {
             InvalidateVisual();
             RefreshHoverToolTip();
@@ -276,7 +287,33 @@ public sealed class MapIsometricFloorView : Control
         if (ShowObjectMarkers)
         {
             var markerRadius = MapIsometricObjectMarkerHitTest.GetMarkerRadius(camera.Scale);
-            foreach (var marker in GetObjectMarkers(projection))
+            var markers = GetObjectMarkers(projection);
+            if (SelectedObjectSprite is { } sprite
+                && sprite.RecordIndex == SelectedRecordIndex
+                && markers.FirstOrDefault(marker => marker.Placement.RecordIndex == sprite.RecordIndex)
+                    is { Placement: not null } spriteMarker
+                && MapIsometricObjectSpriteGeometry.TryGetImageBounds(
+                    spriteMarker.WorldPosition,
+                    camera,
+                    sprite.Bitmap.PixelSize.Width,
+                    sprite.Bitmap.PixelSize.Height,
+                    sprite.ArtShiftX,
+                    sprite.ArtShiftY,
+                    spriteMarker.Placement.RawOffsetX,
+                    spriteMarker.Placement.RawOffsetY,
+                    out var spriteBounds)
+                && MapIsometricFloorViewportGeometry.IntersectsViewport(
+                    spriteBounds,
+                    Bounds.Width,
+                    Bounds.Height))
+            {
+                context.DrawImage(
+                    sprite.Bitmap,
+                    new Rect(0, 0, sprite.Bitmap.PixelSize.Width, sprite.Bitmap.PixelSize.Height),
+                    spriteBounds);
+            }
+
+            foreach (var marker in markers)
             {
                 var center = camera.ToScreen(marker.WorldPosition);
                 var markerBounds = new Rect(

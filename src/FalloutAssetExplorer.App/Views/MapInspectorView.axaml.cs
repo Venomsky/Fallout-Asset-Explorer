@@ -91,7 +91,7 @@ public partial class MapInspectorView : UserControl
         MapObjectPlacementSelectedEventArgs e) =>
         ViewModel?.MapInspector.SelectMapObjectFromFloorMarker(e.Placement);
 
-    private void MapIsometricFloorView_ObjectSelectionChanged(
+    private async void MapIsometricFloorView_ObjectSelectionChanged(
         object? sender,
         MapObjectMarkerSelectionChangedEventArgs e)
     {
@@ -100,6 +100,7 @@ public partial class MapInspectorView : UserControl
             viewModel.MapInspector.SelectMapObjectFromIsometricMarker(
                 e.RecordIndex,
                 viewModel.MapInspector.SelectedMapElevationIndex);
+            await viewModel.PrepareSelectedMapObjectSpriteAsync();
         }
     }
 
@@ -118,7 +119,11 @@ public partial class MapInspectorView : UserControl
             && ViewModel is { } viewModel)
         {
             viewModel.MapInspector.SelectedMapDiagnosticLayerIndex = combo.SelectedIndex;
-            await viewModel.PrepareMapFloorTilesAsync();
+            var floorTask = viewModel.PrepareMapFloorTilesAsync();
+            var spriteTask = combo.SelectedIndex == MapInspectorViewModel.IsometricObjectMarkersLayerIndex
+                ? viewModel.PrepareSelectedMapObjectSpriteAsync()
+                : Task.CompletedTask;
+            await Task.WhenAll(floorTask, spriteTask);
         }
     }
 

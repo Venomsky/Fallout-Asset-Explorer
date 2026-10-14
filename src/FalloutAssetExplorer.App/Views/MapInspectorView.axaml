@@ -50,6 +50,7 @@
                 Elevation="{Binding MapInspector.SelectedMapElevationIndex}"
                 ShowObjectMarkers="{Binding IsMapIsometricObjectMarkerLayerVisible}"
                 SelectedRecordIndex="{Binding MapInspector.SelectedMapObjectRecordIndex}"
+                SelectedObjectSprite="{Binding SelectedMapObjectSprite}"
                 ObjectSelectionChanged="MapIsometricFloorView_ObjectSelectionChanged"
                 RenderOptions.BitmapInterpolationMode="None"
                 IsHitTestVisible="True"
@@ -236,6 +237,20 @@
                 Text="{Binding MapFloorTilesStatusDisplay}"
                 IsVisible="{Binding IsMapIsometricFloorLayerVisible}"
                 TextWrapping="Wrap" />
+            <StackPanel
+                IsVisible="{Binding IsMapIsometricObjectMarkerLayerVisible}"
+                Spacing="2">
+              <TextBlock
+                  Foreground="#AAB2BF"
+                  FontSize="12"
+                  Text="{Binding MapObjectSpriteStatusDisplay}"
+                  TextWrapping="Wrap" />
+              <TextBlock
+                  Foreground="#AAB2BF"
+                  FontSize="11"
+                  Text="Anchor follows the audited CE tile, art-shift, MAP-offset, and frame-dimension formula; global object ordering is not reproduced."
+                  TextWrapping="Wrap" />
+            </StackPanel>
             <TextBlock
                 Foreground="#AAB2BF"
                 FontSize="12"
