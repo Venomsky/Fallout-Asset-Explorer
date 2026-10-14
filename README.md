@@ -54,7 +54,7 @@ Inspect supported MAP header data, elevation grids, and decoded object records. 
 
 ## Getting started
 
-The application targets **.NET 9** and uses Avalonia for its desktop interface. You need the .NET 9 SDK and a desktop environment to run it. No game files are bundled, and no archive is needed just to start the app.
+The application targets **.NET 10** and uses Avalonia for its desktop interface. To run it from source, you need the .NET 10 SDK and a desktop environment. No game files are bundled, and no archive is needed just to start the app.
 
 From the repository root, run:
 
@@ -64,7 +64,7 @@ dotnet run --project src\FalloutAssetExplorer.App\FalloutAssetExplorer.App.cspro
 
 Choose **Open Archive** in the app to select a local `.dat` file. The archive format is detected from its validated structure, not just its filename extension.
 
-This repository documents running the app from source; it does not provide an installation guide for a prebuilt download.
+For a prebuilt Windows x64 release, download `FalloutAssetExplorer-win-x64.zip` from the project's GitHub Releases page, extract the ZIP, and launch `FalloutAssetExplorer.App.exe`. The release is self-contained and does not require a separate .NET runtime installation. No game files are bundled.
 
 ## Development status
 
@@ -87,4 +87,4 @@ For the investigation notes and their source references, see [DAT format notes](
 
 ## License and attribution
 
-There is no license file in this repository, so it does not currently specify terms for reuse or redistribution. The format investigation documents include their technical source references.
+This project is licensed under the MIT License; see [LICENSE](LICENSE) for the full terms. Fallout 1 and Fallout 2 are trademarks of their respective owners. Fallout Asset Explorer is an unofficial community project and is not affiliated with, endorsed by, or sponsored by Bethesda Softworks or its affiliates. The format investigation documents include their technical source references.
