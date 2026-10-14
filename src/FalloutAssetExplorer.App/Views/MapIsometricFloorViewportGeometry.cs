@@ -56,6 +56,40 @@ public static class MapIsometricFloorViewportGeometry
         return transform.IsValid;
     }
 
+    public static Rect? IncludeBounds(Rect contentBounds, Rect? additionalBounds)
+    {
+        if (!IsValidBounds(contentBounds))
+        {
+            return null;
+        }
+
+        if (additionalBounds is not Rect additional || !IsValidBounds(additional))
+        {
+            return contentBounds;
+        }
+
+        var left = Math.Min(contentBounds.Left, additional.Left);
+        var top = Math.Min(contentBounds.Top, additional.Top);
+        var right = Math.Max(contentBounds.Right, additional.Right);
+        var bottom = Math.Max(contentBounds.Bottom, additional.Bottom);
+        var width = right - left;
+        var height = bottom - top;
+        if (!double.IsFinite(left)
+            || !double.IsFinite(top)
+            || !double.IsFinite(right)
+            || !double.IsFinite(bottom)
+            || !double.IsFinite(width)
+            || !double.IsFinite(height)
+            || width <= 0
+            || height <= 0)
+        {
+            return contentBounds;
+        }
+
+        var union = new Rect(left, top, width, height);
+        return IsValidBounds(union) ? union : contentBounds;
+    }
+
     public static MapIsometricFloorCameraTransform ZoomAt(
         MapIsometricFloorCameraTransform current,
         double cursorX,
@@ -207,6 +241,8 @@ public static class MapIsometricFloorViewportGeometry
         && double.IsFinite(bounds.Y)
         && double.IsFinite(bounds.Width)
         && double.IsFinite(bounds.Height)
+        && double.IsFinite(bounds.Right)
+        && double.IsFinite(bounds.Bottom)
         && bounds.Width > 0
         && bounds.Height > 0;
 

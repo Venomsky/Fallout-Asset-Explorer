@@ -222,6 +222,10 @@ public sealed class MapIsometricFloorView : Control
         {
             ValidateSelectedRecord();
         }
+        else if (change.Property == SelectedObjectSpriteProperty && _isFitToView)
+        {
+            UpdateFitCamera();
+        }
 
         if (change.Property == ValuesProperty
             || change.Property == TileBitmapsProperty
@@ -752,6 +756,28 @@ public sealed class MapIsometricFloorView : Control
         }
 
         contentBounds = new Rect(minX, minY, width, height);
+        if (SelectedObjectSprite is { } sprite
+            && MapIsometricObjectSpriteGeometry.TryGetSelectedSpriteWorldBounds(
+                sprite.RecordIndex,
+                SelectedRecordIndex,
+                ShowObjectMarkers,
+                GetObjectMarkers(projection),
+                sprite.Bitmap.PixelSize.Width,
+                sprite.Bitmap.PixelSize.Height,
+                sprite.ArtShiftX,
+                sprite.ArtShiftY,
+                out var spriteBounds))
+        {
+            if (MapIsometricFloorViewportGeometry.IncludeBounds(
+                contentBounds,
+                spriteBounds) is not Rect expandedBounds)
+            {
+                return false;
+            }
+
+            contentBounds = expandedBounds;
+        }
+
         return true;
     }
 }
