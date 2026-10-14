@@ -881,17 +881,17 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         ArgumentNullException.ThrowIfNull(destination);
         if (!IsCurrentStandaloneProInspection(inspection))
         {
-            throw new OperationCanceledException("Eksport anulowano, ponieważ wybrany wpis PRO uległ zmianie.");
+            throw new OperationCanceledException("Export canceled because the selected PRO entry changed.");
         }
 
         if (requireCompleteRead && !inspection.IsReadComplete)
         {
-            throw new InvalidDataException("Nie można eksportować BIN: odczyt danych PRO nie był kompletny.");
+            throw new InvalidDataException("Cannot export BIN: the PRO data was not read completely.");
         }
 
         if (IsStandaloneProExporting)
         {
-            throw new InvalidOperationException("Eksport PRO jest już w toku.");
+            throw new InvalidOperationException("A PRO export is already in progress.");
         }
 
         using var exportCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

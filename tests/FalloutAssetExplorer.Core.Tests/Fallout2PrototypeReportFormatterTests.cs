@@ -50,19 +50,19 @@ public sealed class Fallout2PrototypeReportFormatterTests
 
         var report = Fallout2PrototypeReportFormatter.Format(inspection);
 
-        Assert.Contains("Wynik parsowania: Częściowy sukces", report);
-        Assert.Contains(@"Archiwum: D:\Fallout2\master.dat", report);
-        Assert.Contains("Rozmiar deklarowany: 46 B", report);
-        Assert.Contains("Rozmiar faktycznie odczytany: 45 B", report);
-        Assert.Contains("Odczyt kompletny: Nie", report);
-        Assert.Contains("Weryfikacja przez MAP PID/listę prototypów: Nie.", report);
+        Assert.Contains("Parsing result: Partial success", report);
+        Assert.Contains(@"Archive: D:\Fallout2\master.dat", report);
+        Assert.Contains("Declared size: 46 B", report);
+        Assert.Contains("Actual bytes read: 45 B", report);
+        Assert.Contains("Read complete: No", report);
+        Assert.Contains("MAP PID/prototype-list verification: No.", report);
         Assert.Contains("PID: 0x020002F5", report);
-        Assert.Contains("Typ PID: Scenery (2)", report);
+        Assert.Contains("PID type: Scenery (2)", report);
         Assert.Contains("Subtype: Generic (5)", report);
-        Assert.Contains("offset 0x0028 | field_34 | wartość: 48 (0x30) | typ: uint8 | rozmiar: 1 B", report);
-        Assert.Contains("offset 0x0029 | generic.field_0 | wartość: -858993460 (0xCCCCCCCC) | typ: int32 BE | rozmiar: 4 B", report);
-        Assert.Contains("interpretacja: znaczenie nieustalone", report);
-        Assert.Contains("Komunikat parsera (zachowany bez zmian): Prototype PID type and subtype recognized.", report);
+        Assert.Contains("offset 0x0028 | field_34 | value: 48 (0x30) | type: uint8 | size: 1 B", report);
+        Assert.Contains("offset 0x0029 | generic.field_0 | value: -858993460 (0xCCCCCCCC) | type: int32 BE | size: 4 B", report);
+        Assert.Contains("interpretation: znaczenie nieustalone", report);
+        Assert.Contains("Parser message (preserved verbatim): Prototype PID type and subtype recognized.", report);
         Assert.Contains("00000000  02 00 02 F5 00 01 27 B4 02 00 02 FF 00 00 00 00", report);
         Assert.Contains("00000010  00 00 00 00 20 00 00 10 08 00 20 00 FF FF FF FF", report);
         Assert.Contains("00000020  00 00 00 05 00 00 00 07 30 CC CC CC CC", report);
@@ -85,11 +85,11 @@ public sealed class Fallout2PrototypeReportFormatterTests
 
         var report = Fallout2PrototypeReportFormatter.Format(inspection);
 
-        Assert.Contains("Wynik parsowania: Błąd", report);
-        Assert.Contains("PID: niedostępny", report);
-        Assert.Contains("Typ PID: niedostępny", report);
-        Assert.Contains("Subtype: niedostępny", report);
-        Assert.Contains("(brak sparsowanych pól)", report);
-        Assert.Contains("(brak dostępnych bajtów)", report);
+        Assert.Contains("Parsing result: Error", report);
+        Assert.Contains("PID: unavailable", report);
+        Assert.Contains("PID type: unavailable", report);
+        Assert.Contains("Subtype: unavailable", report);
+        Assert.Contains("(no parsed fields)", report);
+        Assert.Contains("(no bytes available)", report);
     }
 }

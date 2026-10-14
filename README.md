@@ -43,7 +43,7 @@ Select a Fallout 2 `.PRO` entry to inspect supported Item and Scenery records di
 | Fallout 2 DAT2 | Browse, search, preview supported FRM/MAP/PRO entries, and extract files. | Archive reading is read-only; support is limited to validated DAT2 structures and supported entry encodings. |
 | FRM | Preview combined `.FRM` animations; export a frame or spritesheet as PNG. | Split `.FR0`â€“`.FR5` critter animations are unsupported. Color export needs a resolved palette; game-accurate palette matching and animation timing are not claimed. |
 | MAP | Partial, diagnostic inspection of supported headers, tile grids, and object records. | Fallout 1 version 19 and Fallout 2 versions 19 and 20 headers are recognized. Object parsing can stop at an unsupported layout. Fallout 2 floor-art lookup needs a Fallout 2 DAT2 archive; the isometric floor view is experimental. This is not a complete game renderer, and scripts are not interpreted. |
-| PRO | Partial semantic inspection of selected records in Fallout 2 DAT2 archives. | Item and Scenery PID types are decoded; unsupported PID types or subtypes retain raw bytes without full field interpretation. Fallout 1 PRO semantic inspection is not implemented. Some PRO export controls and the generated report are currently in Polish. |
+| PRO | Partial semantic inspection of selected records in Fallout 2 DAT2 archives. | Item and Scenery PID types are decoded; unsupported PID types or subtypes retain raw bytes without full field interpretation. Fallout 1 PRO semantic inspection is not implemented. PRO export controls and the generated report are in English. |
 | Other archive entries | Browse, search, filter, and extract. | No in-app preview is provided for other file types. |
 
 The archive readers validate structure and bound entry reads. The app also limits MAP previews to 64 MiB and standalone PRO previews to 1 MiB. These safeguards do not establish compatibility with every release, mod, or archive variant.
@@ -90,4 +90,3 @@ For the investigation notes and their source references, see [DAT format notes](
 ## License and attribution
 
 This project is licensed under the MIT License; see [LICENSE](LICENSE) for the full terms. Fallout 1 and Fallout 2 are trademarks of their respective owners. Fallout Asset Explorer is an unofficial community project and is not affiliated with, endorsed by, or sponsored by Bethesda Softworks or its affiliates. The format investigation documents include their technical source references.
-

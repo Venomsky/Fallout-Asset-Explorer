@@ -12,37 +12,37 @@ public static class Fallout2PrototypeReportFormatter
         ArgumentNullException.ThrowIfNull(inspection);
 
         var report = new StringBuilder();
-        report.AppendLine("Fallout Asset Explorer — raport inspekcji PRO");
-        report.AppendLine($"Wynik parsowania: {GetOutcomeText(inspection.Outcome)}");
+        report.AppendLine("Fallout Asset Explorer — PRO Inspection Report");
+        report.AppendLine($"Parsing result: {GetOutcomeText(inspection.Outcome)}");
         report.AppendLine();
 
-        report.AppendLine("[Wpis archiwum]");
-        AppendValue(report, "Archiwum", inspection.ArchivePath);
-        AppendValue(report, "Typ gry", inspection.Game?.ToString());
-        AppendValue(report, "Format archiwum", inspection.Format?.ToString());
-        AppendValue(report, "Ścieżka wpisu", inspection.EntryPath);
-        AppendValue(report, "Lokalizacja wpisu", inspection.ArchiveLocation);
-        AppendValue(report, "Rozmiar skompresowany", FormatSize(inspection.CompressedSize));
-        AppendValue(report, "Rozmiar deklarowany", FormatSize(inspection.FileSize));
-        AppendValue(report, "Rozmiar faktycznie odczytany", FormatSize(inspection.ActualSize));
-        AppendValue(report, "Odczyt kompletny", inspection.IsReadComplete ? "Tak" : "Nie");
-        AppendValue(report, "Bajty zachowane", inspection.RawBytes.Length.ToString(CultureInfo.InvariantCulture));
+        report.AppendLine("[Archive Entry]");
+        AppendValue(report, "Archive", inspection.ArchivePath);
+        AppendValue(report, "Game", inspection.Game?.ToString());
+        AppendValue(report, "Archive format", inspection.Format?.ToString());
+        AppendValue(report, "Entry path", inspection.EntryPath);
+        AppendValue(report, "Entry location", inspection.ArchiveLocation);
+        AppendValue(report, "Compressed size", FormatSize(inspection.CompressedSize));
+        AppendValue(report, "Declared size", FormatSize(inspection.FileSize));
+        AppendValue(report, "Actual bytes read", FormatSize(inspection.ActualSize));
+        AppendValue(report, "Read complete", inspection.IsReadComplete ? "Yes" : "No");
+        AppendValue(report, "Bytes retained", inspection.RawBytes.Length.ToString(CultureInfo.InvariantCulture));
         report.AppendLine();
 
-        report.AppendLine("[Pochodzenie i weryfikacja]");
-        report.AppendLine("Pochodzenie: wpis PRO wybrany bezpośrednio z archiwum.");
-        report.AppendLine("Weryfikacja przez MAP PID/listę prototypów: Nie.");
+        report.AppendLine("[Provenance and Verification]");
+        report.AppendLine("Provenance: PRO entry selected directly from the archive.");
+        report.AppendLine("MAP PID/prototype-list verification: No.");
         report.AppendLine();
 
-        report.AppendLine("[Identyfikacja prototypu]");
+        report.AppendLine("[Prototype Identification]");
         AppendValue(report, "PID", inspection.PrototypePid is int pid
             ? $"0x{unchecked((uint)pid):X8}"
-            : "niedostępny");
-        AppendValue(report, "Typ PID", FormatIdentifier(inspection.PidTypeName, inspection.PidType));
+            : "unavailable");
+        AppendValue(report, "PID type", FormatIdentifier(inspection.PidTypeName, inspection.PidType));
         AppendValue(report, "Subtype", FormatIdentifier(inspection.SubtypeName, inspection.Subtype));
         report.AppendLine();
 
-        report.AppendLine("[Pola sparsowane]");
+        report.AppendLine("[Parsed Fields]");
         var fields = inspection.PidType switch
         {
             0 => inspection.ItemFields,
@@ -51,7 +51,7 @@ public static class Fallout2PrototypeReportFormatter
         };
         if (fields.Count == 0)
         {
-            report.AppendLine("(brak sparsowanych pól)");
+            report.AppendLine("(no parsed fields)");
         }
         else
         {
@@ -60,20 +60,20 @@ public static class Fallout2PrototypeReportFormatter
                 var value = FormatFieldValue(field);
                 var interpretation = string.IsNullOrWhiteSpace(field.Interpretation)
                     ? string.Empty
-                    : $" | interpretacja: {field.Interpretation}";
+                    : $" | interpretation: {field.Interpretation}";
                 report.AppendLine(
-                    $"offset 0x{field.Offset:X4} | {field.Name} | wartość: {value} "
-                    + $"| typ: {field.StorageType} | rozmiar: {field.SizeInBytes} B{interpretation}");
+                    $"offset 0x{field.Offset:X4} | {field.Name} | value: {value} "
+                    + $"| type: {field.StorageType} | size: {field.SizeInBytes} B{interpretation}");
             }
         }
         report.AppendLine();
 
-        report.AppendLine("[Diagnostyka parsera]");
-        report.AppendLine($"Wynik: {GetOutcomeText(inspection.Outcome)}");
-        report.AppendLine($"Komunikat parsera (zachowany bez zmian): {inspection.Status}");
+        report.AppendLine("[Parser Diagnostics]");
+        report.AppendLine($"Result: {GetOutcomeText(inspection.Outcome)}");
+        report.AppendLine($"Parser message (preserved verbatim): {inspection.Status}");
         report.AppendLine();
 
-        report.AppendLine("[Pełny zrzut hex dostępnych bajtów]");
+        report.AppendLine("[Hex Dump of Available Bytes]");
         AppendHexDump(report, inspection.RawBytes.Span);
 
         return report.ToString();
@@ -82,23 +82,23 @@ public static class Fallout2PrototypeReportFormatter
     private static string GetOutcomeText(PrototypeInspectionOutcome outcome) =>
         outcome switch
         {
-            PrototypeInspectionOutcome.Success => "Sukces",
-            PrototypeInspectionOutcome.Partial => "Częściowy sukces",
-            PrototypeInspectionOutcome.Error => "Błąd",
-            _ => "Nieznany"
+            PrototypeInspectionOutcome.Success => "Success",
+            PrototypeInspectionOutcome.Partial => "Partial success",
+            PrototypeInspectionOutcome.Error => "Error",
+            _ => "Unknown"
         };
 
     private static string FormatSize(long? size) =>
         size is long value
             ? $"{value.ToString("N0", CultureInfo.InvariantCulture)} B"
-            : "niedostępny";
+            : "unavailable";
 
     private static string FormatIdentifier(string? name, int? value) =>
         value is int id
             ? name is null
-                ? $"{id.ToString(CultureInfo.InvariantCulture)} (nieznany)"
+                ? $"{id.ToString(CultureInfo.InvariantCulture)} (unknown)"
                 : $"{name} ({id.ToString(CultureInfo.InvariantCulture)})"
-            : "niedostępny";
+            : "unavailable";
 
     private static string FormatFieldValue(Fallout2PrototypeField field)
     {
@@ -108,13 +108,13 @@ public static class Fallout2PrototypeReportFormatter
     }
 
     private static void AppendValue(StringBuilder report, string label, string? value) =>
-        report.AppendLine($"{label}: {value ?? "niedostępny"}");
+        report.AppendLine($"{label}: {value ?? "unavailable"}");
 
     private static void AppendHexDump(StringBuilder report, ReadOnlySpan<byte> bytes)
     {
         if (bytes.IsEmpty)
         {
-            report.AppendLine("(brak dostępnych bajtów)");
+            report.AppendLine("(no bytes available)");
             return;
         }
 

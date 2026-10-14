@@ -134,18 +134,18 @@
                 AutomationProperties.Name="Export all FRM directions and frames as a spritesheet PNG" />
             <Button
                 Grid.Column="3"
-                Content="Eksportuj raport…"
+                Content="Export report..."
                 Click="ExportStandaloneProReport_Click"
                 IsVisible="{Binding IsProInspector}"
                 IsEnabled="{Binding CanExportStandaloneProReport}"
-                AutomationProperties.Name="Eksportuj raport inspekcji PRO" />
+                AutomationProperties.Name="Export PRO inspection report" />
             <Button
                 Grid.Column="4"
-                Content="Eksportuj surowe BIN…"
+                Content="Export raw BIN..."
                 Click="ExportStandaloneProRawBin_Click"
                 IsVisible="{Binding IsProInspector}"
                 IsEnabled="{Binding CanExportStandaloneProRawBin}"
-                AutomationProperties.Name="Eksportuj dokładne surowe bajty PRO" />
+                AutomationProperties.Name="Export exact raw PRO bytes" />
           </Grid>
           <TextBlock Grid.Row="1" Text="{Binding PreviewMessage}" TextWrapping="Wrap" />
           <Grid

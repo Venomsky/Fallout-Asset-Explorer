@@ -393,13 +393,13 @@ public partial class MainWindow : Window
 
         try
         {
-            var reportFileType = new FilePickerFileType("Raport inspekcji PRO")
+            var reportFileType = new FilePickerFileType("PRO inspection report")
             {
                 Patterns = ["*.txt"]
             };
             var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
-                Title = "Eksportuj raport inspekcji PRO",
+                Title = "Export PRO inspection report",
                 SuggestedFileName = GetStandaloneProSuggestedName(inspection.EntryPath, ".report.txt"),
                 DefaultExtension = "txt",
                 FileTypeChoices = [reportFileType],
@@ -414,13 +414,13 @@ public partial class MainWindow : Window
 
             if (!viewModel.IsCurrentStandaloneProInspection(inspection))
             {
-                viewModel.ReportError("Eksport anulowano, ponieważ podczas wyboru lokalizacji zmienił się wpis PRO.");
+                viewModel.ReportError("Export canceled because the selected PRO entry changed while choosing the destination.");
                 return;
             }
 
             await using var destination = await file.OpenWriteAsync();
             await viewModel.ExportStandaloneProReportAsync(destination, inspection);
-            viewModel.ReportError($"Zapisano raport inspekcji PRO: {file.Name}");
+            viewModel.ReportError($"Saved PRO inspection report: {file.Name}");
         }
         catch (OperationCanceledException)
         {
@@ -433,7 +433,7 @@ public partial class MainWindow : Window
             or ArgumentException
             or InvalidDataException)
         {
-            viewModel.ReportError($"Nie udało się wyeksportować raportu PRO: {exception.Message}");
+            viewModel.ReportError($"Could not export the PRO report: {exception.Message}");
         }
     }
 
@@ -448,13 +448,13 @@ public partial class MainWindow : Window
 
         try
         {
-            var binaryFileType = new FilePickerFileType("Surowe dane PRO")
+            var binaryFileType = new FilePickerFileType("Raw PRO data")
             {
                 Patterns = ["*.bin"]
             };
             var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
-                Title = "Eksportuj surowe bajty PRO",
+                Title = "Export raw PRO bytes",
                 SuggestedFileName = GetStandaloneProSuggestedName(inspection.EntryPath, ".bin"),
                 DefaultExtension = "bin",
                 FileTypeChoices = [binaryFileType],
@@ -469,13 +469,13 @@ public partial class MainWindow : Window
 
             if (!viewModel.IsCurrentStandaloneProInspection(inspection))
             {
-                viewModel.ReportError("Eksport anulowano, ponieważ podczas wyboru lokalizacji zmienił się wpis PRO.");
+                viewModel.ReportError("Export canceled because the selected PRO entry changed while choosing the destination.");
                 return;
             }
 
             await using var destination = await file.OpenWriteAsync();
             await viewModel.ExportStandaloneProRawBinAsync(destination, inspection);
-            viewModel.ReportError($"Zapisano surowe bajty PRO: {file.Name}");
+            viewModel.ReportError($"Saved raw PRO bytes: {file.Name}");
         }
         catch (OperationCanceledException)
         {
@@ -488,7 +488,7 @@ public partial class MainWindow : Window
             or ArgumentException
             or InvalidDataException)
         {
-            viewModel.ReportError($"Nie udało się wyeksportować surowego BIN: {exception.Message}");
+            viewModel.ReportError($"Could not export raw PRO BIN: {exception.Message}");
         }
     }
 

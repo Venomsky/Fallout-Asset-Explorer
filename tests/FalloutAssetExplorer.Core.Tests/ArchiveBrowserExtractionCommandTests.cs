@@ -285,9 +285,9 @@ public sealed class ArchiveBrowserExtractionCommandTests
         await viewModel.ExportStandaloneProReportAsync(destination, inspection);
 
         var report = Encoding.UTF8.GetString(destination.ToArray());
-        Assert.StartsWith("Fallout Asset Explorer — raport inspekcji PRO", report);
+        Assert.StartsWith("Fallout Asset Explorer — PRO Inspection Report", report);
         Assert.Contains("proto/items/REPORT.pro", report);
-        Assert.Contains("Wynik parsowania: Sukces", report);
+        Assert.Contains("Parsing result: Success", report);
     }
 
     [Fact]
