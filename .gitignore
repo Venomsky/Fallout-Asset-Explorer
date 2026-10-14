@@ -2,3 +2,6 @@
 **/obj/
 .vs/
 .idea/
+
+# Local build and release artifacts
+artifacts/
