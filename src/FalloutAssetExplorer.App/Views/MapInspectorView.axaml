@@ -237,6 +237,12 @@
                 Text="{Binding MapFloorTilesStatusDisplay}"
                 IsVisible="{Binding IsMapIsometricFloorLayerVisible}"
                 TextWrapping="Wrap" />
+            <TextBlock
+                Foreground="#AAB2BF"
+                FontSize="12"
+                Text="{Binding #MapIsometricFloorView.SpriteRenderDiagnosticDisplay}"
+                IsVisible="{Binding IsMapIsometricViewVisible}"
+                TextWrapping="Wrap" />
             <StackPanel
                 IsVisible="{Binding IsMapIsometricObjectMarkerLayerVisible}"
                 Spacing="2">

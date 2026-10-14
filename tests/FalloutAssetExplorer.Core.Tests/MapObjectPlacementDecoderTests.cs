@@ -149,6 +149,7 @@ public sealed class MapObjectPlacementDecoderTests
         Assert.True(decoded.IsComplete);
         Assert.Equal(2, decoded.Objects.Count);
         Assert.Equal(sceneryPid, decoded.Objects[0].RawPid);
+        Assert.Null(decoded.Objects[0].UnsupportedReason);
         Assert.Equal(11, decoded.Objects[1].RawPayloadWords.Count);
     }
 
@@ -171,6 +172,7 @@ public sealed class MapObjectPlacementDecoderTests
         Assert.Equal(2, decoded.Objects.Count);
         Assert.Equal(new[] { 0, 1 }, decoded.Objects.Select(item => item.RecordIndex));
         Assert.Equal(sceneryPid, decoded.Objects[0].RawPid);
+        Assert.Null(decoded.Objects[0].UnsupportedReason);
         Assert.Equal(new[] { 0x11223344, doorPayload }, decoded.Objects[0].RawPayloadWords);
         Assert.Equal(0x01000001, decoded.Objects[1].RawPid);
         Assert.Equal(11, decoded.Objects[1].RawPayloadWords.Count);
@@ -200,6 +202,7 @@ public sealed class MapObjectPlacementDecoderTests
         Assert.Equal(2, decoded.Objects.Count);
         Assert.Equal(new[] { 0, 1 }, decoded.Objects.Select(item => item.RecordIndex));
         Assert.Equal(sceneryPid, decoded.Objects[0].RawPid);
+        Assert.Null(decoded.Objects[0].UnsupportedReason);
         Assert.Equal(
             new[] { 0x11223344, destinationBuiltTile, destinationMap },
             decoded.Objects[0].RawPayloadWords);
@@ -250,6 +253,7 @@ public sealed class MapObjectPlacementDecoderTests
         Assert.Equal(2, decoded.Objects.Count);
         Assert.Equal(new[] { 0, 1 }, decoded.Objects.Select(item => item.RecordIndex));
         Assert.Equal(sceneryPid, decoded.Objects[0].RawPid);
+        Assert.Null(decoded.Objects[0].UnsupportedReason);
         Assert.Equal(new[] { 0x11223344, elevatorType, elevatorLevel }, decoded.Objects[0].RawPayloadWords);
         Assert.Equal(0x01000001, decoded.Objects[1].RawPid);
         Assert.Equal(11, decoded.Objects[1].RawPayloadWords.Count);
@@ -307,6 +311,7 @@ public sealed class MapObjectPlacementDecoderTests
         Assert.Equal(2, decoded.Objects.Count);
         Assert.Equal(new[] { 0, 1 }, decoded.Objects.Select(item => item.RecordIndex));
         Assert.Equal(sceneryPid, decoded.Objects[0].RawPid);
+        Assert.Null(decoded.Objects[0].UnsupportedReason);
         Assert.Equal(
             new[] { 0x11223344 }.Concat(ladderPayload),
             decoded.Objects[0].RawPayloadWords);

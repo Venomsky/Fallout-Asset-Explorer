@@ -9,4 +9,7 @@ public sealed record MapIsometricObjectSprite(
     int DirectionIndex,
     int FrameIndex,
     short ArtShiftX,
-    short ArtShiftY);
+    short ArtShiftY,
+    short FrameOffsetX,
+    short FrameOffsetY,
+    int NonZeroPaletteIndexPixelCount);

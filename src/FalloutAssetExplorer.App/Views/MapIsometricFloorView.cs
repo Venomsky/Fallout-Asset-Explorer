@@ -60,6 +60,9 @@ public sealed class MapIsometricFloorView : Control
         AvaloniaProperty.Register<MapIsometricFloorView, MapIsometricObjectSprite?>(
             nameof(SelectedObjectSprite));
 
+    public static readonly StyledProperty<string?> SpriteRenderDiagnosticDisplayProperty =
+        AvaloniaProperty.Register<MapIsometricFloorView, string?>(nameof(SpriteRenderDiagnosticDisplay));
+
     private MapIsometricFloorCameraTransform? _cameraTransform;
     private IReadOnlyList<MapIsometricObjectMarker>? _objectMarkers;
     private MapIsometricFloorViewTransform? _objectMarkersProjection;
@@ -115,6 +118,12 @@ public sealed class MapIsometricFloorView : Control
     {
         get => GetValue(SelectedObjectSpriteProperty);
         set => SetValue(SelectedObjectSpriteProperty, value);
+    }
+
+    public string? SpriteRenderDiagnosticDisplay
+    {
+        get => GetValue(SpriteRenderDiagnosticDisplayProperty);
+        private set => SetValue(SpriteRenderDiagnosticDisplayProperty, value);
     }
 
     public event EventHandler<MapObjectMarkerSelectionChangedEventArgs>? ObjectSelectionChanged;
@@ -233,9 +242,27 @@ public sealed class MapIsometricFloorView : Control
         base.Render(context);
         context.FillRectangle(BackgroundBrush, new Rect(Bounds.Size));
 
+        if (SelectedObjectSprite is null)
+        {
+            SetSpriteRenderDiagnostic(null);
+        }
+        else if (!ShowObjectMarkers)
+        {
+            SetSpriteRenderDiagnostic(
+                "Prepared sprite not drawn: the object-marker layer is disabled. " +
+                "Map-space bounds unavailable (the marker layer is disabled).");
+        }
+
         if (!TryGetProjectionTransform(out var projection)
             || !TryGetCurrentCamera(out var camera))
         {
+            if (SelectedObjectSprite is not null && ShowObjectMarkers)
+            {
+                SetSpriteRenderDiagnostic(
+                    "Prepared sprite not drawn: projection or camera geometry is unavailable. " +
+                    "Map-space bounds unavailable (projection or camera is unavailable).");
+            }
+
             return;
         }
 
@@ -288,29 +315,61 @@ public sealed class MapIsometricFloorView : Control
         {
             var markerRadius = MapIsometricObjectMarkerHitTest.GetMarkerRadius(camera.Scale);
             var markers = GetObjectMarkers(projection);
-            if (SelectedObjectSprite is { } sprite
-                && sprite.RecordIndex == SelectedRecordIndex
-                && markers.FirstOrDefault(marker => marker.Placement.RecordIndex == sprite.RecordIndex)
-                    is { Placement: not null } spriteMarker
-                && MapIsometricObjectSpriteGeometry.TryGetImageBounds(
-                    spriteMarker.WorldPosition,
-                    camera,
-                    sprite.Bitmap.PixelSize.Width,
-                    sprite.Bitmap.PixelSize.Height,
-                    sprite.ArtShiftX,
-                    sprite.ArtShiftY,
-                    spriteMarker.Placement.RawOffsetX,
-                    spriteMarker.Placement.RawOffsetY,
-                    out var spriteBounds)
-                && MapIsometricFloorViewportGeometry.IntersectsViewport(
-                    spriteBounds,
-                    Bounds.Width,
-                    Bounds.Height))
+            if (SelectedObjectSprite is { } sprite)
             {
-                context.DrawImage(
-                    sprite.Bitmap,
-                    new Rect(0, 0, sprite.Bitmap.PixelSize.Width, sprite.Bitmap.PixelSize.Height),
-                    spriteBounds);
+                if (sprite.RecordIndex != SelectedRecordIndex)
+                {
+                    SetSpriteRenderDiagnostic(
+                        "Prepared sprite not drawn: its record does not match the selected record. " +
+                        "Map-space bounds unavailable (record mismatch prevents marker lookup).");
+                }
+                else if (markers.FirstOrDefault(
+                             marker => marker.Placement.RecordIndex == sprite.RecordIndex)
+                         is not { Placement: not null } spriteMarker)
+                {
+                    SetSpriteRenderDiagnostic(
+                        "Prepared sprite not drawn: no matching object marker is available. " +
+                        "Map-space bounds unavailable (no marker position is available).");
+                }
+                else if (!MapIsometricObjectSpriteGeometry.TryGetImageBounds(
+                             spriteMarker.WorldPosition,
+                             camera,
+                             sprite.Bitmap.PixelSize.Width,
+                             sprite.Bitmap.PixelSize.Height,
+                             sprite.ArtShiftX,
+                             sprite.ArtShiftY,
+                             spriteMarker.Placement.RawOffsetX,
+                             spriteMarker.Placement.RawOffsetY,
+                             out var spriteBounds))
+                {
+                    SetSpriteRenderDiagnostic(
+                        "Prepared sprite not drawn: image bounds could not be calculated. " +
+                        "Map-space bounds unavailable (geometry calculation failed).");
+                }
+                else
+                {
+                    var mapSpaceBounds = GetMapSpaceBounds(spriteBounds, camera);
+                    var mapBoundsDisplay = FormatMapSpaceBounds(mapSpaceBounds);
+                    if (!MapIsometricFloorViewportGeometry.IntersectsViewport(
+                            spriteBounds,
+                            Bounds.Width,
+                            Bounds.Height))
+                    {
+                        SetSpriteRenderDiagnostic(
+                            $"Prepared sprite not drawn: image bounds are outside the viewport. " +
+                            $"Map-space bounds: {mapBoundsDisplay}.");
+                    }
+                    else
+                    {
+                        context.DrawImage(
+                            sprite.Bitmap,
+                            new Rect(0, 0, sprite.Bitmap.PixelSize.Width, sprite.Bitmap.PixelSize.Height),
+                            spriteBounds);
+                        SetSpriteRenderDiagnostic(
+                            $"DrawImage command issued; actual pixel visibility is not verified. " +
+                            $"Map-space bounds: {mapBoundsDisplay}.");
+                    }
+                }
             }
 
             foreach (var marker in markers)
@@ -346,8 +405,34 @@ public sealed class MapIsometricFloorView : Control
                         markerRadius + 2);
                 }
             }
+
         }
     }
+
+    private void SetSpriteRenderDiagnostic(string? message)
+    {
+        if (!string.Equals(SpriteRenderDiagnosticDisplay, message, StringComparison.Ordinal))
+        {
+            SpriteRenderDiagnosticDisplay = message;
+        }
+    }
+
+    private static Rect GetMapSpaceBounds(
+        Rect screenBounds,
+        MapIsometricFloorCameraTransform camera)
+    {
+        var mapTopLeft = camera.ToWorld(new Point(screenBounds.X, screenBounds.Y));
+        var mapBottomRight = camera.ToWorld(new Point(screenBounds.Right, screenBounds.Bottom));
+        return new Rect(
+            mapTopLeft.X,
+            mapTopLeft.Y,
+            mapBottomRight.X - mapTopLeft.X,
+            mapBottomRight.Y - mapTopLeft.Y);
+    }
+
+    private static string FormatMapSpaceBounds(Rect bounds) =>
+        FormattableString.Invariant(
+            $"x={bounds.X:G17}, y={bounds.Y:G17}, width={bounds.Width:G17}, height={bounds.Height:G17}");
 
     protected override void OnPointerMoved(PointerEventArgs e)
     {

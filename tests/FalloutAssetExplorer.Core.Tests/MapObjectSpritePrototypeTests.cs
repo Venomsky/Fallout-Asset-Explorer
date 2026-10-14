@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Text;
 using Avalonia.Skia;
 using FalloutAssetExplorer.App.ViewModels;
@@ -14,6 +15,16 @@ public sealed class MapObjectSpritePrototypeTests
         SkiaPlatform.Initialize();
         return true;
     });
+
+    [Fact]
+    public void SpriteDiagnostics_CountNonZeroPaletteIndexPixelsFromFrameData()
+    {
+        var frame = new FrmFrame(3, 2, 0, 0, [0, 1, 0, 255, 2, 0]);
+        var emptyFrame = new FrmFrame(2, 1, 0, 0, [0, 0]);
+
+        Assert.Equal(3, MapIsometricObjectSpriteDiagnostics.CountNonZeroPaletteIndexPixels(frame));
+        Assert.Equal(0, MapIsometricObjectSpriteDiagnostics.CountNonZeroPaletteIndexPixels(emptyFrame));
+    }
 
     [Fact]
     public void FrameSelector_UsesMapRotationAndDirectionLocalFrame()
@@ -247,7 +258,11 @@ public sealed class MapObjectSpritePrototypeTests
     {
         EnsureAvaloniaInitialized();
         using var viewModel = CreateViewModel(out var archive);
-        var placement = CreatePlacement(1, rotation: 2, frame: 1);
+        var placement = CreatePlacement(1, rotation: 2, frame: 1) with
+        {
+            RawOffsetX = 7,
+            RawOffsetY = -3
+        };
         SelectPlacement(viewModel, placement);
         Assert.Same(placement, viewModel.MapInspector.SelectedMapObject);
 
@@ -261,20 +276,124 @@ public sealed class MapObjectSpritePrototypeTests
         Assert.Equal("art/items/item.frm", sprite.ResourcePath);
         Assert.Equal(2, sprite.DirectionIndex);
         Assert.Equal(1, sprite.FrameIndex);
+        Assert.Equal(1, sprite.Bitmap.PixelSize.Width);
+        Assert.Equal(1, sprite.Bitmap.PixelSize.Height);
+        Assert.Equal(1, sprite.NonZeroPaletteIndexPixelCount);
+        Assert.Equal((short)0, sprite.FrameOffsetX);
+        Assert.Equal((short)0, sprite.FrameOffsetY);
+        Assert.Contains("FRM 'art/items/item.frm'", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Contains("bitmap 1x1", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Contains("source pixels with palette index != 0: 1", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Contains("frame offset (0, 0)", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Contains("direction shift (0, 0)", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Contains("MAP offsets (7, -3)", viewModel.MapObjectSpriteStatusDisplay);
         Assert.Contains("placement applied", viewModel.MapObjectSpriteStatusDisplay);
         Assert.Equal(1, archive.AssetReadCount);
     }
 
     [Fact]
-    public async Task PrepareSelectedSprite_ReusesCachedBitmapForPreviouslyPreparedItem()
+    public async Task PrepareSelectedSprite_ResolvesAndPreparesRequestedSceneryDirectionAndFrame()
     {
         EnsureAvaloniaInitialized();
-        using var viewModel = CreateViewModel(out var archive);
-        var item = CreatePlacement(1, rotation: 2, frame: 1);
+        using var viewModel = CreateViewModel(
+            out var archive,
+            listContent: "scenery.frm\n",
+            artDirectory: "scenery",
+            resourceName: "scenery.frm");
+        var placement = CreatePlacement(
+            1,
+            rotation: 2,
+            frame: 1,
+            pidType: 2,
+            fidArtType: 2) with
+        {
+            RawOffsetX = -5,
+            RawOffsetY = 9
+        };
+        SelectPlacement(viewModel, placement);
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        Assert.True(
+            viewModel.SelectedMapObjectSprite is not null,
+            viewModel.MapObjectSpriteStatusDisplay);
+        var sprite = Assert.IsType<MapIsometricObjectSprite>(viewModel.SelectedMapObjectSprite);
+        Assert.Equal(placement.RecordIndex, sprite.RecordIndex);
+        Assert.Equal("art/scenery/scenery.frm", sprite.ResourcePath);
+        Assert.Equal(2, sprite.DirectionIndex);
+        Assert.Equal(1, sprite.FrameIndex);
+        Assert.Equal(1, sprite.Bitmap.PixelSize.Width);
+        Assert.Equal(1, sprite.Bitmap.PixelSize.Height);
+        Assert.Equal(1, sprite.NonZeroPaletteIndexPixelCount);
+        Assert.Contains("source pixels with palette index != 0: 1", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Contains("MAP offsets (-5, 9)", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Contains("Prepared scenery sprite", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Equal(1, archive.AssetReadCount);
+    }
+
+    [Fact]
+    public async Task PrepareSelectedSprite_StatusReportsNonzeroFrmFrameAndDirectionOffsets()
+    {
+        EnsureAvaloniaInitialized();
+        var directionBlocks = Enumerable.Range(0, 6)
+            .Select(direction => new[]
+            {
+                new FrmFixtureFrame(1, 1, 0, 0, [(byte)(direction + 1)]),
+                new FrmFixtureFrame(2, 1, -4, 6, [(byte)(direction + 21), (byte)(direction + 22)])
+            })
+            .ToArray();
+        var frmBytes = FrmFixture.Create(directionBlocks);
+        BinaryPrimitives.WriteInt16BigEndian(frmBytes.AsSpan(10 + 2 * 2), 11);
+        BinaryPrimitives.WriteInt16BigEndian(frmBytes.AsSpan(22 + 2 * 2), -13);
+        using var viewModel = CreateViewModel(
+            out _,
+            listContent: "scenery.frm\n",
+            artDirectory: "scenery",
+            resourceName: "scenery.frm",
+            resourceBytes: frmBytes);
+        var placement = CreatePlacement(
+            1,
+            rotation: 2,
+            frame: 1,
+            pidType: 2,
+            fidArtType: 2);
+        SelectPlacement(viewModel, placement);
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        var sprite = Assert.IsType<MapIsometricObjectSprite>(viewModel.SelectedMapObjectSprite);
+        Assert.Equal((short)-4, sprite.FrameOffsetX);
+        Assert.Equal((short)6, sprite.FrameOffsetY);
+        Assert.Equal((short)11, sprite.ArtShiftX);
+        Assert.Equal((short)-13, sprite.ArtShiftY);
+        Assert.Contains("frame offset (-4, 6)", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Contains("direction shift (11, -13)", viewModel.MapObjectSpriteStatusDisplay);
+    }
+
+    [Theory]
+    [InlineData(0, "items", "item.frm")]
+    [InlineData(2, "scenery", "scenery.frm")]
+    public async Task PrepareSelectedSprite_ReusesCachedBitmapForPreviouslyPreparedObject(
+        int objectType,
+        string artDirectory,
+        string resourceName)
+    {
+        EnsureAvaloniaInitialized();
+        using var viewModel = CreateViewModel(
+            out var archive,
+            listContent: $"{resourceName}\n",
+            artDirectory: artDirectory,
+            resourceName: resourceName);
+        var item = CreatePlacement(
+            1,
+            rotation: 2,
+            frame: 1,
+            pidType: objectType,
+            fidArtType: objectType);
         var unsupported = CreatePlacement(2, rotation: 0, frame: 0) with
         {
-            PidTypeIdentifier = 2,
-            RawPid = 0x02000001
+            PidTypeIdentifier = 1,
+            RawPid = 0x01000001
         };
 
         SelectPlacement(viewModel, item);
@@ -290,6 +409,10 @@ public sealed class MapObjectSpritePrototypeTests
 
         var cached = Assert.IsType<MapIsometricObjectSprite>(viewModel.SelectedMapObjectSprite);
         Assert.Same(prepared.Bitmap, cached.Bitmap);
+        Assert.Equal(prepared.NonZeroPaletteIndexPixelCount, cached.NonZeroPaletteIndexPixelCount);
+        Assert.Contains($"FRM 'art/{artDirectory}/{resourceName}'", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Contains("bitmap 1x1", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Contains("source pixels with palette index != 0: 1", viewModel.MapObjectSpriteStatusDisplay);
         Assert.Equal(1, archive.AssetReadCount);
         Assert.Contains("cached", viewModel.MapObjectSpriteStatusDisplay, StringComparison.OrdinalIgnoreCase);
     }
@@ -382,6 +505,177 @@ public sealed class MapObjectSpritePrototypeTests
         Assert.Contains("not an eligible", viewModel.MapObjectSpriteStatusDisplay);
     }
 
+    [Fact]
+    public async Task PrepareSelectedSprite_SceneryOnAnotherElevationRetainsMarkerFallback()
+    {
+        using var viewModel = CreateViewModel(
+            out var archive,
+            listContent: "scenery.frm\n",
+            artDirectory: "scenery",
+            resourceName: "scenery.frm",
+            elevationOptions: [0, 1]);
+        var placement = CreatePlacement(
+            1,
+            rotation: 0,
+            frame: 0,
+            pidType: 2,
+            fidArtType: 2,
+            elevation: 1);
+        viewModel.MapObjectPlacements.Add(placement);
+        viewModel.MapInspector.SelectMapObjectFromIsometricMarker(placement.RecordIndex, elevationIndex: 1);
+
+        Assert.Same(placement, viewModel.MapInspector.SelectedMapObject);
+        Assert.Equal(0, viewModel.MapInspector.SelectedMapElevationIndex);
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        Assert.Null(viewModel.SelectedMapObjectSprite);
+        Assert.Contains("not an eligible", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Equal(0, archive.AssetReadCount);
+    }
+
+    [Fact]
+    public async Task PrepareSelectedSprite_SceneryInventoryChildRetainsMarkerFallback()
+    {
+        using var viewModel = CreateViewModel(
+            out var archive,
+            listContent: "scenery.frm\n",
+            artDirectory: "scenery",
+            resourceName: "scenery.frm");
+        var placement = CreatePlacement(
+            1,
+            rotation: 0,
+            frame: 0,
+            pidType: 2,
+            fidArtType: 2) with
+        {
+            ParentRecordIndex = 0,
+            InventoryDepth = 1
+        };
+        viewModel.MapObjectPlacements.Add(placement);
+        viewModel.MapInspector.SelectedMapObject = placement;
+        viewModel.MapInspector.SelectedMapDiagnosticLayerIndex =
+            MapInspectorViewModel.IsometricObjectMarkersLayerIndex;
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        Assert.Null(viewModel.SelectedMapObjectSprite);
+        Assert.Contains("not an eligible", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Equal(0, archive.AssetReadCount);
+    }
+
+    [Fact]
+    public async Task PrepareSelectedSprite_SceneryWithUnsupportedReasonRetainsMarkerFallback()
+    {
+        using var viewModel = CreateViewModel(out var archive, artDirectory: "scenery");
+        var placement = CreatePlacement(
+            1,
+            rotation: 0,
+            frame: 0,
+            pidType: 2,
+            fidArtType: 2) with
+        {
+            UnsupportedReason = "Scenery PRO subtype metadata is unavailable."
+        };
+        SelectPlacement(viewModel, placement);
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        Assert.Null(viewModel.SelectedMapObjectSprite);
+        Assert.Contains("Scenery PRO subtype metadata is unavailable", viewModel.MapObjectSpriteStatusDisplay);
+        Assert.Equal(0, archive.AssetReadCount);
+    }
+
+    [Fact]
+    public async Task PrepareSelectedSprite_ItemWithUnsupportedReasonPreservesExistingBehavior()
+    {
+        using var viewModel = CreateViewModel(out _);
+        var placement = CreatePlacement(1, rotation: 0, frame: 0) with
+        {
+            UnsupportedReason = "Existing Item decoder diagnostic."
+        };
+        SelectPlacement(viewModel, placement);
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        Assert.NotNull(viewModel.SelectedMapObjectSprite);
+        Assert.Contains("Prepared item sprite", viewModel.MapObjectSpriteStatusDisplay);
+    }
+
+    [Fact]
+    public async Task PrepareSelectedSprite_SceneryMissingResourceRetainsMarkerFallback()
+    {
+        using var viewModel = CreateViewModel(
+            out _,
+            listContent: "missing.frm\n",
+            artDirectory: "scenery",
+            resourceName: "scenery.frm");
+        SelectPlacement(
+            viewModel,
+            CreatePlacement(1, rotation: 0, frame: 0, pidType: 2, fidArtType: 2));
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        Assert.Null(viewModel.SelectedMapObjectSprite);
+        Assert.Contains("Could not resolve scenery FID", viewModel.MapObjectSpriteStatusDisplay);
+    }
+
+    [Fact]
+    public async Task PrepareSelectedSprite_SceneryWithMalformedFrmRetainsMarkerFallback()
+    {
+        using var viewModel = CreateViewModel(
+            out _,
+            listContent: "scenery.frm\n",
+            artDirectory: "scenery",
+            resourceName: "scenery.frm",
+            resourceBytes: [0x01]);
+        SelectPlacement(
+            viewModel,
+            CreatePlacement(1, rotation: 0, frame: 0, pidType: 2, fidArtType: 2));
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        Assert.Null(viewModel.SelectedMapObjectSprite);
+        Assert.Contains("Could not prepare scenery sprite", viewModel.MapObjectSpriteStatusDisplay);
+    }
+
+    [Fact]
+    public async Task PrepareSelectedSprite_SceneryWithNonFrmResourceRetainsMarkerFallback()
+    {
+        using var viewModel = CreateViewModel(
+            out _,
+            listContent: "scenery.pro\n",
+            includeNonFrmAsset: true,
+            artDirectory: "scenery",
+            resourceName: "scenery.frm");
+        SelectPlacement(
+            viewModel,
+            CreatePlacement(1, rotation: 0, frame: 0, pidType: 2, fidArtType: 2));
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        Assert.Null(viewModel.SelectedMapObjectSprite);
+        Assert.Contains("is not an FRM", viewModel.MapObjectSpriteStatusDisplay);
+    }
+
+    [Fact]
+    public async Task PrepareSelectedSprite_SceneryWithInvalidFrameRetainsMarkerFallback()
+    {
+        using var viewModel = CreateViewModel(
+            out _,
+            listContent: "scenery.frm\n",
+            artDirectory: "scenery",
+            resourceName: "scenery.frm");
+        SelectPlacement(
+            viewModel,
+            CreatePlacement(1, rotation: 0, frame: 2, pidType: 2, fidArtType: 2));
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        Assert.Null(viewModel.SelectedMapObjectSprite);
+        Assert.Contains("Frame index 2", viewModel.MapObjectSpriteStatusDisplay);
+    }
+
     [Theory]
     [InlineData(false, "Could not resolve item FID")]
     [InlineData(true, "is not an FRM")]
@@ -401,16 +695,27 @@ public sealed class MapObjectSpritePrototypeTests
         Assert.Contains(expectedStatus, viewModel.MapObjectSpriteStatusDisplay);
     }
 
-    [Fact]
-    public async Task PrepareSelectedSprite_StaleReadCannotReplaceNewSelection()
+    [Theory]
+    [InlineData(0, "items", "item.frm")]
+    [InlineData(2, "scenery", "scenery.frm")]
+    public async Task PrepareSelectedSprite_StaleReadCannotReplaceNewSelection(
+        int objectType,
+        string artDirectory,
+        string resourceName)
     {
-        using var viewModel = CreateViewModel(out var archive, blockAssetRead: true);
-        var item = CreatePlacement(1, rotation: 2, frame: 1);
-        var unsupported = CreatePlacement(2, rotation: 0, frame: 0) with
-        {
-            PidTypeIdentifier = 2,
-            RawPid = 0x02000001
-        };
+        using var viewModel = CreateViewModel(
+            out var archive,
+            listContent: $"{resourceName}\n",
+            blockAssetRead: true,
+            artDirectory: artDirectory,
+            resourceName: resourceName);
+        var item = CreatePlacement(
+            1,
+            rotation: 2,
+            frame: 1,
+            pidType: objectType,
+            fidArtType: objectType);
+        var unsupported = CreatePlacement(2, rotation: 0, frame: 0, pidType: 1);
         SelectPlacement(viewModel, item);
 
         var oldLoad = viewModel.PrepareSelectedMapObjectSpriteAsync();
@@ -429,14 +734,24 @@ public sealed class MapObjectSpritePrototypeTests
         out SyntheticSpriteArchive archive,
         string listContent = "item.frm\n",
         bool includeNonFrmAsset = false,
-        bool blockAssetRead = false)
+        bool blockAssetRead = false,
+        string artDirectory = "items",
+        string resourceName = "item.frm",
+        byte[]? resourceBytes = null,
+        int[]? elevationOptions = null)
     {
         var viewModel = new ArchiveBrowserViewModel();
-        archive = new SyntheticSpriteArchive(listContent, includeNonFrmAsset, blockAssetRead);
+        archive = new SyntheticSpriteArchive(
+            listContent,
+            includeNonFrmAsset,
+            blockAssetRead,
+            artDirectory,
+            resourceName,
+            resourceBytes);
         typeof(ArchiveBrowserViewModel)
             .GetField("_archive", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .SetValue(viewModel, archive);
-        viewModel.MapInspector.SetAvailableElevations([0], preferredElevationIndex: 0);
+        viewModel.MapInspector.SetAvailableElevations(elevationOptions ?? [0], preferredElevationIndex: 0);
         viewModel.MapInspector.SetMapInspectorActive(true);
         viewModel.MapInspector.SelectedMapDiagnosticLayerIndex =
             MapInspectorViewModel.IsometricObjectMarkersLayerIndex;
@@ -459,14 +774,21 @@ public sealed class MapObjectSpritePrototypeTests
             viewModel.MapInspector.SelectedMapElevationIndex);
     }
 
-    private static MapObjectPlacement CreatePlacement(int recordIndex, int rotation, int frame)
+    private static MapObjectPlacement CreatePlacement(
+        int recordIndex,
+        int rotation,
+        int frame,
+        int pidType = 0,
+        int fidArtType = 0,
+        int elevation = 0,
+        string? unsupportedReason = null)
     {
         const int rawHexIndex = 1000;
         var (hexX, hexY) = MapObjectPlacementDecoder.GetHexCoordinates(rawHexIndex);
         return new MapObjectPlacement(
             recordIndex,
             0,
-            0,
+            elevation,
             0,
             rawHexIndex,
             hexX,
@@ -477,11 +799,11 @@ public sealed class MapObjectSpritePrototypeTests
             0,
             frame,
             rotation,
+            fidArtType << 24,
             0,
             0,
-            0,
-            1,
-            0,
+            (pidType << 24) | 1,
+            pidType,
             0,
             0,
             0,
@@ -493,7 +815,7 @@ public sealed class MapObjectSpritePrototypeTests
             0,
             [],
             null,
-            null);
+            unsupportedReason);
     }
 
     private static FrmDocument CreateDocument()
@@ -510,38 +832,38 @@ public sealed class MapObjectSpritePrototypeTests
 
     private sealed class SyntheticSpriteArchive : IGameArchive
     {
-        private const string ItemResourcePath = "art/items/item.frm";
         private readonly Dictionary<ArchiveEntry, byte[]> _contents = [];
         private readonly TaskCompletionSource<bool> _assetReadStarted =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly TaskCompletionSource<bool> _releaseAssetRead =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly bool _blockAssetRead;
+        private readonly string _resourcePath;
         private int _assetReadCount;
 
         public SyntheticSpriteArchive(
             string listContent,
             bool includeNonFrmAsset,
-            bool blockAssetRead)
+            bool blockAssetRead,
+            string artDirectory,
+            string resourceName,
+            byte[]? resourceBytes)
         {
             Path = typeof(MapObjectSpritePrototypeTests).Assembly.Location;
             _blockAssetRead = blockAssetRead;
-            AddEntry("art/items/items.lst", Encoding.ASCII.GetBytes(listContent));
+            _resourcePath =
+                $"art/{artDirectory}/{(includeNonFrmAsset ? System.IO.Path.ChangeExtension(resourceName, ".pro") : resourceName)}";
+            AddEntry(
+                $"art/{artDirectory}/{artDirectory}.lst",
+                Encoding.ASCII.GetBytes(listContent));
             AddEntry("COLOR.PAL", new byte[FalloutPalette.MinimalFileSize]);
             if (includeNonFrmAsset)
             {
-                AddEntry("art/items/item.pro", [1]);
+                AddEntry(_resourcePath, [1]);
             }
             else if (!listContent.StartsWith("missing.", StringComparison.Ordinal))
             {
-                AddEntry(ItemResourcePath, FrmFixture.Create(
-                    Enumerable.Range(0, 6)
-                        .Select(direction => new[]
-                        {
-                            new FrmFixtureFrame(1, 1, 0, 0, [(byte)(direction + 1)]),
-                            new FrmFixtureFrame(1, 1, 0, 0, [(byte)(direction + 21)])
-                        })
-                        .ToArray()));
+                AddEntry(_resourcePath, resourceBytes ?? CreateFrmBytes());
             }
 
             BrowserEntries = _contents.Keys.ToArray();
@@ -566,7 +888,7 @@ public sealed class MapObjectSpritePrototypeTests
             Stream destination,
             CancellationToken cancellationToken = default)
         {
-            if (string.Equals(entry.Path, ItemResourcePath, StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(entry.Path, _resourcePath, StringComparison.OrdinalIgnoreCase))
             {
                 Interlocked.Increment(ref _assetReadCount);
                 if (_blockAssetRead)
@@ -587,5 +909,15 @@ public sealed class MapObjectSpritePrototypeTests
 
         private void AddEntry(string path, byte[] bytes) =>
             _contents.Add(new ArchiveEntry(path, bytes.Length, null, Path), bytes);
+
+        private static byte[] CreateFrmBytes() =>
+            FrmFixture.Create(
+                Enumerable.Range(0, 6)
+                    .Select(direction => new[]
+                    {
+                        new FrmFixtureFrame(1, 1, 0, 0, [(byte)(direction + 1)]),
+                        new FrmFixtureFrame(1, 1, 0, 0, [(byte)(direction + 21)])
+                    })
+                    .ToArray());
     }
 }

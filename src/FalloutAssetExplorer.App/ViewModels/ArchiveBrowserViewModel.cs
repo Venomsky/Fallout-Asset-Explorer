@@ -55,7 +55,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private string _mapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
     private string _mapObjectStatusDisplay = "MAP objects have not been read.";
     private string _mapFloorTilesStatusDisplay = "Select the floor-tile diagnostic layer to load this map's tiles.";
-    private string _mapObjectSpriteStatusDisplay = "Select a top-level Fallout 2 Item marker to preview its FRM sprite.";
+    private string _mapObjectSpriteStatusDisplay =
+        "Select a top-level Fallout 2 Item or Scenery marker to preview its FRM sprite.";
     private MapIsometricObjectSprite? _selectedMapObjectSprite;
     private string _previewMessage = "Select a .FRM, .MAP, or .PRO entry to inspect.";
     private string _previewDetails = "Select a .FRM, .MAP, or .PRO entry to inspect.";
@@ -1216,7 +1217,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             CancelMapObjectSpriteLoad();
             SelectedMapObjectSprite = null;
             MapObjectSpriteStatusDisplay =
-                "Select a top-level Fallout 2 Item marker to preview its FRM sprite.";
+                "Select a top-level Fallout 2 Item or Scenery marker to preview its FRM sprite.";
             return;
         }
 
@@ -1230,17 +1231,38 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
 
         var fid = FalloutFidDecoder.Decode(placement.RawFid);
+        var isItem = placement.PidTypeIdentifier == 0 && fid.ArtType == 0;
+        var isScenery = placement.PidTypeIdentifier == 2 && fid.ArtType == 2;
+        if (!isItem && !isScenery)
+        {
+            CancelMapObjectSpriteLoad();
+            SelectedMapObjectSprite = null;
+            MapObjectSpriteStatusDisplay =
+                $"Object #{placement.RecordIndex} is not an eligible object for sprite preview because of its unsupported PID/FID type pair " +
+                $"({placement.PidTypeIdentifier}/{fid.ArtType}); only matching Item 0/0 and Scenery 2/2 pairs are supported. The marker remains visible.";
+            return;
+        }
+
+        var spriteType = isItem ? "Item" : "Scenery";
+        var spriteTypeLower = spriteType.ToLowerInvariant();
+        if (isScenery && placement.UnsupportedReason is { } unsupportedReason)
+        {
+            CancelMapObjectSpriteLoad();
+            SelectedMapObjectSprite = null;
+            MapObjectSpriteStatusDisplay =
+                $"Scenery object #{placement.RecordIndex} cannot be previewed because its MAP placement is unsupported: {unsupportedReason}. The marker remains visible.";
+            return;
+        }
+
         if (placement.ParentRecordIndex is not null
             || placement.InventoryDepth != 0
-            || placement.PidTypeIdentifier != 0
-            || fid.ArtType != 0
             || placement.ElevationGroup != MapInspector.SelectedMapElevationIndex
             || !HasValidMapObjectHexPosition(placement))
         {
             CancelMapObjectSpriteLoad();
             SelectedMapObjectSprite = null;
             MapObjectSpriteStatusDisplay =
-                $"Object #{placement.RecordIndex} is not an eligible top-level Fallout 2 Item at a valid hex on the selected elevation; its marker remains visible.";
+                $"Object #{placement.RecordIndex} is not an eligible top-level Fallout 2 {spriteType} at a valid hex on the selected elevation; its marker remains visible.";
             return;
         }
 
@@ -1258,13 +1280,16 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             && cachedSprite is not null)
         {
             SelectedMapObjectSprite = cachedSprite with { RecordIndex = placement.RecordIndex };
-            MapObjectSpriteStatusDisplay =
-                $"Using cached item sprite for object #{placement.RecordIndex}, direction {placement.RawRotation}, frame {placement.RawFrame}; CE placement offsets are applied. The marker remains visible as a reference.";
+            MapObjectSpriteStatusDisplay = FormatPreparedMapObjectSpriteStatus(
+                cachedSprite,
+                placement,
+                spriteTypeLower,
+                "Using cached");
             return;
         }
 
         SelectedMapObjectSprite = null;
-        MapObjectSpriteStatusDisplay = $"Loading item sprite for object #{placement.RecordIndex}...";
+        MapObjectSpriteStatusDisplay = $"Loading {spriteTypeLower} sprite for object #{placement.RecordIndex}...";
         using var cancellation = new CancellationTokenSource();
         _mapObjectSpriteCancellation = cancellation;
         var cancellationToken = cancellation.Token;
@@ -1284,21 +1309,21 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             if (!resolution.Success || resolution.Entry is null || resolution.ResourcePath is null)
             {
                 MapObjectSpriteStatusDisplay =
-                    $"Could not resolve item FID for object #{placement.RecordIndex}: {resolution.Error ?? "no resource entry was returned"}. The marker remains visible.";
+                    $"Could not resolve {spriteTypeLower} FID for object #{placement.RecordIndex}: {resolution.Error ?? "no resource entry was returned"}. The marker remains visible.";
                 return;
             }
 
             if (!string.Equals(resolution.Entry.Extension, ".FRM", StringComparison.OrdinalIgnoreCase))
             {
                 MapObjectSpriteStatusDisplay =
-                    $"Resolved item resource '{resolution.Entry.Path}' is not an FRM; the marker remains visible.";
+                    $"Resolved {spriteTypeLower} resource '{resolution.Entry.Path}' is not an FRM; the marker remains visible.";
                 return;
             }
 
             if (resolution.Entry.UncompressedSize is <= 0 or > FrmDecoder.MaximumFileSize)
             {
                 MapObjectSpriteStatusDisplay =
-                    $"Item FRM '{resolution.Entry.Path}' is outside the supported preview size limit; the marker remains visible.";
+                    $"{spriteType} FRM '{resolution.Entry.Path}' is outside the supported preview size limit; the marker remains visible.";
                 return;
             }
 
@@ -1334,7 +1359,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 || frame is null)
             {
                 MapObjectSpriteStatusDisplay =
-                    $"Cannot select item sprite for object #{placement.RecordIndex}: {frameError ?? "invalid direction or frame"}. The marker remains visible.";
+                    $"Cannot select {spriteTypeLower} sprite for object #{placement.RecordIndex}: {frameError ?? "invalid direction or frame"}. The marker remains visible.";
                 return;
             }
 
@@ -1348,10 +1373,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             if (paletteResolution.Palette is null)
             {
                 MapObjectSpriteStatusDisplay =
-                    $"Cannot color-decode item sprite for object #{placement.RecordIndex}: {paletteResolution.Diagnostic ?? "no Fallout palette is available"}. The marker remains visible.";
+                    $"Cannot color-decode {spriteTypeLower} sprite for object #{placement.RecordIndex}: {paletteResolution.Diagnostic ?? "no Fallout palette is available"}. The marker remains visible.";
                 return;
             }
 
+            var nonZeroPaletteIndexPixelCount =
+                MapIsometricObjectSpriteDiagnostics.CountNonZeroPaletteIndexPixels(frame);
             var bitmap = CreateFrameBitmap(frame, paletteResolution.Palette);
             if (!IsCurrentMapObjectSpriteLoad(cancellation, archive, placement))
             {
@@ -1368,7 +1395,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 directionIndex,
                 placement.RawFrame,
                 direction.ShiftX,
-                direction.ShiftY);
+                direction.ShiftY,
+                frame.OffsetX,
+                frame.OffsetY,
+                nonZeroPaletteIndexPixelCount);
             if (!_mapObjectSpriteBitmapCache.TryAdd(
                     cacheKey,
                     preparedSprite,
@@ -1377,13 +1407,16 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             {
                 bitmap.Dispose();
                 MapObjectSpriteStatusDisplay =
-                    $"Could not cache item sprite for object #{placement.RecordIndex}: {cacheError}. The marker remains visible.";
+                    $"Could not cache {spriteTypeLower} sprite for object #{placement.RecordIndex}: {cacheError}. The marker remains visible.";
                 return;
             }
 
             SelectedMapObjectSprite = preparedSprite;
-            MapObjectSpriteStatusDisplay =
-                $"Prepared item sprite for object #{placement.RecordIndex}, direction {directionIndex}, frame {placement.RawFrame}; CE tile, art-shift, and MAP-offset placement applied. The marker remains visible as a reference.";
+            MapObjectSpriteStatusDisplay = FormatPreparedMapObjectSpriteStatus(
+                preparedSprite,
+                placement,
+                spriteTypeLower,
+                "Prepared");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -1401,7 +1434,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             {
                 SelectedMapObjectSprite = null;
                 MapObjectSpriteStatusDisplay =
-                    $"Could not prepare item sprite for object #{placement.RecordIndex}: {exception.Message}. The marker remains visible.";
+                    $"Could not prepare {spriteTypeLower} sprite for object #{placement.RecordIndex}: {exception.Message}. The marker remains visible.";
             }
         }
         finally
@@ -1412,6 +1445,20 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             }
         }
     }
+
+    private static string FormatPreparedMapObjectSpriteStatus(
+        MapIsometricObjectSprite sprite,
+        MapObjectPlacement placement,
+        string spriteTypeLower,
+        string state) =>
+        $"{state} {spriteTypeLower} sprite for object #{placement.RecordIndex}; " +
+        $"FRM '{sprite.ResourcePath}'; bitmap {sprite.Bitmap.PixelSize.Width}x{sprite.Bitmap.PixelSize.Height}; " +
+        $"direction {sprite.DirectionIndex}, frame {sprite.FrameIndex}; " +
+        $"source pixels with palette index != 0: {sprite.NonZeroPaletteIndexPixelCount}; " +
+        $"frame offset ({sprite.FrameOffsetX}, {sprite.FrameOffsetY}); " +
+        $"direction shift ({sprite.ArtShiftX}, {sprite.ArtShiftY}); " +
+        $"MAP offsets ({placement.RawOffsetX}, {placement.RawOffsetY}); " +
+        "CE tile, art-shift, and MAP-offset placement applied. The marker remains visible as a reference.";
 
     private static bool HasValidMapObjectHexPosition(MapObjectPlacement placement) =>
         (uint)placement.RawHexIndex < MapObjectPlacementDecoder.HexGridTileCount
@@ -1602,7 +1649,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
 
         SelectedMapObjectSprite = null;
-        MapObjectSpriteStatusDisplay = "Select a top-level Fallout 2 Item marker to preview its FRM sprite.";
+        MapObjectSpriteStatusDisplay =
+            "Select a top-level Fallout 2 Item or Scenery marker to preview its FRM sprite.";
         _mapFloorTileBitmaps.Clear();
         _unavailableMapFloorIds.Clear();
         _mapFloorTilesLoaded = false;
@@ -1995,7 +2043,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         CancelMapObjectSpriteLoad();
         SelectedMapObjectSprite = null;
         MapObjectSpriteStatusDisplay =
-            "Select a top-level Fallout 2 Item marker to preview its FRM sprite.";
+            "Select a top-level Fallout 2 Item or Scenery marker to preview its FRM sprite.";
 
         if (e.Source == MapInspectorViewModel.MapObjectSelectionSource.List
             && e.Placement is { } placement)
