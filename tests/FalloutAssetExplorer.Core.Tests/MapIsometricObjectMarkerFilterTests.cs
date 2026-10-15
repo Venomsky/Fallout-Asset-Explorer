@@ -65,6 +65,65 @@ public sealed class MapIsometricObjectMarkerFilterTests
     }
 
     [Fact]
+    public void GetSpriteCandidates_KeepsEligibleTopLevelItemsAndSceneryInInputOrder()
+    {
+        var placements = new[]
+        {
+            CreatePlacement(9, 20_099, 100, 100, elevation: 0) with
+            {
+                PidTypeIdentifier = 2,
+                RawPid = 0x02000001,
+                RawFid = 0x02000001
+            },
+            CreatePlacement(4, 20_099, 100, 100, elevation: 0) with
+            {
+                PidTypeIdentifier = 0,
+                RawPid = 0x00000001,
+                RawFid = 0x00000001
+            },
+            CreatePlacement(1, 20_099, 100, 100, elevation: 1) with
+            {
+                PidTypeIdentifier = 0,
+                RawPid = 0x00000001,
+                RawFid = 0x00000001
+            },
+            CreatePlacement(7, 20_099, 100, 100, elevation: 0) with
+            {
+                PidTypeIdentifier = 0,
+                RawPid = 0x00000001,
+                RawFid = 0x00000001,
+                ParentRecordIndex = 9
+            },
+            CreatePlacement(2, -1, null, null, elevation: 0) with
+            {
+                PidTypeIdentifier = 0,
+                RawPid = 0x00000001,
+                RawFid = 0x00000001
+            },
+            CreatePlacement(5, 20_099, 100, 100, elevation: 0) with
+            {
+                PidTypeIdentifier = 1,
+                RawPid = 0x01000001,
+                RawFid = 0x01000001
+            },
+            CreatePlacement(3, 20_099, 100, 100, elevation: 0) with
+            {
+                PidTypeIdentifier = 2,
+                RawPid = 0x02000001,
+                RawFid = 0x02000001,
+                UnsupportedReason = "Unsupported scenery payload."
+            }
+        };
+
+        var candidates = MapIsometricObjectMarkerFilter.GetSpriteCandidates(
+            placements,
+            0,
+            CreateProjection());
+
+        Assert.Equal(new[] { 9, 4 }, candidates.Select(placement => placement.RecordIndex));
+    }
+
+    [Fact]
     public void HitTest_SelectsMarkerAndIgnoresClicksOutsideItsRenderedCircle()
     {
         var markers = MapIsometricObjectMarkerFilter.GetMarkers(

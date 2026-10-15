@@ -5,6 +5,21 @@ namespace FalloutAssetExplorer.App.Views;
 
 public static class MapIsometricFloorGeometry
 {
+    public const int DefaultCenterHexX = 100;
+    public const int DefaultCenterHexY = 100;
+    public const int DefaultViewportWidth = 640;
+    public const int DefaultViewportHeight = 480;
+
+    public static bool TryCreateDefaultViewTransform(out MapIsometricFloorViewTransform transform) =>
+        TryCreateViewTransform(
+            DefaultCenterHexX,
+            DefaultCenterHexY,
+            DefaultViewportWidth,
+            DefaultViewportHeight,
+            0,
+            0,
+            out transform);
+
     public static bool TryCreateViewTransform(
         int centerHexX,
         int centerHexY,

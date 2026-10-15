@@ -51,6 +51,7 @@
                 ShowObjectMarkers="{Binding IsMapIsometricObjectMarkerLayerVisible}"
                 SelectedRecordIndex="{Binding MapInspector.SelectedMapObjectRecordIndex}"
                 SelectedObjectSprite="{Binding SelectedMapObjectSprite}"
+                ObjectSprites="{Binding MapObjectSprites}"
                 ObjectSelectionChanged="MapIsometricFloorView_ObjectSelectionChanged"
                 RenderOptions.BitmapInterpolationMode="None"
                 IsHitTestVisible="True"
@@ -250,6 +251,11 @@
                   Foreground="#AAB2BF"
                   FontSize="12"
                   Text="{Binding MapObjectSpriteStatusDisplay}"
+                  TextWrapping="Wrap" />
+              <TextBlock
+                  Foreground="#AAB2BF"
+                  FontSize="12"
+                  Text="{Binding MapObjectSpritesStatusDisplay}"
                   TextWrapping="Wrap" />
               <TextBlock
                   Foreground="#AAB2BF"

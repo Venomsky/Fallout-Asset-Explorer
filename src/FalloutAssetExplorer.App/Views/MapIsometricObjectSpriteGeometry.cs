@@ -26,6 +26,65 @@ public static class MapIsometricObjectSpriteGeometry
             return false;
         }
 
+        return TryGetSpriteWorldBounds(
+            spriteMarker,
+            pixelWidth,
+            pixelHeight,
+            artShiftX,
+            artShiftY,
+            out imageBounds);
+    }
+
+    public static bool TryGetSpriteWorldBounds(
+        MapIsometricObjectSprite sprite,
+        IReadOnlyList<MapIsometricObjectMarker>? markers,
+        out Rect imageBounds)
+    {
+        ArgumentNullException.ThrowIfNull(sprite);
+        return TryGetSpriteWorldBounds(
+            sprite.RecordIndex,
+            markers,
+            sprite.Bitmap.PixelSize.Width,
+            sprite.Bitmap.PixelSize.Height,
+            sprite.ArtShiftX,
+            sprite.ArtShiftY,
+            out imageBounds);
+    }
+
+    public static bool TryGetSpriteWorldBounds(
+        int recordIndex,
+        IReadOnlyList<MapIsometricObjectMarker>? markers,
+        int pixelWidth,
+        int pixelHeight,
+        short artShiftX,
+        short artShiftY,
+        out Rect imageBounds)
+    {
+        imageBounds = default;
+        if (markers is null
+            || markers.FirstOrDefault(marker => marker.Placement.RecordIndex == recordIndex)
+                is not { Placement: not null } spriteMarker)
+        {
+            return false;
+        }
+
+        return TryGetSpriteWorldBounds(
+            spriteMarker,
+            pixelWidth,
+            pixelHeight,
+            artShiftX,
+            artShiftY,
+            out imageBounds);
+    }
+
+    private static bool TryGetSpriteWorldBounds(
+        MapIsometricObjectMarker spriteMarker,
+        int pixelWidth,
+        int pixelHeight,
+        short artShiftX,
+        short artShiftY,
+        out Rect imageBounds)
+    {
         return TryGetImageBounds(
             spriteMarker.WorldPosition,
             new MapIsometricFloorCameraTransform(1, 0, 0),

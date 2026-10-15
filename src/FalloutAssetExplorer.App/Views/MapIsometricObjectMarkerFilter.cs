@@ -9,6 +9,29 @@ public readonly record struct MapIsometricObjectMarker(
 
 public static class MapIsometricObjectMarkerFilter
 {
+    public static IReadOnlyList<MapObjectPlacement> GetSpriteCandidates(
+        IReadOnlyList<MapObjectPlacement>? placements,
+        int? elevation,
+        MapIsometricFloorViewTransform projection)
+    {
+        var candidates = new List<MapObjectPlacement>();
+        foreach (var marker in GetMarkers(placements, elevation, projection))
+        {
+            var placement = marker.Placement;
+            var fid = FalloutFidDecoder.Decode(placement.RawFid);
+            var isItem = placement.PidTypeIdentifier == 0 && fid.ArtType == 0;
+            var isSupportedScenery = placement.PidTypeIdentifier == 2
+                && fid.ArtType == 2
+                && placement.UnsupportedReason is null;
+            if (isItem || isSupportedScenery)
+            {
+                candidates.Add(placement);
+            }
+        }
+
+        return candidates;
+    }
+
     public static IReadOnlyList<MapIsometricObjectMarker> GetMarkers(
         IReadOnlyList<MapObjectPlacement>? placements,
         int? elevation,

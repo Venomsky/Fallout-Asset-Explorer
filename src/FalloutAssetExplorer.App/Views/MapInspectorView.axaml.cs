@@ -120,10 +120,7 @@ public partial class MapInspectorView : UserControl
         {
             viewModel.MapInspector.SelectedMapDiagnosticLayerIndex = combo.SelectedIndex;
             var floorTask = viewModel.PrepareMapFloorTilesAsync();
-            var spriteTask = combo.SelectedIndex == MapInspectorViewModel.IsometricObjectMarkersLayerIndex
-                ? viewModel.PrepareSelectedMapObjectSpriteAsync()
-                : Task.CompletedTask;
-            await Task.WhenAll(floorTask, spriteTask);
+            await floorTask;
         }
     }
 

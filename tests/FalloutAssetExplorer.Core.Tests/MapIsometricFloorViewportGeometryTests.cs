@@ -152,6 +152,68 @@ public sealed class MapIsometricFloorViewportGeometryTests
     }
 
     [Fact]
+    public void Fit_IncludesBoundsFromMultipleSpriteMarkers()
+    {
+        var markers = new[]
+        {
+            CreateMarker(10, worldPosition: new Point(-520, -240)),
+            CreateMarker(11, worldPosition: new Point(420, 260))
+        };
+        Assert.True(MapIsometricObjectSpriteGeometry.TryGetSpriteWorldBounds(
+            10,
+            markers,
+            180,
+            120,
+            8,
+            -5,
+            out var firstSpriteBounds));
+        Assert.True(MapIsometricObjectSpriteGeometry.TryGetSpriteWorldBounds(
+            11,
+            markers,
+            140,
+            200,
+            -11,
+            12,
+            out var secondSpriteBounds));
+
+        var combinedBounds = MapIsometricFloorViewportGeometry.IncludeBounds(
+            ContentBounds,
+            firstSpriteBounds);
+        Assert.True(combinedBounds.HasValue);
+        combinedBounds = MapIsometricFloorViewportGeometry.IncludeBounds(
+            combinedBounds.Value,
+            secondSpriteBounds);
+
+        Assert.True(combinedBounds.HasValue);
+        var bounds = combinedBounds.Value;
+        Assert.Equal(Math.Min(ContentBounds.Left, Math.Min(firstSpriteBounds.Left, secondSpriteBounds.Left)), bounds.Left);
+        Assert.Equal(Math.Min(ContentBounds.Top, Math.Min(firstSpriteBounds.Top, secondSpriteBounds.Top)), bounds.Top);
+        Assert.Equal(Math.Max(ContentBounds.Right, Math.Max(firstSpriteBounds.Right, secondSpriteBounds.Right)), bounds.Right);
+        Assert.Equal(Math.Max(ContentBounds.Bottom, Math.Max(firstSpriteBounds.Bottom, secondSpriteBounds.Bottom)), bounds.Bottom);
+        Assert.True(MapIsometricFloorViewportGeometry.TryGetFitTransform(
+            bounds,
+            800,
+            600,
+            out var fit));
+
+        foreach (var rect in new[] { ContentBounds, firstSpriteBounds, secondSpriteBounds })
+        {
+            foreach (var point in new[]
+                     {
+                         new Point(rect.Left, rect.Top),
+                         new Point(rect.Right, rect.Top),
+                         new Point(rect.Left, rect.Bottom),
+                         new Point(rect.Right, rect.Bottom)
+                     })
+            {
+                var screenPoint = fit.ToScreen(point);
+                Assert.InRange(screenPoint.X, 12, 788);
+                Assert.InRange(screenPoint.Y, 12, 588);
+            }
+        }
+    }
+
+    [Fact]
     public void SelectedSpriteWorldBounds_RequiresMatchingSelectionAndMarker()
     {
         var marker = CreateMarker(recordIndex: 7, rawOffsetX: 13, rawOffsetY: -9);
@@ -351,7 +413,8 @@ public sealed class MapIsometricFloorViewportGeometryTests
     private static MapIsometricObjectMarker CreateMarker(
         int recordIndex,
         int rawOffsetX = 0,
-        int rawOffsetY = 0)
+        int rawOffsetY = 0,
+        Point? worldPosition = null)
     {
         var placement = new MapObjectPlacement(
             RecordIndex: recordIndex,
@@ -384,6 +447,6 @@ public sealed class MapIsometricFloorViewportGeometryTests
             RawPayloadWords: [],
             Warning: null,
             UnsupportedReason: null);
-        return new MapIsometricObjectMarker(placement, new Point(50, 80));
+        return new MapIsometricObjectMarker(placement, worldPosition ?? new Point(50, 80));
     }
 }

@@ -332,6 +332,105 @@ public sealed class MapObjectSpritePrototypeTests
     }
 
     [Fact]
+    public async Task PrepareMapObjectSprites_PreservesPlacementOrderAndContinuesAfterAssetFailure()
+    {
+        EnsureAvaloniaInitialized();
+        var validFrm = FrmFixture.Create(
+            Enumerable.Range(0, 6)
+                .Select(direction => new[]
+                {
+                    new FrmFixtureFrame(1, 1, 0, 0, [(byte)(direction + 1)]),
+                    new FrmFixtureFrame(1, 1, 0, 0, [(byte)(direction + 21)])
+                })
+                .ToArray());
+        using var viewModel = CreateViewModel(
+            out var archive,
+            listContent: "first.frm\nbroken.frm\nlast.frm\n",
+            resourceBytesByName: new Dictionary<string, byte[]>
+            {
+                ["first.frm"] = validFrm,
+                ["broken.frm"] = [1],
+                ["last.frm"] = validFrm
+            });
+        var placements = new[]
+        {
+            CreatePlacement(9, rotation: 2, frame: 1, fidListIndex: 0),
+            CreatePlacement(4, rotation: 0, frame: 0, fidListIndex: 1),
+            CreatePlacement(2, rotation: 4, frame: 0, fidListIndex: 2)
+        };
+        foreach (var placement in placements)
+        {
+            viewModel.MapObjectPlacements.Add(placement);
+        }
+
+        SelectPlacement(viewModel, placements[0]);
+        await viewModel.PrepareMapObjectSpritesAsync();
+
+        Assert.Equal(new[] { 9, 2 }, viewModel.MapObjectSprites.Select(sprite => sprite.RecordIndex));
+        Assert.Equal((2, 1), (
+            viewModel.MapObjectSprites[0].DirectionIndex,
+            viewModel.MapObjectSprites[0].FrameIndex));
+        Assert.Equal((4, 0), (
+            viewModel.MapObjectSprites[1].DirectionIndex,
+            viewModel.MapObjectSprites[1].FrameIndex));
+        Assert.Equal(9, viewModel.SelectedMapObjectSprite?.RecordIndex);
+        Assert.Contains("Prepared 2 of 3", viewModel.MapObjectSpritesStatusDisplay);
+        Assert.Contains("object #4", viewModel.MapObjectSpritesStatusDisplay);
+        Assert.Equal(3, archive.AssetReadCount);
+    }
+
+    [Fact]
+    public async Task PrepareMapObjectSprites_EmptyCandidateSetProducesEmptyCollection()
+    {
+        using var viewModel = CreateViewModel(out _);
+        viewModel.MapObjectPlacements.Add(CreatePlacement(1, rotation: 0, frame: 0) with
+        {
+            PidTypeIdentifier = 1,
+            RawPid = 0x01000001,
+            RawFid = 0x01000001
+        });
+
+        await viewModel.PrepareMapObjectSpritesAsync();
+
+        Assert.Empty(viewModel.MapObjectSprites);
+        Assert.Contains("No eligible", viewModel.MapObjectSpritesStatusDisplay);
+    }
+
+    [Fact]
+    public async Task PrepareMapObjectSprites_ReusesCachedBitmapAcrossRecords()
+    {
+        EnsureAvaloniaInitialized();
+        using var viewModel = CreateViewModel(out var archive);
+        var first = CreatePlacement(8, rotation: 2, frame: 1);
+        var second = CreatePlacement(3, rotation: 2, frame: 1);
+        viewModel.MapObjectPlacements.Add(first);
+        viewModel.MapObjectPlacements.Add(second);
+
+        await viewModel.PrepareMapObjectSpritesAsync();
+
+        Assert.Equal(new[] { 8, 3 }, viewModel.MapObjectSprites.Select(sprite => sprite.RecordIndex));
+        Assert.Same(viewModel.MapObjectSprites[0].Bitmap, viewModel.MapObjectSprites[1].Bitmap);
+        Assert.Equal(1, archive.AssetReadCount);
+
+        await viewModel.PrepareMapObjectSpritesAsync();
+
+        Assert.Equal(1, archive.AssetReadCount);
+    }
+
+    [Fact]
+    public async Task PrepareMapObjectSprites_MissingBitmapLeavesEmptyCollectionAndReportsFailure()
+    {
+        using var viewModel = CreateViewModel(out _, listContent: "missing.item\n");
+        var placement = CreatePlacement(1, rotation: 0, frame: 0);
+        viewModel.MapObjectPlacements.Add(placement);
+
+        await viewModel.PrepareMapObjectSpritesAsync();
+
+        Assert.Empty(viewModel.MapObjectSprites);
+        Assert.Contains("Could not resolve item FID", viewModel.MapObjectSpritesStatusDisplay);
+    }
+
+    [Fact]
     public async Task PrepareSelectedSprite_StatusReportsNonzeroFrmFrameAndDirectionOffsets()
     {
         EnsureAvaloniaInitialized();
@@ -738,6 +837,7 @@ public sealed class MapObjectSpritePrototypeTests
         string artDirectory = "items",
         string resourceName = "item.frm",
         byte[]? resourceBytes = null,
+        IReadOnlyDictionary<string, byte[]>? resourceBytesByName = null,
         int[]? elevationOptions = null)
     {
         var viewModel = new ArchiveBrowserViewModel();
@@ -747,7 +847,8 @@ public sealed class MapObjectSpritePrototypeTests
             blockAssetRead,
             artDirectory,
             resourceName,
-            resourceBytes);
+            resourceBytes,
+            resourceBytesByName);
         typeof(ArchiveBrowserViewModel)
             .GetField("_archive", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!
             .SetValue(viewModel, archive);
@@ -781,7 +882,8 @@ public sealed class MapObjectSpritePrototypeTests
         int pidType = 0,
         int fidArtType = 0,
         int elevation = 0,
-        string? unsupportedReason = null)
+        string? unsupportedReason = null,
+        int fidListIndex = 0)
     {
         const int rawHexIndex = 1000;
         var (hexX, hexY) = MapObjectPlacementDecoder.GetHexCoordinates(rawHexIndex);
@@ -799,7 +901,7 @@ public sealed class MapObjectSpritePrototypeTests
             0,
             frame,
             rotation,
-            fidArtType << 24,
+            (fidArtType << 24) | fidListIndex,
             0,
             0,
             (pidType << 24) | 1,
@@ -838,7 +940,7 @@ public sealed class MapObjectSpritePrototypeTests
         private readonly TaskCompletionSource<bool> _releaseAssetRead =
             new(TaskCreationOptions.RunContinuationsAsynchronously);
         private readonly bool _blockAssetRead;
-        private readonly string _resourcePath;
+        private readonly HashSet<string> _resourcePaths = new(StringComparer.OrdinalIgnoreCase);
         private int _assetReadCount;
 
         public SyntheticSpriteArchive(
@@ -847,23 +949,34 @@ public sealed class MapObjectSpritePrototypeTests
             bool blockAssetRead,
             string artDirectory,
             string resourceName,
-            byte[]? resourceBytes)
+            byte[]? resourceBytes,
+            IReadOnlyDictionary<string, byte[]>? resourceBytesByName)
         {
             Path = typeof(MapObjectSpritePrototypeTests).Assembly.Location;
             _blockAssetRead = blockAssetRead;
-            _resourcePath =
-                $"art/{artDirectory}/{(includeNonFrmAsset ? System.IO.Path.ChangeExtension(resourceName, ".pro") : resourceName)}";
             AddEntry(
                 $"art/{artDirectory}/{artDirectory}.lst",
                 Encoding.ASCII.GetBytes(listContent));
             AddEntry("COLOR.PAL", new byte[FalloutPalette.MinimalFileSize]);
             if (includeNonFrmAsset)
             {
-                AddEntry(_resourcePath, [1]);
+                AddResource(
+                    $"art/{artDirectory}/{System.IO.Path.ChangeExtension(resourceName, ".pro")}",
+                    [1]);
             }
             else if (!listContent.StartsWith("missing.", StringComparison.Ordinal))
             {
-                AddEntry(_resourcePath, resourceBytes ?? CreateFrmBytes());
+                if (resourceBytesByName is not null)
+                {
+                    foreach (var (name, bytes) in resourceBytesByName)
+                    {
+                        AddResource($"art/{artDirectory}/{name}", bytes);
+                    }
+                }
+                else
+                {
+                    AddResource($"art/{artDirectory}/{resourceName}", resourceBytes ?? CreateFrmBytes());
+                }
             }
 
             BrowserEntries = _contents.Keys.ToArray();
@@ -888,7 +1001,7 @@ public sealed class MapObjectSpritePrototypeTests
             Stream destination,
             CancellationToken cancellationToken = default)
         {
-            if (string.Equals(entry.Path, _resourcePath, StringComparison.OrdinalIgnoreCase))
+            if (_resourcePaths.Contains(entry.Path))
             {
                 Interlocked.Increment(ref _assetReadCount);
                 if (_blockAssetRead)
@@ -909,6 +1022,12 @@ public sealed class MapObjectSpritePrototypeTests
 
         private void AddEntry(string path, byte[] bytes) =>
             _contents.Add(new ArchiveEntry(path, bytes.Length, null, Path), bytes);
+
+        private void AddResource(string path, byte[] bytes)
+        {
+            AddEntry(path, bytes);
+            _resourcePaths.Add(path);
+        }
 
         private static byte[] CreateFrmBytes() =>
             FrmFixture.Create(
