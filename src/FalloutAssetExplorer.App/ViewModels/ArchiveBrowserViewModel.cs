@@ -53,12 +53,13 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private bool _mapFloorTilesLoaded;
     private int _mapFloorTilesRevision;
     private int? _selectedMapGridIndex;
+    private int _lastMapDiagnosticLayerIndex;
     private string _mapGridCellDisplay = "Click a grid cell to keep its square-grid coordinates and raw value selected.";
     private string _mapGridHoverDisplay = "Move the pointer over a grid cell to inspect its square-grid coordinates and raw value.";
     private string _mapObjectStatusDisplay = "MAP objects have not been read.";
     private string _mapFloorTilesStatusDisplay = "Select the floor-tile diagnostic layer to load this map's tiles.";
     private string _mapObjectSpriteStatusDisplay =
-        "Select a top-level Fallout 2 Item or Scenery marker to preview its FRM sprite.";
+        "Select a top-level Fallout 2 Item, Scenery, or Wall marker to preview its FRM sprite.";
     private string _mapObjectSpritesStatusDisplay = "Multi-sprite preview is not loaded.";
     private MapIsometricObjectSprite? _selectedMapObjectSprite;
     private IReadOnlyList<MapIsometricObjectSprite> _mapObjectSprites = [];
@@ -79,6 +80,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         ExtensionOptions = new ObservableCollection<string>(
             new[] { ArchiveEntryFilter.AllExtensions }.Concat(SupportedExtensions));
+        _lastMapDiagnosticLayerIndex = MapInspector.SelectedMapDiagnosticLayerIndex;
         MapObjectPlacements.CollectionChanged += MapObjectPlacements_CollectionChanged;
         MapInspector.PropertyChanged += MapInspector_PropertyChanged;
         MapInspector.SelectedMapObjectChanged += MapInspector_SelectedMapObjectChanged;
@@ -111,6 +113,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 RefreshVisibleEntries();
             }
         }
+
     }
 
     public string SelectedExtension
@@ -1253,7 +1256,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             CancelMapObjectSpriteLoad();
             SelectedMapObjectSprite = null;
             MapObjectSpriteStatusDisplay =
-                "Select a top-level Fallout 2 Item or Scenery marker to preview its FRM sprite.";
+                "Select a top-level Fallout 2 Item, Scenery, or Wall marker to preview its FRM sprite.";
             return;
         }
 
@@ -1267,26 +1270,33 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
 
         var fid = FalloutFidDecoder.Decode(placement.RawFid);
-        var isItem = placement.PidTypeIdentifier == 0 && fid.ArtType == 0;
-        var isScenery = placement.PidTypeIdentifier == 2 && fid.ArtType == 2;
-        if (!isItem && !isScenery)
+        if (!MapIsometricObjectMarkerFilter.IsSupportedSpriteTypePair(
+                placement.PidTypeIdentifier,
+                fid.ArtType))
         {
             CancelMapObjectSpriteLoad();
             SelectedMapObjectSprite = null;
             MapObjectSpriteStatusDisplay =
                 $"Object #{placement.RecordIndex} is not an eligible object for sprite preview because of its unsupported PID/FID type pair " +
-                $"({placement.PidTypeIdentifier}/{fid.ArtType}); only matching Item 0/0 and Scenery 2/2 pairs are supported. The marker remains visible.";
+                $"({placement.PidTypeIdentifier}/{fid.ArtType}); only matching Item 0/0, Scenery 2/2, and Wall 3/3 pairs are supported. The marker remains visible.";
             return;
         }
 
-        var spriteType = isItem ? "Item" : "Scenery";
+        var isItem = placement.PidTypeIdentifier == 0;
+        var spriteType = placement.PidTypeIdentifier switch
+        {
+            0 => "Item",
+            2 => "Scenery",
+            3 => "Wall",
+            _ => throw new InvalidOperationException("A supported sprite pair has an unsupported PID type.")
+        };
         var spriteTypeLower = spriteType.ToLowerInvariant();
-        if (isScenery && placement.UnsupportedReason is { } unsupportedReason)
+        if (!isItem && placement.UnsupportedReason is { } unsupportedReason)
         {
             CancelMapObjectSpriteLoad();
             SelectedMapObjectSprite = null;
             MapObjectSpriteStatusDisplay =
-                $"Scenery object #{placement.RecordIndex} cannot be previewed because its MAP placement is unsupported: {unsupportedReason}. The marker remains visible.";
+                $"{spriteType} object #{placement.RecordIndex} cannot be previewed because its MAP placement is unsupported: {unsupportedReason}. The marker remains visible.";
             return;
         }
 
@@ -1433,8 +1443,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         var archive = _archive;
         if (_isDisposed
             || !IsMapInspector
-            || MapInspector.SelectedMapDiagnosticLayerIndex
-                != MapInspectorViewModel.IsometricObjectMarkersLayerIndex
+            || !IsMapIsometricSpriteLayer(MapInspector.SelectedMapDiagnosticLayerIndex)
             || archive is null)
         {
             CancelMapObjectSpritesLoad();
@@ -1471,7 +1480,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         {
             SelectedMapObjectSprite = null;
             MapObjectSpritesStatusDisplay =
-                $"No eligible Item or supported Scenery objects have markers on elevation {elevation}.";
+                $"No eligible Item, supported Scenery, or supported Wall objects have sprites on elevation {elevation}.";
             return;
         }
 
@@ -1498,7 +1507,14 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                     return;
                 }
 
-                var spriteType = placement.PidTypeIdentifier == 0 ? "item" : "scenery";
+                var spriteType = placement.PidTypeIdentifier switch
+                {
+                    0 => "item",
+                    2 => "scenery",
+                    3 => "wall",
+                    _ => throw new InvalidOperationException(
+                        "A sprite candidate has an unsupported PID type.")
+                };
                 var result = await TryPrepareMapObjectSpriteAsync(
                     placement,
                     archive,
@@ -1760,8 +1776,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         IReadOnlyList<MapObjectPlacement> placements) =>
         !_isDisposed
         && IsMapInspector
-        && MapInspector.SelectedMapDiagnosticLayerIndex
-            == MapInspectorViewModel.IsometricObjectMarkersLayerIndex
+        && IsMapIsometricSpriteLayer(MapInspector.SelectedMapDiagnosticLayerIndex)
         && ReferenceEquals(_mapObjectSpritesCancellation, cancellation)
         && ReferenceEquals(_archive, archive)
         && MapInspector.SelectedMapElevationIndex == elevation
@@ -1782,8 +1797,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private void ScheduleMapObjectSpriteBatch()
     {
         if (IsMapInspector
-            && MapInspector.SelectedMapDiagnosticLayerIndex
-                == MapInspectorViewModel.IsometricObjectMarkersLayerIndex)
+            && IsMapIsometricSpriteLayer(MapInspector.SelectedMapDiagnosticLayerIndex))
         {
             _mapObjectSpritesTask = PrepareMapObjectSpritesAsync();
         }
@@ -1794,6 +1808,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             MapObjectSpritesStatusDisplay = "Multi-sprite preview is not loaded.";
         }
     }
+
+    private static bool IsMapIsometricSpriteLayer(int layerIndex) =>
+        layerIndex is MapInspectorViewModel.IsometricFloorTilesLayerIndex
+            or MapInspectorViewModel.IsometricObjectMarkersLayerIndex;
 
     public void UpdateSelectionCount(int count)
     {
@@ -1962,7 +1980,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MapObjectSprites = [];
         MapObjectSpritesStatusDisplay = "Multi-sprite preview is not loaded.";
         MapObjectSpriteStatusDisplay =
-            "Select a top-level Fallout 2 Item or Scenery marker to preview its FRM sprite.";
+            "Select a top-level Fallout 2 Item, Scenery, or Wall marker to preview its FRM sprite.";
         _mapFloorTileBitmaps.Clear();
         _unavailableMapFloorIds.Clear();
         _mapFloorTilesLoaded = false;
@@ -2315,6 +2333,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     private void MapInspector_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        var isIsometricLayerSwitch = false;
         if (e.PropertyName == nameof(MapInspectorViewModel.IsMapInspector))
         {
             OnPropertyChanged(nameof(IsMapInspector));
@@ -2336,6 +2355,11 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
         else if (e.PropertyName == nameof(MapInspectorViewModel.SelectedMapDiagnosticLayerIndex))
         {
+            var currentLayerIndex = MapInspector.SelectedMapDiagnosticLayerIndex;
+            isIsometricLayerSwitch =
+                IsMapIsometricSpriteLayer(_lastMapDiagnosticLayerIndex)
+                && IsMapIsometricSpriteLayer(currentLayerIndex);
+            _lastMapDiagnosticLayerIndex = currentLayerIndex;
             OnPropertyChanged(nameof(IsMapGridEmpty));
             OnPropertyChanged(nameof(IsMapSquareGridVisible));
             OnPropertyChanged(nameof(IsMapHexGridVisible));
@@ -2351,7 +2375,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             || e.PropertyName == nameof(MapInspectorViewModel.SelectedMapElevationIndex)
             || e.PropertyName == nameof(MapInspectorViewModel.SelectedMapDiagnosticLayerIndex))
         {
-            ScheduleMapObjectSpriteBatch();
+            if (!isIsometricLayerSwitch)
+            {
+                ScheduleMapObjectSpriteBatch();
+            }
         }
     }
 
@@ -2362,7 +2389,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         CancelMapObjectSpriteLoad();
         SelectedMapObjectSprite = null;
         MapObjectSpriteStatusDisplay =
-            "Select a top-level Fallout 2 Item or Scenery marker to preview its FRM sprite.";
+            "Select a top-level Fallout 2 Item, Scenery, or Wall marker to preview its FRM sprite.";
 
         if (e.Source == MapInspectorViewModel.MapObjectSelectionSource.List
             && e.Placement is { } placement)

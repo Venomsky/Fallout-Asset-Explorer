@@ -222,7 +222,7 @@ public sealed class MapIsometricFloorViewportGeometryTests
         Assert.True(MapIsometricObjectSpriteGeometry.TryGetSelectedSpriteWorldBounds(
             7,
             7,
-            showObjectMarkers: true,
+            showObjectSprites: true,
             markers,
             pixelWidth: 20,
             pixelHeight: 30,
@@ -244,7 +244,7 @@ public sealed class MapIsometricFloorViewportGeometryTests
         Assert.False(MapIsometricObjectSpriteGeometry.TryGetSelectedSpriteWorldBounds(
             7,
             8,
-            showObjectMarkers: true,
+            showObjectSprites: true,
             markers,
             20,
             30,
@@ -254,7 +254,7 @@ public sealed class MapIsometricFloorViewportGeometryTests
         Assert.False(MapIsometricObjectSpriteGeometry.TryGetSelectedSpriteWorldBounds(
             7,
             7,
-            showObjectMarkers: true,
+            showObjectSprites: true,
             [],
             20,
             30,
@@ -264,7 +264,7 @@ public sealed class MapIsometricFloorViewportGeometryTests
         Assert.False(MapIsometricObjectSpriteGeometry.TryGetSelectedSpriteWorldBounds(
             null,
             7,
-            showObjectMarkers: true,
+            showObjectSprites: true,
             markers,
             20,
             30,
@@ -274,7 +274,7 @@ public sealed class MapIsometricFloorViewportGeometryTests
         Assert.False(MapIsometricObjectSpriteGeometry.TryGetSelectedSpriteWorldBounds(
             7,
             7,
-            showObjectMarkers: false,
+            showObjectSprites: false,
             markers,
             20,
             30,

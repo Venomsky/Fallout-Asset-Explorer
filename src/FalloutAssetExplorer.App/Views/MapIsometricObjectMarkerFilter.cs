@@ -9,6 +9,9 @@ public readonly record struct MapIsometricObjectMarker(
 
 public static class MapIsometricObjectMarkerFilter
 {
+    public static bool IsSupportedSpriteTypePair(int pidTypeIdentifier, int artType) =>
+        pidTypeIdentifier == artType && pidTypeIdentifier is 0 or 2 or 3;
+
     public static IReadOnlyList<MapObjectPlacement> GetSpriteCandidates(
         IReadOnlyList<MapObjectPlacement>? placements,
         int? elevation,
@@ -19,11 +22,8 @@ public static class MapIsometricObjectMarkerFilter
         {
             var placement = marker.Placement;
             var fid = FalloutFidDecoder.Decode(placement.RawFid);
-            var isItem = placement.PidTypeIdentifier == 0 && fid.ArtType == 0;
-            var isSupportedScenery = placement.PidTypeIdentifier == 2
-                && fid.ArtType == 2
-                && placement.UnsupportedReason is null;
-            if (isItem || isSupportedScenery)
+            if (IsSupportedSpriteTypePair(placement.PidTypeIdentifier, fid.ArtType)
+                && (placement.PidTypeIdentifier == 0 || placement.UnsupportedReason is null))
             {
                 candidates.Add(placement);
             }

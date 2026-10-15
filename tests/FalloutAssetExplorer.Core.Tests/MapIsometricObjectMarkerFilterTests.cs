@@ -65,7 +65,7 @@ public sealed class MapIsometricObjectMarkerFilterTests
     }
 
     [Fact]
-    public void GetSpriteCandidates_KeepsEligibleTopLevelItemsAndSceneryInInputOrder()
+    public void GetSpriteCandidates_KeepsEligibleTopLevelItemsSceneryAndWallsInInputOrder()
     {
         var placements = new[]
         {
@@ -74,6 +74,12 @@ public sealed class MapIsometricObjectMarkerFilterTests
                 PidTypeIdentifier = 2,
                 RawPid = 0x02000001,
                 RawFid = 0x02000001
+            },
+            CreatePlacement(10, 20_099, 100, 100, elevation: 0) with
+            {
+                PidTypeIdentifier = 3,
+                RawPid = 0x03000001,
+                RawFid = 0x03000001
             },
             CreatePlacement(4, 20_099, 100, 100, elevation: 0) with
             {
@@ -112,6 +118,13 @@ public sealed class MapIsometricObjectMarkerFilterTests
                 RawPid = 0x02000001,
                 RawFid = 0x02000001,
                 UnsupportedReason = "Unsupported scenery payload."
+            },
+            CreatePlacement(6, 20_099, 100, 100, elevation: 0) with
+            {
+                PidTypeIdentifier = 3,
+                RawPid = 0x03000001,
+                RawFid = 0x03000001,
+                UnsupportedReason = "Unsupported wall payload."
             }
         };
 
@@ -120,7 +133,78 @@ public sealed class MapIsometricObjectMarkerFilterTests
             0,
             CreateProjection());
 
-        Assert.Equal(new[] { 9, 4 }, candidates.Select(placement => placement.RecordIndex));
+        Assert.Equal(new[] { 9, 10, 4 }, candidates.Select(placement => placement.RecordIndex));
+    }
+
+    [Theory]
+    [InlineData(0, 0, true)]
+    [InlineData(2, 2, true)]
+    [InlineData(3, 3, true)]
+    [InlineData(0, 2, false)]
+    [InlineData(2, 3, false)]
+    [InlineData(3, 2, false)]
+    [InlineData(3, 0, false)]
+    [InlineData(1, 1, false)]
+    public void IsSupportedSpriteTypePair_RequiresMatchingSupportedTypes(
+        int pidTypeIdentifier,
+        int artType,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            MapIsometricObjectMarkerFilter.IsSupportedSpriteTypePair(
+                pidTypeIdentifier,
+                artType));
+    }
+
+    [Fallout2MapArchiveDiagnosticTests.Fallout2MasterDatFact]
+    public async Task GetSpriteCandidates_IncludesKnownWallFromArbridgeMapAndSelectableFrmFrame()
+    {
+        var archivePath = Environment.GetEnvironmentVariable("FALLOUT2_MASTER_DAT");
+        Assert.False(string.IsNullOrWhiteSpace(archivePath));
+        var archive = Dat2Archive.Open(archivePath!);
+        var mapEntry = Assert.Single(archive.BrowserEntries, entry =>
+            string.Equals(
+                entry.Path.Replace('\\', '/'),
+                "maps/arbridge.map",
+                StringComparison.OrdinalIgnoreCase));
+
+        using var mapStream = new MemoryStream();
+        await archive.CopyEntryToAsync(mapEntry, mapStream);
+        var mapBytes = mapStream.ToArray();
+        var header = MapHeaderDecoder.Decode(mapBytes, FalloutGame.Fallout2);
+        var decodedMap = await MapObjectPlacementDecoder.DecodeAsync(mapBytes, header, archive);
+        var wall = Assert.Single(decodedMap.Objects, placement => placement.RecordIndex == 40);
+
+        Assert.Equal(0x030003A1, wall.RawPid);
+        Assert.Equal(0x030003CA, wall.RawFid);
+        var candidates = MapIsometricObjectMarkerFilter.GetSpriteCandidates(
+            [wall],
+            wall.ElevationGroup,
+            CreateProjection());
+        Assert.Contains(candidates, placement => placement.RecordIndex == 40);
+
+        var resolution = await FalloutFidArtAssetResolver.ResolveAsync(archive, wall.RawFid);
+        Assert.True(resolution.Success, resolution.Error);
+        Assert.Equal("art/walls/ybk1005.frm", resolution.ResourcePath);
+        Assert.NotNull(resolution.Entry);
+
+        using var frmStream = new MemoryStream();
+        await archive.CopyEntryToAsync(resolution.Entry!, frmStream);
+        var document = FrmDecoder.Decode(frmStream.ToArray());
+        Assert.True(
+            MapIsometricObjectSpriteFrameSelector.TrySelectFrame(
+                wall,
+                document,
+                out var directionIndex,
+                out var frame,
+                out var frameError),
+            frameError);
+        Assert.Equal(0, directionIndex);
+        Assert.NotNull(frame);
+        Assert.Equal(16, frame.Width);
+        Assert.Equal(96, frame.Height);
+        Assert.True(MapIsometricObjectSpriteDiagnostics.CountNonZeroPaletteIndexPixels(frame) > 0);
     }
 
     [Fact]

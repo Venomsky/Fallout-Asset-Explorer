@@ -49,6 +49,7 @@
                 Placements="{Binding MapInspector.FilteredMapObjectPlacements}"
                 Elevation="{Binding MapInspector.SelectedMapElevationIndex}"
                 ShowObjectMarkers="{Binding IsMapIsometricObjectMarkerLayerVisible}"
+                ShowObjectSprites="{Binding IsMapIsometricViewVisible}"
                 SelectedRecordIndex="{Binding MapInspector.SelectedMapObjectRecordIndex}"
                 SelectedObjectSprite="{Binding SelectedMapObjectSprite}"
                 ObjectSprites="{Binding MapObjectSprites}"
@@ -245,7 +246,7 @@
                 IsVisible="{Binding IsMapIsometricViewVisible}"
                 TextWrapping="Wrap" />
             <StackPanel
-                IsVisible="{Binding IsMapIsometricObjectMarkerLayerVisible}"
+                IsVisible="{Binding IsMapIsometricViewVisible}"
                 Spacing="2">
               <TextBlock
                   Foreground="#AAB2BF"

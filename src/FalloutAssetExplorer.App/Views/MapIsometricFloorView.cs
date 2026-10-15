@@ -49,6 +49,9 @@ public sealed class MapIsometricFloorView : Control
     public static readonly StyledProperty<bool> ShowObjectMarkersProperty =
         AvaloniaProperty.Register<MapIsometricFloorView, bool>(nameof(ShowObjectMarkers));
 
+    public static readonly StyledProperty<bool> ShowObjectSpritesProperty =
+        AvaloniaProperty.Register<MapIsometricFloorView, bool>(nameof(ShowObjectSprites));
+
     public static readonly StyledProperty<int?> SelectedRecordIndexProperty =
         AvaloniaProperty.Register<MapIsometricFloorView, int?>(nameof(SelectedRecordIndex));
 
@@ -107,6 +110,12 @@ public sealed class MapIsometricFloorView : Control
     {
         get => GetValue(ShowObjectMarkersProperty);
         set => SetValue(ShowObjectMarkersProperty, value);
+    }
+
+    public bool ShowObjectSprites
+    {
+        get => GetValue(ShowObjectSpritesProperty);
+        set => SetValue(ShowObjectSpritesProperty, value);
     }
 
     public int? SelectedRecordIndex
@@ -219,18 +228,23 @@ public sealed class MapIsometricFloorView : Control
             }
 
             InvalidateObjectMarkers();
-            PrepareCameraForMarkersIfNeeded();
+            PrepareCameraForObjectRenderingIfNeeded();
             ValidateSelectedRecord();
         }
         else if (change.Property == ElevationProperty)
         {
             InvalidateObjectMarkers();
-            PrepareCameraForMarkersIfNeeded();
+            PrepareCameraForObjectRenderingIfNeeded();
             ValidateSelectedRecord();
         }
-        else if (change.Property == ShowObjectMarkersProperty)
+        else if (change.Property == ShowObjectMarkersProperty
+            || change.Property == ShowObjectSpritesProperty)
         {
-            PrepareCameraForMarkersIfNeeded();
+            PrepareCameraForObjectRenderingIfNeeded();
+            if (_isFitToView)
+            {
+                UpdateFitCamera();
+            }
         }
         else if (change.Property == SelectedRecordIndexProperty)
         {
@@ -251,6 +265,7 @@ public sealed class MapIsometricFloorView : Control
             || change.Property == PlacementsProperty
             || change.Property == ElevationProperty
             || change.Property == ShowObjectMarkersProperty
+            || change.Property == ShowObjectSpritesProperty
             || change.Property == SelectedRecordIndexProperty
             || change.Property == SelectedObjectSpriteProperty
             || change.Property == ObjectSpritesProperty)
@@ -269,17 +284,17 @@ public sealed class MapIsometricFloorView : Control
         {
             SetSpriteRenderDiagnostic(null);
         }
-        else if (!ShowObjectMarkers)
+        else if (!ShowObjectSprites)
         {
             SetSpriteRenderDiagnostic(
-                "Prepared sprite not drawn: the object-marker layer is disabled. " +
-                "Map-space bounds unavailable (the marker layer is disabled).");
+                "Prepared sprite not drawn: object sprites are disabled. " +
+                "Map-space bounds unavailable (sprite display is disabled).");
         }
 
         if (!TryGetProjectionTransform(out var projection)
             || !TryGetCurrentCamera(out var camera))
         {
-            if (SelectedObjectSprite is not null && ShowObjectMarkers)
+            if (SelectedObjectSprite is not null && ShowObjectSprites)
             {
                 SetSpriteRenderDiagnostic(
                     "Prepared sprite not drawn: projection or camera geometry is unavailable. " +
@@ -334,10 +349,9 @@ public sealed class MapIsometricFloorView : Control
             }
         }
 
-        if (ShowObjectMarkers)
+        var markers = GetObjectMarkers(projection);
+        if (ShowObjectSprites)
         {
-            var markerRadius = MapIsometricObjectMarkerHitTest.GetMarkerRadius(camera.Scale);
-            var markers = GetObjectMarkers(projection);
             var renderedSelectedSprite = false;
             // The batch follows input placement order; this is provisional and not engine draw-order evidence.
             foreach (var marker in markers)
@@ -413,7 +427,11 @@ public sealed class MapIsometricFloorView : Control
                         "Map-space bounds unavailable (no marker position is available).");
                 }
             }
+        }
 
+        if (ShowObjectMarkers)
+        {
+            var markerRadius = MapIsometricObjectMarkerHitTest.GetMarkerRadius(camera.Scale);
             foreach (var marker in markers)
             {
                 var center = camera.ToScreen(marker.WorldPosition);
@@ -513,20 +531,9 @@ public sealed class MapIsometricFloorView : Control
     {
         base.OnPointerPressed(e);
         var properties = e.GetCurrentPoint(this).Properties;
-        if (properties.IsLeftButtonPressed && ShowObjectMarkers)
+        if (properties.IsLeftButtonPressed
+            && TryGetObjectMarkerSelection(e.GetPosition(this), out var recordIndex))
         {
-            int? recordIndex = null;
-            if (TryGetProjectionTransform(out var projection)
-                && TryGetCurrentCamera(out var camera))
-            {
-                recordIndex = MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
-                    GetObjectMarkers(projection),
-                    camera,
-                    e.GetPosition(this),
-                    Bounds.Width,
-                    Bounds.Height);
-            }
-
             ObjectSelectionChanged?.Invoke(
                 this,
                 new MapObjectMarkerSelectionChangedEventArgs(recordIndex));
@@ -549,6 +556,28 @@ public sealed class MapIsometricFloorView : Control
         _isFitToView = false;
         e.Pointer.Capture(this);
         e.Handled = true;
+    }
+
+    private bool TryGetObjectMarkerSelection(Point position, out int? recordIndex)
+    {
+        recordIndex = null;
+        if (!ShowObjectMarkers)
+        {
+            return false;
+        }
+
+        if (TryGetProjectionTransform(out var projection)
+            && TryGetCurrentCamera(out var camera))
+        {
+            recordIndex = MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
+                GetObjectMarkers(projection),
+                camera,
+                position,
+                Bounds.Width,
+                Bounds.Height);
+        }
+
+        return true;
     }
 
     protected override void OnPointerReleased(PointerReleasedEventArgs e)
@@ -618,9 +647,9 @@ public sealed class MapIsometricFloorView : Control
         }
     }
 
-    private void PrepareCameraForMarkersIfNeeded()
+    private void PrepareCameraForObjectRenderingIfNeeded()
     {
-        if (ShowObjectMarkers && !TryGetCurrentCamera(out _))
+        if ((ShowObjectMarkers || ShowObjectSprites) && !TryGetCurrentCamera(out _))
         {
             UpdateFitCamera();
         }
@@ -668,7 +697,7 @@ public sealed class MapIsometricFloorView : Control
     private void Placements_CollectionChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
         InvalidateObjectMarkers();
-        PrepareCameraForMarkersIfNeeded();
+        PrepareCameraForObjectRenderingIfNeeded();
         ValidateSelectedRecord();
         RefreshHoverToolTip();
         InvalidateVisual();
@@ -807,7 +836,7 @@ public sealed class MapIsometricFloorView : Control
         }
 
         contentBounds = new Rect(minX, minY, width, height);
-        if (!ShowObjectMarkers)
+        if (!ShowObjectSprites)
         {
             return true;
         }
@@ -843,7 +872,7 @@ public sealed class MapIsometricFloorView : Control
             && MapIsometricObjectSpriteGeometry.TryGetSelectedSpriteWorldBounds(
                 selectedSprite.RecordIndex,
                 SelectedRecordIndex,
-                ShowObjectMarkers,
+                ShowObjectSprites,
                 markers,
                 selectedSprite.Bitmap.PixelSize.Width,
                 selectedSprite.Bitmap.PixelSize.Height,

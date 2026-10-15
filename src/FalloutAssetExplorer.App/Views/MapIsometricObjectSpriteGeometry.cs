@@ -7,7 +7,7 @@ public static class MapIsometricObjectSpriteGeometry
     public static bool TryGetSelectedSpriteWorldBounds(
         int? spriteRecordIndex,
         int? selectedRecordIndex,
-        bool showObjectMarkers,
+        bool showObjectSprites,
         IReadOnlyList<MapIsometricObjectMarker>? markers,
         int pixelWidth,
         int pixelHeight,
@@ -16,7 +16,7 @@ public static class MapIsometricObjectSpriteGeometry
         out Rect imageBounds)
     {
         imageBounds = default;
-        if (!showObjectMarkers
+        if (!showObjectSprites
             || spriteRecordIndex is not int recordIndex
             || recordIndex != selectedRecordIndex
             || markers is null

@@ -401,6 +401,41 @@ public sealed class MapObjectSpritePrototypeTests
     }
 
     [Fact]
+    public async Task PrepareMapObjectSprites_SchedulesForFloorLayerAndPreservesBatchAcrossIsometricLayers()
+    {
+        EnsureAvaloniaInitialized();
+        using var viewModel = CreateViewModel(
+            out _,
+            listContent: "wall.frm\n",
+            artDirectory: "walls",
+            resourceName: "wall.frm");
+        var wall = CreatePlacement(
+            40,
+            rotation: 0,
+            frame: 0,
+            pidType: 3,
+            fidArtType: 3);
+        viewModel.MapObjectPlacements.Add(wall);
+        viewModel.MapInspector.SelectedMapDiagnosticLayerIndex =
+            MapInspectorViewModel.ObjectHexesLayerIndex;
+
+        viewModel.MapInspector.SelectedMapDiagnosticLayerIndex =
+            MapInspectorViewModel.IsometricFloorTilesLayerIndex;
+        await GetScheduledMapObjectSpritesTask(viewModel).WaitAsync(TimeSpan.FromSeconds(10));
+
+        var preparedBatch = viewModel.MapObjectSprites;
+        var preparedSprite = Assert.Single(preparedBatch);
+        Assert.Equal(wall.RecordIndex, preparedSprite.RecordIndex);
+        Assert.Contains("Prepared 1 of 1", viewModel.MapObjectSpritesStatusDisplay);
+
+        viewModel.MapInspector.SelectedMapDiagnosticLayerIndex =
+            MapInspectorViewModel.IsometricObjectMarkersLayerIndex;
+
+        Assert.Same(preparedBatch, viewModel.MapObjectSprites);
+        Assert.Contains("Prepared 1 of 1", viewModel.MapObjectSpritesStatusDisplay);
+    }
+
+    [Fact]
     public async Task PrepareMapObjectSprites_ReusesCachedBitmapAcrossRecords()
     {
         EnsureAvaloniaInitialized();
@@ -446,6 +481,7 @@ public sealed class MapObjectSpritePrototypeTests
             Placements = placements,
             Elevation = 0,
             ShowObjectMarkers = true,
+            ShowObjectSprites = true,
             ObjectSprites = sprites
         };
         view.Measure(new Size(viewportWidth, viewportHeight));
@@ -486,6 +522,104 @@ public sealed class MapObjectSpritePrototypeTests
         Assert.Equal(
             (R: (byte)0x17, G: (byte)0x1A, B: (byte)0x1F, A: (byte)0xFF),
             ReadPixelAtSourcePoint(rendered, imageBounds, 256, 32, spriteSize));
+    }
+
+    [Fact]
+    public void Render_DrawsSpritesWithoutMarkersWhenMarkerLayerIsHidden()
+    {
+        EnsureAvaloniaInitialized();
+        const int viewportWidth = 640;
+        const int viewportHeight = 480;
+        var placement = CreatePlacement(1, rotation: 0, frame: 0);
+        const int spriteSize = 512;
+        using var spriteBitmap = CreateOverlapTestSprite(spriteSize, isSecondSprite: false);
+        var sprite = CreateRenderTestSprite(placement, spriteBitmap);
+        var view = new MapIsometricFloorView
+        {
+            Placements = [placement],
+            Elevation = 0,
+            ShowObjectMarkers = false,
+            ShowObjectSprites = true,
+            SelectedRecordIndex = placement.RecordIndex,
+            ObjectSprites = [sprite]
+        };
+        view.Measure(new Size(viewportWidth, viewportHeight));
+        view.Arrange(new Rect(0, 0, viewportWidth, viewportHeight));
+        view.FitToView();
+
+        Assert.True(MapIsometricFloorGeometry.TryCreateDefaultViewTransform(out var projection));
+        var markers = MapIsometricObjectMarkerFilter.GetMarkers([placement], 0, projection);
+        var camera = CreateFitCameraForRenderTest(
+            markers,
+            [sprite],
+            viewportWidth,
+            viewportHeight);
+        Assert.True(MapIsometricObjectSpriteGeometry.TryGetImageBounds(
+            markers[0].WorldPosition,
+            camera,
+            spriteSize,
+            spriteSize,
+            sprite.ArtShiftX,
+            sprite.ArtShiftY,
+            placement.RawOffsetX,
+            placement.RawOffsetY,
+            out var imageBounds));
+
+        using var rendered = new RenderTargetBitmap(new PixelSize(viewportWidth, viewportHeight));
+        rendered.Render(view);
+
+        Assert.Equal(
+            (R: (byte)255, G: (byte)0, B: (byte)0, A: (byte)255),
+            ReadPixelAtSourcePoint(rendered, imageBounds, 80, 256, spriteSize));
+        Assert.False(ContainsPixelColor(rendered, 0xF2, 0xC1, 0x4E, 0xFF));
+    }
+
+    [Fact]
+    public void ObjectMarkerSelection_IsEnabledOnlyWhenMarkersAreVisible()
+    {
+        var view = new MapIsometricFloorView
+        {
+            ShowObjectMarkers = false,
+            ShowObjectSprites = true
+        };
+        var method = typeof(MapIsometricFloorView).GetMethod(
+            "TryGetObjectMarkerSelection",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(method);
+
+        object?[] arguments = [new Point(0, 0), null];
+        Assert.False((bool)method.Invoke(view, arguments)!);
+        Assert.Null(arguments[1]);
+
+        view.ShowObjectMarkers = true;
+        arguments[1] = null;
+        Assert.True((bool)method.Invoke(view, arguments)!);
+    }
+
+    [Fact]
+    public void ContentBounds_IncludesTallSpriteWhenMarkersAreHidden()
+    {
+        EnsureAvaloniaInitialized();
+        var placement = CreatePlacement(1, rotation: 0, frame: 0);
+        using var spriteBitmap = CreateSolidColorSprite(1, 1024, 255, 0, 0);
+        var sprite = CreateRenderTestSprite(placement, spriteBitmap);
+        var view = new MapIsometricFloorView
+        {
+            Placements = [placement],
+            Elevation = 0,
+            ShowObjectMarkers = false,
+            ShowObjectSprites = true,
+            ObjectSprites = [sprite]
+        };
+
+        var contentBounds = GetContentBounds(view);
+        Assert.True(MapIsometricFloorGeometry.TryCreateDefaultViewTransform(out var projection));
+        var markers = MapIsometricObjectMarkerFilter.GetMarkers([placement], 0, projection);
+        Assert.True(MapIsometricObjectSpriteGeometry.TryGetSpriteWorldBounds(
+            sprite,
+            markers,
+            out var spriteBounds));
+        Assert.True(contentBounds.Contains(spriteBounds));
     }
 
     [Fact]
@@ -967,6 +1101,36 @@ public sealed class MapObjectSpritePrototypeTests
         return bitmap;
     }
 
+    private static WriteableBitmap CreateSolidColorSprite(
+        int width,
+        int height,
+        byte red,
+        byte green,
+        byte blue)
+    {
+        var bitmap = new WriteableBitmap(
+            new PixelSize(width, height),
+            new Vector(96, 96),
+            PixelFormat.Rgba8888,
+            AlphaFormat.Unpremul);
+        using var framebuffer = bitmap.Lock();
+        var row = new byte[width * 4];
+        for (var x = 0; x < width; x++)
+        {
+            row[x * 4] = red;
+            row[x * 4 + 1] = green;
+            row[x * 4 + 2] = blue;
+            row[x * 4 + 3] = 255;
+        }
+
+        for (var y = 0; y < height; y++)
+        {
+            Marshal.Copy(row, 0, IntPtr.Add(framebuffer.Address, y * framebuffer.RowBytes), row.Length);
+        }
+
+        return bitmap;
+    }
+
     private static MapIsometricObjectSprite CreateRenderTestSprite(
         MapObjectPlacement placement,
         Bitmap bitmap) =>
@@ -1056,6 +1220,58 @@ public sealed class MapObjectSpritePrototypeTests
             Marshal.ReadByte(framebuffer.Address, offset + 1),
             Marshal.ReadByte(framebuffer.Address, offset + 2),
             Marshal.ReadByte(framebuffer.Address, offset + 3));
+    }
+
+    private static bool ContainsPixelColor(
+        Bitmap rendered,
+        byte red,
+        byte green,
+        byte blue,
+        byte alpha)
+    {
+        using var pixels = new WriteableBitmap(
+            rendered.PixelSize,
+            new Vector(96, 96),
+            PixelFormat.Rgba8888,
+            AlphaFormat.Unpremul);
+        using var framebuffer = pixels.Lock();
+        rendered.CopyPixels(framebuffer, AlphaFormat.Unpremul);
+        for (var y = 0; y < rendered.PixelSize.Height; y++)
+        {
+            for (var x = 0; x < rendered.PixelSize.Width; x++)
+            {
+                var offset = y * framebuffer.RowBytes + x * 4;
+                if (Marshal.ReadByte(framebuffer.Address, offset) == red
+                    && Marshal.ReadByte(framebuffer.Address, offset + 1) == green
+                    && Marshal.ReadByte(framebuffer.Address, offset + 2) == blue
+                    && Marshal.ReadByte(framebuffer.Address, offset + 3) == alpha)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static Rect GetContentBounds(MapIsometricFloorView view)
+    {
+        var arguments = new object?[] { default(Rect) };
+        var method = typeof(MapIsometricFloorView).GetMethod(
+            "TryGetContentBounds",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(method);
+        Assert.True((bool)method.Invoke(view, arguments)!);
+        return Assert.IsType<Rect>(arguments[0]);
+    }
+
+    private static Task GetScheduledMapObjectSpritesTask(ArchiveBrowserViewModel viewModel)
+    {
+        var field = typeof(ArchiveBrowserViewModel).GetField(
+            "_mapObjectSpritesTask",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        return Assert.IsAssignableFrom<Task>(field.GetValue(viewModel));
     }
 
     private static void SelectPlacement(
