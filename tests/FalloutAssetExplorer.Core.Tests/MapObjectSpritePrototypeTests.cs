@@ -4,7 +4,6 @@ using System.Text;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
-using Avalonia.Skia;
 using FalloutAssetExplorer.App.ViewModels;
 using FalloutAssetExplorer.App.Views;
 using FalloutAssetExplorer.Core;
@@ -14,12 +13,6 @@ namespace FalloutAssetExplorer.Core.Tests;
 
 public sealed class MapObjectSpritePrototypeTests
 {
-    private static readonly Lazy<bool> AvaloniaInitialized = new(() =>
-    {
-        SkiaPlatform.Initialize();
-        return true;
-    });
-
     [Fact]
     public void SpriteDiagnostics_CountNonZeroPaletteIndexPixelsFromFrameData()
     {
@@ -577,6 +570,7 @@ public sealed class MapObjectSpritePrototypeTests
     [Fact]
     public void ObjectMarkerSelection_IsEnabledOnlyWhenMarkersAreVisible()
     {
+        EnsureAvaloniaInitialized();
         var view = new MapIsometricFloorView
         {
             ShowObjectMarkers = false,
@@ -1064,7 +1058,7 @@ public sealed class MapObjectSpritePrototypeTests
         return viewModel;
     }
 
-    private static void EnsureAvaloniaInitialized() => _ = AvaloniaInitialized.Value;
+    private static void EnsureAvaloniaInitialized() => AvaloniaTestEnvironment.EnsureInitialized();
 
     private static WriteableBitmap CreateOverlapTestSprite(int size, bool isSecondSprite)
     {
