@@ -186,7 +186,25 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     public ArchiveEntry? SelectedEntry
     {
         get => _selectedEntry;
-        set => SetProperty(ref _selectedEntry, value);
+        set
+        {
+            if (SetProperty(ref _selectedEntry, value))
+            {
+                OnPropertyChanged(nameof(CanCopySelectedEntryPath));
+                OnPropertyChanged(nameof(SelectedEntryPathToCopy));
+            }
+        }
+    }
+
+    public bool CanCopySelectedEntryPath => SelectedEntryPathToCopy is not null;
+
+    public string? SelectedEntryPathToCopy
+    {
+        get
+        {
+            var path = SelectedEntry?.Path;
+            return string.IsNullOrWhiteSpace(path) ? null : path;
+        }
     }
 
     public string PreviewMessage

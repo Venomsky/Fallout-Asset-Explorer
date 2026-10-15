@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Runtime.InteropServices;
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Platform.Storage;
@@ -103,6 +104,37 @@ public partial class MainWindow : Window
             ObserveViewModel(viewModel);
             viewModel.UpdateSelectionCount(EntriesGrid.SelectedItems.Count);
             await viewModel.PreviewSelectedEntryAsync();
+        }
+    }
+
+    private async void CopyResourcePath_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ArchiveBrowserViewModel viewModel
+            || viewModel.SelectedEntryPathToCopy is not { } path)
+        {
+            return;
+        }
+
+        try
+        {
+            var clipboard = Clipboard;
+            if (clipboard is null)
+            {
+                viewModel.ReportError("Could not access the system clipboard.");
+                return;
+            }
+
+            await clipboard.SetTextAsync(path);
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or InvalidOperationException
+            or NotSupportedException
+            or OperationCanceledException
+            or UnauthorizedAccessException
+            or ExternalException)
+        {
+            viewModel.ReportError($"Could not copy resource path: {exception.Message}");
         }
     }
 

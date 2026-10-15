@@ -97,6 +97,14 @@
           GridLinesVisibility="Horizontal"
           HeadersVisibility="Column"
           SelectionChanged="EntriesGrid_SelectionChanged">
+        <DataGrid.ContextMenu>
+          <ContextMenu>
+            <MenuItem
+                Header="Copy Resource Path"
+                IsEnabled="{Binding CanCopySelectedEntryPath}"
+                Click="CopyResourcePath_Click" />
+          </ContextMenu>
+        </DataGrid.ContextMenu>
         <DataGrid.Columns>
           <DataGridTextColumn Header="Resource path/name" Binding="{Binding Path}" SortMemberPath="Path" Width="3*" />
           <DataGridTextColumn Header="Extension" Binding="{Binding Extension}" SortMemberPath="Extension" Width="*" />
