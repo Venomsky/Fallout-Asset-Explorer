@@ -50,6 +50,100 @@ public sealed class FalloutFidArtAssetResolverTests
     }
 
     [Theory]
+    [InlineData(0, "items")]
+    [InlineData(2, "scenery")]
+    [InlineData(3, "walls")]
+    [InlineData(5, "misc")]
+    public async Task ResolveAsync_UsesCeSeparatorsForNonTileArtLists(int artType, string directory)
+    {
+        var archive = CreateArchive(
+            FalloutGame.Fallout2,
+            ArchiveFormat.Dat2,
+            ListEntry($"art/{directory}/{directory}.lst", "asset.frm \t; comment\n"),
+            ($"art/{directory}/asset.frm", [1, 2]));
+
+        var result = await FalloutFidArtAssetResolver.ResolveAsync(archive, CreateFid(artType, 0));
+
+        Assert.True(result.Success);
+        Assert.Equal("asset.frm", result.ResourceName);
+        Assert.Equal($"art/{directory}/asset.frm", result.ResourcePath);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_PreservesOrdinaryArtListNameWithoutPadding()
+    {
+        var archive = CreateArchive(
+            FalloutGame.Fallout2,
+            ArchiveFormat.Dat2,
+            ListEntry("art/walls/walls.lst", "ybk1007.frm\n"),
+            ("art/walls/ybk1007.frm", [1]));
+
+        var result = await FalloutFidArtAssetResolver.ResolveAsync(archive, CreateFid(3, 0));
+
+        Assert.True(result.Success);
+        Assert.Equal("ybk1007.frm", result.ResourceName);
+        Assert.Equal("art/walls/ybk1007.frm", result.ResourcePath);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_PreservesEmptyArtListRowsAndTheirIndices()
+    {
+        var archive = CreateArchive(
+            FalloutGame.Fallout2,
+            ArchiveFormat.Dat2,
+            ListEntry("art/walls/walls.lst", "first.frm\n\n; comment\nthird.frm\n"),
+            ("art/walls/first.frm", [1]),
+            ("art/walls/third.frm", [3]));
+
+        var emptyLine = await FalloutFidArtAssetResolver.ResolveAsync(archive, CreateFid(3, 1));
+        var commentLine = await FalloutFidArtAssetResolver.ResolveAsync(archive, CreateFid(3, 2));
+        var third = await FalloutFidArtAssetResolver.ResolveAsync(archive, CreateFid(3, 3));
+
+        Assert.False(emptyLine.Success);
+        Assert.Contains("empty, malformed, or unsafe", emptyLine.Error);
+        Assert.False(commentLine.Success);
+        Assert.Contains("empty, malformed, or unsafe", commentLine.Error);
+        Assert.True(third.Success);
+        Assert.Equal("third.frm", third.ResourceName);
+        Assert.Equal("art/walls/third.frm", third.ResourcePath);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_RejectsTraversalAfterApplyingCeArtListSeparators()
+    {
+        var archive = CreateArchive(
+            FalloutGame.Fallout2,
+            ArchiveFormat.Dat2,
+            ListEntry("art/walls/walls.lst", "../outside.frm ; comment\n"));
+
+        var result = await FalloutFidArtAssetResolver.ResolveAsync(archive, CreateFid(3, 0));
+
+        Assert.False(result.Success);
+        Assert.Contains("empty, malformed, or unsafe", result.Error);
+        Assert.Null(result.ResourcePath);
+    }
+
+    [Fact]
+    public async Task ResolveAsync_ResolvesPaddedYbk1005WallListEntryAtItsOriginalIndex()
+    {
+        var list = string.Concat(Enumerable.Repeat("unused.frm\n", 970))
+            + "ybk1005.frm \n";
+        var archive = CreateArchive(
+            FalloutGame.Fallout2,
+            ArchiveFormat.Dat2,
+            ListEntry("art/walls/walls.lst", list),
+            ("art/walls/YBK1005.FRM", [1, 2]));
+
+        var result = await FalloutFidArtAssetResolver.ResolveAsync(archive, CreateFid(3, 970));
+
+        Assert.True(result.Success);
+        Assert.Equal(970, result.Fid.ArtListIndex);
+        Assert.Equal("ybk1005.frm", result.ResourceName);
+        Assert.Equal("art/walls/ybk1005.frm", result.ResourcePath);
+        Assert.Equal("art/walls/YBK1005.FRM", result.Entry!.Path);
+    }
+
+    [Theory]
     [InlineData(FalloutGame.Fallout1, ArchiveFormat.Dat1)]
     [InlineData(FalloutGame.Fallout2, ArchiveFormat.Dat2)]
     public async Task ResolveAsync_UsesTheArchiveContractForBothDatFormats(

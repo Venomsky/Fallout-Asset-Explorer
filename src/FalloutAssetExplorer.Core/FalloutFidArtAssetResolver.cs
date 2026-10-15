@@ -213,6 +213,12 @@ public static class FalloutFidArtAssetResolver
                 line = line[..^1];
             }
 
+            var separator = line.IndexOfAny(" ,;\r\t\n"u8);
+            if (separator >= 0)
+            {
+                line = line[..separator];
+            }
+
             result.Add(Encoding.ASCII.GetString(line));
             start = end + 1;
         }
