@@ -1,5 +1,9 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Text;
+using Avalonia;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using Avalonia.Skia;
 using FalloutAssetExplorer.App.ViewModels;
 using FalloutAssetExplorer.App.Views;
@@ -415,6 +419,73 @@ public sealed class MapObjectSpritePrototypeTests
         await viewModel.PrepareMapObjectSpritesAsync();
 
         Assert.Equal(1, archive.AssetReadCount);
+    }
+
+    [Fact]
+    public void Render_ComposesOverlappingSpritesAndPreservesTransparencyInInputOrder()
+    {
+        EnsureAvaloniaInitialized();
+
+        const int spriteSize = 512;
+        const int viewportWidth = 640;
+        const int viewportHeight = 480;
+        var placements = new[]
+        {
+            CreatePlacement(1, rotation: 0, frame: 0),
+            CreatePlacement(2, rotation: 0, frame: 0)
+        };
+        using var firstBitmap = CreateOverlapTestSprite(spriteSize, isSecondSprite: false);
+        using var secondBitmap = CreateOverlapTestSprite(spriteSize, isSecondSprite: true);
+        var sprites = new[]
+        {
+            CreateRenderTestSprite(placements[0], firstBitmap),
+            CreateRenderTestSprite(placements[1], secondBitmap)
+        };
+        var view = new MapIsometricFloorView
+        {
+            Placements = placements,
+            Elevation = 0,
+            ShowObjectMarkers = true,
+            ObjectSprites = sprites
+        };
+        view.Measure(new Size(viewportWidth, viewportHeight));
+        view.Arrange(new Rect(0, 0, viewportWidth, viewportHeight));
+        view.FitToView();
+
+        Assert.True(MapIsometricFloorGeometry.TryCreateDefaultViewTransform(out var projection));
+        var markers = MapIsometricObjectMarkerFilter.GetMarkers(placements, 0, projection);
+        Assert.Equal(2, markers.Count);
+        var camera = CreateFitCameraForRenderTest(
+            markers,
+            sprites,
+            viewportWidth,
+            viewportHeight);
+        Assert.True(MapIsometricObjectSpriteGeometry.TryGetImageBounds(
+            markers[0].WorldPosition,
+            camera,
+            spriteSize,
+            spriteSize,
+            sprites[0].ArtShiftX,
+            sprites[0].ArtShiftY,
+            placements[0].RawOffsetX,
+            placements[0].RawOffsetY,
+            out var imageBounds));
+
+        using var rendered = new RenderTargetBitmap(new PixelSize(viewportWidth, viewportHeight));
+        rendered.Render(view);
+
+        Assert.Equal(
+            (R: (byte)255, G: (byte)0, B: (byte)0, A: (byte)255),
+            ReadPixelAtSourcePoint(rendered, imageBounds, 80, 256, spriteSize));
+        Assert.Equal(
+            (R: (byte)0, G: (byte)0, B: (byte)255, A: (byte)255),
+            ReadPixelAtSourcePoint(rendered, imageBounds, 432, 256, spriteSize));
+        Assert.Equal(
+            (R: (byte)0, G: (byte)0, B: (byte)255, A: (byte)255),
+            ReadPixelAtSourcePoint(rendered, imageBounds, 256, 256, spriteSize));
+        Assert.Equal(
+            (R: (byte)0x17, G: (byte)0x1A, B: (byte)0x1F, A: (byte)0xFF),
+            ReadPixelAtSourcePoint(rendered, imageBounds, 256, 32, spriteSize));
     }
 
     [Fact]
@@ -860,6 +931,132 @@ public sealed class MapObjectSpritePrototypeTests
     }
 
     private static void EnsureAvaloniaInitialized() => _ = AvaloniaInitialized.Value;
+
+    private static WriteableBitmap CreateOverlapTestSprite(int size, bool isSecondSprite)
+    {
+        var bitmap = new WriteableBitmap(
+            new PixelSize(size, size),
+            new Vector(96, 96),
+            PixelFormat.Rgba8888,
+            AlphaFormat.Unpremul);
+        using var framebuffer = bitmap.Lock();
+        var row = new byte[size * 4];
+        for (var y = 0; y < size; y++)
+        {
+            Array.Clear(row);
+            for (var x = 0; x < size; x++)
+            {
+                var isOpaque = y >= 80 && y < 432 && (isSecondSprite
+                    ? x >= 176 && x < 496
+                    : x >= 16 && x < 336);
+                if (!isOpaque)
+                {
+                    continue;
+                }
+
+                var pixelOffset = x * 4;
+                row[pixelOffset] = isSecondSprite ? (byte)0 : (byte)255;
+                row[pixelOffset + 1] = 0;
+                row[pixelOffset + 2] = isSecondSprite ? (byte)255 : (byte)0;
+                row[pixelOffset + 3] = 255;
+            }
+
+            Marshal.Copy(row, 0, IntPtr.Add(framebuffer.Address, y * framebuffer.RowBytes), row.Length);
+        }
+
+        return bitmap;
+    }
+
+    private static MapIsometricObjectSprite CreateRenderTestSprite(
+        MapObjectPlacement placement,
+        Bitmap bitmap) =>
+        new(
+            placement.RecordIndex,
+            bitmap,
+            $"synthetic/{placement.RecordIndex}.frm",
+            DirectionIndex: 0,
+            FrameIndex: 0,
+            ArtShiftX: 0,
+            ArtShiftY: 0,
+            FrameOffsetX: 0,
+            FrameOffsetY: 0,
+            NonZeroPaletteIndexPixelCount: 1);
+
+    private static MapIsometricFloorCameraTransform CreateFitCameraForRenderTest(
+        IReadOnlyList<MapIsometricObjectMarker> markers,
+        IReadOnlyList<MapIsometricObjectSprite> sprites,
+        int viewportWidth,
+        int viewportHeight)
+    {
+        Assert.True(MapIsometricFloorGeometry.TryCreateDefaultViewTransform(out var projection));
+        var corners = new[]
+        {
+            (X: 0, Y: 0),
+            (X: 99, Y: 0),
+            (X: 0, Y: 99),
+            (X: 99, Y: 99)
+        };
+        var points = corners
+            .Select(corner =>
+            {
+                Assert.True(MapIsometricFloorGeometry.TryProjectSquareCoordinates(
+                    corner.X,
+                    corner.Y,
+                    projection,
+                    out var point));
+                return point;
+            })
+            .ToArray();
+        var left = points.Min(point => point.X);
+        var top = points.Min(point => point.Y);
+        var right = points.Max(point => point.X);
+        var bottom = points.Max(point => point.Y);
+        var contentBounds = new Rect(left, top, right - left, bottom - top);
+
+        foreach (var sprite in sprites)
+        {
+            Assert.True(MapIsometricObjectSpriteGeometry.TryGetSpriteWorldBounds(
+                sprite,
+                markers,
+                out var spriteBounds));
+            var boundsWithSprite = MapIsometricFloorViewportGeometry.IncludeBounds(
+                contentBounds,
+                spriteBounds);
+            Assert.True(boundsWithSprite.HasValue);
+            contentBounds = boundsWithSprite.Value;
+        }
+
+        Assert.True(MapIsometricFloorViewportGeometry.TryGetFitTransform(
+            contentBounds,
+            viewportWidth,
+            viewportHeight,
+            out var camera));
+        return camera;
+    }
+
+    private static (byte R, byte G, byte B, byte A) ReadPixelAtSourcePoint(
+        Bitmap rendered,
+        Rect imageBounds,
+        int sourceX,
+        int sourceY,
+        int sourceSize)
+    {
+        var x = (int)Math.Floor(imageBounds.X + (sourceX + 0.5) * imageBounds.Width / sourceSize);
+        var y = (int)Math.Floor(imageBounds.Y + (sourceY + 0.5) * imageBounds.Height / sourceSize);
+        using var pixels = new WriteableBitmap(
+            rendered.PixelSize,
+            new Vector(96, 96),
+            PixelFormat.Rgba8888,
+            AlphaFormat.Unpremul);
+        using var framebuffer = pixels.Lock();
+        rendered.CopyPixels(framebuffer, AlphaFormat.Unpremul);
+        var offset = y * framebuffer.RowBytes + x * 4;
+        return (
+            Marshal.ReadByte(framebuffer.Address, offset),
+            Marshal.ReadByte(framebuffer.Address, offset + 1),
+            Marshal.ReadByte(framebuffer.Address, offset + 2),
+            Marshal.ReadByte(framebuffer.Address, offset + 3));
+    }
 
     private static void SelectPlacement(
         ArchiveBrowserViewModel viewModel,

@@ -50,7 +50,11 @@ The archive readers validate structure and bound entry reads. The app also limit
 
 ## MAP Inspection
 
-Inspect supported MAP header data, elevation grids, and decoded object records. Switch between grid and marker diagnostic layers, search, filter, and sort records, and inspect selected object details. Fallout 2 floor-art lookup requires a Fallout 2 DAT2 archive, and the isometric view is experimental. These are diagnostic views, not a full game renderer; some object layouts remain unsupported.
+Inspect supported MAP header data, elevation grids, and decoded object records. Switch between grid and marker diagnostic layers, search, filter, and sort records, and inspect selected object details. Fallout 2 floor-art lookup requires a Fallout 2 DAT2 archive.
+
+The isometric floor view is diagnostic and experimental, not a full Fallout 2 renderer. It displays terrain and can render multiple eligible Item and Scenery sprites on the selected elevation. Results may be partial if MAP object decoding stops at an unsupported layout or individual sprite resources cannot be prepared. The per-map object-sprite bitmap cache is limited to 64 MiB; sprites that do not fit in the remaining budget are not prepared, while their markers remain visible.
+
+Sprite draw order currently follows input MAP placement order and has not been verified against the original game. FRM frame offsets (`FrmFrame.OffsetX/Y`) are retained for diagnostics but are not applied to sprite geometry. The offscreen test checks pixel composition and transparency for the current input order; it does not establish visual or draw-order compatibility with Fallout 2.
 
 ![MAP Inspector showing diagnostic object markers, map header data, decoded records, and selected-object details](docs/images/MapInspector.png)
 
