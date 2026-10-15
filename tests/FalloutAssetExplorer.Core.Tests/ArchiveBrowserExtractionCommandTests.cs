@@ -78,11 +78,148 @@ public sealed class ArchiveBrowserExtractionCommandTests
         viewModel.SelectedEntry = Assert.Single(viewModel.Entries);
         await viewModel.PreviewSelectedEntryAsync();
 
-        Assert.Equal("Select a .FRM, .MAP, or .PRO entry to inspect.", viewModel.PreviewMessage);
+        Assert.Equal("Select a .FRM, .MAP, .PRO, or .MSG entry to inspect.", viewModel.PreviewMessage);
         Assert.Null(viewModel.FrmPreview.PreviewBitmap);
         Assert.False(viewModel.FrmPreview.HasPreview);
         Assert.Single(viewModel.VisibleEntries);
         Assert.True(viewModel.CanExtractAll);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_ParsesMsgEntriesFromDat2Archive()
+    {
+        using var archive = new ControlledArchive();
+        var msgBytes = "{5}{}{first}{5}{voice}{second}"u8.ToArray();
+        var entry = archive.AddEntry("text/english/dialog/sample.MSG", msgBytes);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedExtension = ".MSG";
+        viewModel.SelectedEntry = entry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        var result = Assert.IsType<FalloutMsgParseResult>(viewModel.MsgParseResult);
+        Assert.Equal(1, archive.CopyCount);
+        Assert.Contains(".MSG", viewModel.ExtensionOptions);
+        Assert.Single(viewModel.VisibleEntries);
+        Assert.Equal("MSG Inspector", viewModel.PreviewTitle);
+        Assert.True(viewModel.IsMsgInspector);
+        Assert.False(viewModel.IsProInspector);
+        Assert.False(viewModel.IsMapInspector);
+        Assert.Equal(entry.Path, viewModel.PreviewMessage);
+        Assert.True(result.IsSuccess);
+        Assert.Equal(new[] { 5, 5 }, result.Entries.Select(message => message.Id));
+        Assert.Equal("first"u8.ToArray(), result.Entries[0].Text.ToArray());
+        Assert.Equal("voice"u8.ToArray(), result.Entries[1].Audio.ToArray());
+        Assert.Contains("2 entries", viewModel.MsgStatus);
+        Assert.Contains("are not decoded", viewModel.MsgDetails);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_ParsesMsgFromOpenedFallout1Archive()
+    {
+        const string path = "text/english/dialog/test.msg";
+        using var archiveFile = new TemporaryArchive(
+            CreateDat1Archive(path, "{7}{}{fallout-one}"u8.ToArray()));
+        using var viewModel = new ArchiveBrowserViewModel();
+
+        await viewModel.LoadArchiveAsync(archiveFile.Path);
+        var entry = Assert.Single(viewModel.Entries);
+        viewModel.SelectedEntry = entry;
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Equal("Fallout 1 DAT1", viewModel.ArchiveFormatDisplay);
+        Assert.True(viewModel.MsgParseResult?.IsSuccess);
+        Assert.Equal(7, Assert.Single(viewModel.MsgParseResult!.Entries).Id);
+        Assert.Equal(entry.Path, viewModel.PreviewMessage);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_ShowsEmptyMsgAsSuccessfulWithNoEntries()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry("text/english/dialog/empty.msg", []);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Equal(1, archive.CopyCount);
+        Assert.True(viewModel.MsgParseResult?.IsSuccess);
+        Assert.Empty(viewModel.MsgParseResult!.Entries);
+        Assert.Contains("no entries", viewModel.MsgStatus);
+        Assert.Equal(entry.Path, viewModel.PreviewMessage);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_ShowsMsgParseFailureWithoutPartialEntries()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry(
+            "text/english/dialog/malformed.msg",
+            "{1}{}{valid}}"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        var result = Assert.IsType<FalloutMsgParseResult>(viewModel.MsgParseResult);
+        Assert.False(result.IsSuccess);
+        Assert.Empty(result.Entries);
+        Assert.Equal(FalloutMsgDiagnosticCode.MismatchedDelimiter, result.Diagnostic?.Code);
+        Assert.Contains("byte 12", viewModel.MsgStatus);
+        Assert.Contains("Could not parse MSG", viewModel.PreviewMessage);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_RejectsOversizedMsgBeforeReadingPayload()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry(
+            "text/english/dialog/oversized.msg",
+            [1],
+            FalloutMsgParser.MaximumFileSizeBytes + 1L);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Equal(0, archive.CopyCount);
+        Assert.True(viewModel.IsMsgInspector);
+        Assert.Null(viewModel.MsgParseResult);
+        Assert.Contains("was not read", viewModel.MsgStatus);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_ReportsMsgDeclaredAndActualSizeMismatch()
+    {
+        using var archive = new ControlledArchive();
+        var msgBytes = "{1}{}{text}"u8.ToArray();
+        var declaredSize = msgBytes.LongLength - 1;
+        var entry = archive.AddEntry(
+            "text/english/dialog/size-mismatch.msg",
+            msgBytes,
+            declaredSize);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Equal(1, archive.CopyCount);
+        Assert.Null(viewModel.MsgParseResult);
+        Assert.Contains(
+            $"declares {declaredSize} bytes but {msgBytes.LongLength} bytes were read",
+            viewModel.MsgStatus);
+        Assert.StartsWith("Could not read MSG:", viewModel.PreviewMessage);
     }
 
     [Fact]
@@ -789,12 +926,12 @@ public sealed class ArchiveBrowserExtractionCommandTests
         field.SetValue(viewModel, value);
     }
 
-    private static byte[] CreateDat1Archive(string entryPath)
+    private static byte[] CreateDat1Archive(string entryPath, byte[]? payload = null)
     {
         var separator = entryPath.LastIndexOf('/');
         var folder = separator < 0 ? "." : entryPath[..separator];
         var fileName = separator < 0 ? entryPath : entryPath[(separator + 1)..];
-        var payload = new byte[] { 0x46, 0x52, 0x4D };
+        payload ??= new byte[] { 0x46, 0x52, 0x4D };
         using var stream = new MemoryStream();
 
         WriteUInt32BigEndian(stream, 1);

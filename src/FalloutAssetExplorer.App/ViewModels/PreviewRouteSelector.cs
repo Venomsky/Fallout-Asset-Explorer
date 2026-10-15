@@ -5,7 +5,8 @@ public enum PreviewRoute
     Unsupported,
     Frm,
     Map,
-    Pro
+    Pro,
+    Msg
 }
 
 public static class PreviewRouteSelector
@@ -25,6 +26,11 @@ public static class PreviewRouteSelector
         if (string.Equals(extension, ".PRO", StringComparison.OrdinalIgnoreCase))
         {
             return PreviewRoute.Pro;
+        }
+
+        if (string.Equals(extension, ".MSG", StringComparison.OrdinalIgnoreCase))
+        {
+            return PreviewRoute.Msg;
         }
 
         return PreviewRoute.Unsupported;

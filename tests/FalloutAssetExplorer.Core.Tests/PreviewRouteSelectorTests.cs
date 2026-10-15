@@ -12,6 +12,8 @@ public sealed class PreviewRouteSelectorTests
     [InlineData(".mAp", PreviewRoute.Map)]
     [InlineData(".PRO", PreviewRoute.Pro)]
     [InlineData(".pRo", PreviewRoute.Pro)]
+    [InlineData(".MSG", PreviewRoute.Msg)]
+    [InlineData(".mSg", PreviewRoute.Msg)]
     public void Select_RecognizesSupportedExtensionsCaseInsensitively(
         string extension,
         PreviewRoute expectedRoute)

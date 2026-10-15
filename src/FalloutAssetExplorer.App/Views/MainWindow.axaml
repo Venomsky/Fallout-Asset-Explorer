@@ -339,6 +339,52 @@
               </ListBox>
             </Grid>
           </Border>
+          <Border
+              x:Name="MsgInspector"
+              Grid.Row="2"
+              Grid.RowSpan="3"
+              Padding="10"
+              Background="#20242B"
+              IsVisible="{Binding IsMsgInspector}"
+              AutomationProperties.Name="MSG inspector">
+            <Grid RowDefinitions="Auto,Auto,*" RowSpacing="6">
+              <TextBlock
+                  Grid.Row="0"
+                  FontWeight="SemiBold"
+                  Text="{Binding MsgStatus}"
+                  TextWrapping="Wrap" />
+              <TextBlock
+                  Grid.Row="1"
+                  FontFamily="Consolas"
+                  FontSize="11"
+                  Text="{Binding MsgDetails}"
+                  TextWrapping="Wrap" />
+              <ListBox
+                  Grid.Row="2"
+                  ItemsSource="{Binding MsgParseResult.Entries}"
+                  VerticalAlignment="Stretch"
+                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                  AutomationProperties.Name="Parsed MSG entry IDs and field byte lengths">
+                <ListBox.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <VirtualizingStackPanel />
+                  </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                      <TextBlock Text="ID:" />
+                      <TextBlock Text="{Binding Id}" />
+                      <TextBlock Text="Audio bytes:" />
+                      <TextBlock Text="{Binding Audio.Length}" />
+                      <TextBlock Text="Text bytes:" />
+                      <TextBlock Text="{Binding Text.Length}" />
+                    </StackPanel>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+            </Grid>
+          </Border>
           <local:MapInspectorView
               x:Name="MapInspectorControl"
               Grid.Row="2"

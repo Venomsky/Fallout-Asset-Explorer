@@ -18,7 +18,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     // App preview budget, not a MAP-format limit; keeps UI reads well below the archive reader's 512 MiB entry cap.
     public const long MaximumMapPreviewSizeBytes = 64L * 1024 * 1024;
 
-    private static readonly string[] SupportedExtensions = [".FRM", ".MAP", ".PRO", ".LST", ".INT"];
+    private static readonly string[] SupportedExtensions = [".FRM", ".MAP", ".PRO", ".MSG", ".LST", ".INT"];
 
     private string _searchText = string.Empty;
     private bool _isReplacingMapObjectPlacements;
@@ -63,8 +63,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private string _mapObjectSpritesStatusDisplay = "Multi-sprite preview is not loaded.";
     private MapIsometricObjectSprite? _selectedMapObjectSprite;
     private IReadOnlyList<MapIsometricObjectSprite> _mapObjectSprites = [];
-    private string _previewMessage = "Select a .FRM, .MAP, or .PRO entry to inspect.";
-    private string _previewDetails = "Select a .FRM, .MAP, or .PRO entry to inspect.";
+    private string _previewMessage = "Select a .FRM, .MAP, .PRO, or .MSG entry to inspect.";
+    private string _previewDetails = "Select a .FRM, .MAP, .PRO, or .MSG entry to inspect.";
     private string _previewTitle = "Resource Inspector";
     private string _paletteStatus = "Palette discovery uses the open archive or a configured game-data folder.";
     private bool _isProInspector;
@@ -74,6 +74,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private IReadOnlyList<string> _standaloneProRawByteLines = [];
     private Fallout2StandalonePrototypeInspection? _standaloneProInspection;
     private bool _isStandaloneProExporting;
+    private bool _isMsgInspector;
+    private FalloutMsgParseResult? _msgParseResult;
+    private string _msgStatus = "Select a .MSG entry to inspect.";
+    private string _msgDetails = string.Empty;
     private bool _isDisposed;
 
     public ArchiveBrowserViewModel()
@@ -84,6 +88,30 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MapObjectPlacements.CollectionChanged += MapObjectPlacements_CollectionChanged;
         MapInspector.PropertyChanged += MapInspector_PropertyChanged;
         MapInspector.SelectedMapObjectChanged += MapInspector_SelectedMapObjectChanged;
+    }
+
+    public bool IsMsgInspector
+    {
+        get => _isMsgInspector;
+        private set => SetProperty(ref _isMsgInspector, value);
+    }
+
+    public FalloutMsgParseResult? MsgParseResult
+    {
+        get => _msgParseResult;
+        private set => SetProperty(ref _msgParseResult, value);
+    }
+
+    public string MsgStatus
+    {
+        get => _msgStatus;
+        private set => SetProperty(ref _msgStatus, value);
+    }
+
+    public string MsgDetails
+    {
+        get => _msgDetails;
+        private set => SetProperty(ref _msgDetails, value);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -619,7 +647,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             selectedEntry = SelectedEntry;
             if (selectedEntry is null)
             {
-                PreviewMessage = "Select a .FRM, .MAP, or .PRO entry to inspect.";
+                PreviewMessage = "Select a .FRM, .MAP, .PRO, or .MSG entry to inspect.";
                 return;
             }
 
@@ -759,6 +787,71 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 return;
             }
 
+            if (previewRoute == PreviewRoute.Msg)
+            {
+                IsMsgInspector = true;
+                PreviewTitle = "MSG Inspector";
+                MsgStatus = "Reading MSG entry...";
+                MsgDetails =
+                    $"Entry: {selectedEntry.Path}{Environment.NewLine}"
+                    + $"Declared size: {selectedEntry.UncompressedSize:N0} bytes. Text and audio are not decoded.";
+
+                if (selectedEntry.UncompressedSize < 0)
+                {
+                    MsgStatus = "Could not read MSG: the archive reports a negative uncompressed size.";
+                    PreviewMessage = MsgStatus;
+                    return;
+                }
+
+                if (selectedEntry.UncompressedSize > FalloutMsgParser.MaximumFileSizeBytes)
+                {
+                    MsgStatus =
+                        $"MSG preview is limited to {FalloutMsgParser.MaximumFileSizeBytes:N0} bytes; "
+                        + "the entry was not read.";
+                    PreviewMessage = MsgStatus;
+                    return;
+                }
+
+                PreviewMessage = "Reading MSG bytes...";
+                using var msgBuffer = new MemoryStream(checked((int)selectedEntry.UncompressedSize));
+                await archive.CopyEntryToAsync(selectedEntry, msgBuffer, cancellation.Token);
+                cancellation.Token.ThrowIfCancellationRequested();
+                if (msgBuffer.Length != selectedEntry.UncompressedSize)
+                {
+                    throw new InvalidDataException(
+                        $"MSG entry declares {selectedEntry.UncompressedSize} bytes but {msgBuffer.Length} bytes were read.");
+                }
+
+                var messageData = msgBuffer.GetBuffer().AsMemory(0, checked((int)msgBuffer.Length));
+                var parseResult = await Task.Run(
+                    () => FalloutMsgParser.Parse(messageData),
+                    cancellation.Token);
+                cancellation.Token.ThrowIfCancellationRequested();
+
+                if (!ReferenceEquals(_previewCancellation, cancellation)
+                    || !ReferenceEquals(SelectedEntry, selectedEntry)
+                    || !ReferenceEquals(_archive, archive))
+                {
+                    return;
+                }
+
+                MsgParseResult = parseResult;
+                if (!parseResult.IsSuccess)
+                {
+                    var diagnostic = parseResult.Diagnostic!;
+                    MsgStatus =
+                        $"Parsing failed at byte {diagnostic.ByteOffset}: {diagnostic.Message}";
+                    PreviewMessage = "Could not parse MSG; no entries were published.";
+                    return;
+                }
+
+                MsgStatus = parseResult.Entries.Count == 0
+                    ? "Parsing succeeded; the file contains no entries."
+                    : $"Parsed {parseResult.Entries.Count:N0} entries. Duplicate IDs and source order are preserved.";
+                PreviewMessage = selectedEntry.Path;
+                return;
+            }
+
             if (previewRoute == PreviewRoute.Pro)
             {
                 IsProInspector = true;
@@ -802,7 +895,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
             if (previewRoute != PreviewRoute.Frm)
             {
-                PreviewMessage = "Select a .FRM, .MAP, or .PRO entry to inspect.";
+                PreviewMessage = "Select a .FRM, .MAP, .PRO, or .MSG entry to inspect.";
                 return;
             }
 
@@ -849,8 +942,14 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 {
                     PreviewRoute.Map => $"Could not inspect MAP: {exception.Message}",
                     PreviewRoute.Pro => $"Could not inspect standalone PRO: {exception.Message}",
+                    PreviewRoute.Msg => $"Could not read MSG: {exception.Message}",
                     _ => $"Could not preview FRM: {exception.Message}"
                 };
+                if (previewRoute == PreviewRoute.Msg)
+                {
+                    MsgStatus = $"Could not read MSG: {exception.Message}";
+                }
+
                 if (previewRoute == PreviewRoute.Pro
                     && ReferenceEquals(_previewCancellation, cancellation)
                     && ReferenceEquals(SelectedEntry, selectedEntry)
@@ -1994,6 +2093,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         _isMapGridDataLoaded = false;
         MapInspector.SetMapInspectorActive(false);
         IsProInspector = false;
+        IsMsgInspector = false;
+        MsgParseResult = null;
+        MsgStatus = "Select a .MSG entry to inspect.";
+        MsgDetails = string.Empty;
         StandaloneProStatus = "Select a .PRO entry to inspect.";
         StandaloneProDetails = string.Empty;
         StandaloneProFieldsDisplay = string.Empty;
@@ -2018,7 +2121,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             FrmPreview.ClearPreview();
         }
 
-        PreviewDetails = "Select a .FRM, .MAP, or .PRO entry to inspect.";
+        PreviewDetails = "Select a .FRM, .MAP, .PRO, or .MSG entry to inspect.";
         PreviewTitle = "Resource Inspector";
         PaletteStatus = "Palette discovery uses the open archive or a configured game-data folder.";
     }
