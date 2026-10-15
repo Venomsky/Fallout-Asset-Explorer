@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.IO.Compression;
 using System.Text;
+using FalloutAssetExplorer.App.ViewModels;
 using FalloutAssetExplorer.Core;
 using Xunit;
 
@@ -109,6 +110,30 @@ public sealed class Dat2ArchiveTests
             "art/first.frm",
             Assert.Single(ArchiveEntryFilter.Apply(entries, "FIRST", ".FRM")).Path);
         Assert.Equal(second, output.ToArray());
+    }
+
+    [Fact]
+    public async Task ArchiveBrowser_LoadArchiveAsync_DetectsDat2FromContentAndPopulatesEntries()
+    {
+        byte[] first = [0x01, 0x02];
+        byte[] second = "second"u8.ToArray();
+        using var archiveFile = new TemporaryArchive(
+            Dat2Fixture.Create(
+                new Dat2FixtureEntry("art/first.frm", false, first),
+                new Dat2FixtureEntry("text/second.msg", false, second)),
+            ".bin");
+        using var viewModel = new ArchiveBrowserViewModel();
+
+        await viewModel.LoadArchiveAsync(archiveFile.Path);
+
+        Assert.Equal("Fallout 2 DAT2", viewModel.ArchiveFormatDisplay);
+        Assert.Equal("2 entries", viewModel.EntryCountDisplay);
+        Assert.Equal(
+            new[] { ("art/first.frm", 2L), ("text/second.msg", 6L) },
+            viewModel.Entries.Select(entry => (entry.Path, entry.UncompressedSize)));
+        Assert.Equal(
+            new[] { "art/first.frm", "text/second.msg" },
+            viewModel.VisibleEntries.Select(entry => entry.Path));
     }
 
     [Fact]
