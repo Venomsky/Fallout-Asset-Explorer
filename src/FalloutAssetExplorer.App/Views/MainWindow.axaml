@@ -33,6 +33,11 @@
         <Button Content="Extract Selected" Click="ExtractSelected_Click" IsEnabled="{Binding CanExtractSelected}" />
         <Button Content="Extract Visible" Click="ExtractVisible_Click" IsEnabled="{Binding CanExtractVisible}" />
         <Button Content="Extract All" Click="ExtractAll_Click" IsEnabled="{Binding CanExtractAll}" />
+        <Button
+            Content="Return to LST slot"
+            IsEnabled="{Binding CanReturnToScriptList}"
+            Click="ReturnToScriptList_Click"
+            AutomationProperties.Name="Return to the originating script-list slot" />
         <TextBlock VerticalAlignment="Center" Text="Overwrite" />
         <ComboBox
             Width="150"

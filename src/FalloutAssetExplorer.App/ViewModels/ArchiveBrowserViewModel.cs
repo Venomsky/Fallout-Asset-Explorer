@@ -88,11 +88,19 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private ArchiveEntry? _scriptListEntry;
     private string _scriptListStatus = "Select scripts/scripts.lst to inspect its slots.";
     private string _scriptListDetails = string.Empty;
+    private ScriptListNavigationContext? _scriptListReturnContext;
+    private ScriptListNavigationContext? _pendingScriptListSlotRestore;
     private bool _isIntInspector;
     private FalloutIntMetadataReadResult? _intMetadataReadResult;
     private string _intStatus = "Select a .INT entry to inspect.";
     private string _intIdentifierTableHex = string.Empty;
     private bool _isDisposed;
+
+    private sealed record ScriptListNavigationContext(
+        IGameArchive Archive,
+        ArchiveEntry ScriptListEntry,
+        int SlotIndex,
+        ArchiveEntry IntEntry);
 
     public ArchiveBrowserViewModel()
     {
@@ -207,6 +215,14 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         && ScriptListSlots.Any(candidate => ReferenceEquals(candidate, slot))
         && ScriptListIntTargetStatus == FalloutScriptListIntTargetStatus.Found
         && _scriptListIntTargetResolution?.Entry is not null;
+
+    public bool CanReturnToScriptList =>
+        _scriptListReturnContext is { } context
+        && !_isDisposed
+        && ReferenceEquals(_archive, context.Archive)
+        && ReferenceEquals(SelectedEntry, context.IntEntry)
+        && Entries.Any(entry => ReferenceEquals(entry, context.ScriptListEntry))
+        && Entries.Any(entry => ReferenceEquals(entry, context.IntEntry));
 
     public bool IsIntInspector
     {
@@ -358,7 +374,9 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         if (!CanNavigateToSelectedScriptInt
             || _archive is not { } archive
-            || SelectedScriptListSlot is not { } slot)
+            || SelectedScriptListSlot is not { } slot
+            || _scriptListArchive is not { } sourceArchive
+            || _scriptListEntry is not { } sourceEntry)
         {
             return false;
         }
@@ -373,6 +391,23 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         SearchText = string.Empty;
         SelectedExtension = target.Entry.Extension;
         SelectedEntry = target.Entry;
+        SetScriptListReturnContext(
+            new ScriptListNavigationContext(sourceArchive, sourceEntry, slot.Slot, target.Entry));
+        return true;
+    }
+
+    public bool ReturnToScriptList()
+    {
+        if (!CanReturnToScriptList || _scriptListReturnContext is not { } context)
+        {
+            return false;
+        }
+
+        SetScriptListReturnContext(null);
+        SearchText = string.Empty;
+        SelectedExtension = context.ScriptListEntry.Extension;
+        _pendingScriptListSlotRestore = context;
+        SelectedEntry = context.ScriptListEntry;
         return true;
     }
 
@@ -383,8 +418,21 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         {
             if (SetProperty(ref _selectedEntry, value))
             {
+                if (_scriptListReturnContext is { } returnContext
+                    && !ReferenceEquals(value, returnContext.IntEntry))
+                {
+                    SetScriptListReturnContext(null);
+                }
+
+                if (_pendingScriptListSlotRestore is { } pendingRestore
+                    && !ReferenceEquals(value, pendingRestore.ScriptListEntry))
+                {
+                    _pendingScriptListSlotRestore = null;
+                }
+
                 OnPropertyChanged(nameof(CanCopySelectedEntryPath));
                 OnPropertyChanged(nameof(SelectedEntryPathToCopy));
+                OnPropertyChanged(nameof(CanReturnToScriptList));
             }
         }
     }
@@ -742,6 +790,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
 
         _isDisposed = true;
+        ClearScriptListNavigationContext();
         FrmPreview.Dispose();
         _previewCancellation?.Cancel();
         _previewCancellation = null;
@@ -757,6 +806,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
+        ClearScriptListNavigationContext();
         _previewCancellation?.Cancel();
         ClearPreview();
         _archive = null;
@@ -796,6 +846,20 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     public async Task PreviewSelectedEntryAsync()
     {
+        if (_scriptListReturnContext is { } returnContext
+            && (!ReferenceEquals(_archive, returnContext.Archive)
+                || !ReferenceEquals(SelectedEntry, returnContext.IntEntry)))
+        {
+            SetScriptListReturnContext(null);
+        }
+
+        if (_pendingScriptListSlotRestore is { } pendingRestore
+            && (!ReferenceEquals(_archive, pendingRestore.Archive)
+                || !ReferenceEquals(SelectedEntry, pendingRestore.ScriptListEntry)))
+        {
+            _pendingScriptListSlotRestore = null;
+        }
+
         _previewCancellation?.Cancel();
         var cancellation = new CancellationTokenSource();
         _previewCancellation = cancellation;
@@ -961,6 +1025,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
                 if (!IsScriptListPath(selectedEntry.Path))
                 {
+                    ClearPendingScriptListSlotRestore(archive, selectedEntry);
                     ScriptListStatus =
                         $"Only '{FalloutScriptListResolver.ScriptListPath}' is supported by the script-list resolver.";
                     PreviewMessage = ScriptListStatus;
@@ -978,6 +1043,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
                 if (!readResult.Success)
                 {
+                    ClearPendingScriptListSlotRestore(archive, selectedEntry);
                     var diagnostic = readResult.Diagnostic!;
                     ScriptListStatus = $"Could not read script list: {diagnostic.Code}: {diagnostic.Message}";
                     PreviewMessage = ScriptListStatus;
@@ -994,6 +1060,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                     $"Read {readResult.Slots.Count:N0} slots in source order. "
                     + "Candidate paths do not establish a semantic relationship.";
                 PreviewMessage = selectedEntry.Path;
+                RestorePendingScriptListSlot(archive, selectedEntry, readResult);
                 return;
             }
 
@@ -1239,9 +1306,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
                 if (previewRoute == PreviewRoute.Lst
                     && ReferenceEquals(_previewCancellation, cancellation)
-                    && ReferenceEquals(SelectedEntry, selectedEntry)
-                    && ReferenceEquals(_archive, previewArchive))
+                    && selectedEntry is { } failedEntry
+                    && previewArchive is { } failedArchive
+                    && ReferenceEquals(SelectedEntry, failedEntry)
+                    && ReferenceEquals(_archive, failedArchive))
                 {
+                    ClearPendingScriptListSlotRestore(failedArchive, failedEntry);
                     ScriptListStatus = $"Could not read LST: {exception.Message}";
                 }
             }
@@ -2221,6 +2291,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         ArgumentNullException.ThrowIfNull(entries);
 
+        ClearScriptListNavigationContext();
         Entries.Clear();
         foreach (var entry in entries)
         {
@@ -2358,6 +2429,51 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         OnPropertyChanged(nameof(ScriptListIntTargetStatus));
         OnPropertyChanged(nameof(ScriptListIntTargetDetails));
         OnPropertyChanged(nameof(CanNavigateToSelectedScriptInt));
+    }
+
+    private void SetScriptListReturnContext(ScriptListNavigationContext? context)
+    {
+        _scriptListReturnContext = context;
+        OnPropertyChanged(nameof(CanReturnToScriptList));
+    }
+
+    private void ClearScriptListNavigationContext()
+    {
+        SetScriptListReturnContext(null);
+        _pendingScriptListSlotRestore = null;
+    }
+
+    private void ClearPendingScriptListSlotRestore(
+        IGameArchive archive,
+        ArchiveEntry entry)
+    {
+        if (_pendingScriptListSlotRestore is { } context
+            && ReferenceEquals(context.Archive, archive)
+            && ReferenceEquals(context.ScriptListEntry, entry))
+        {
+            _pendingScriptListSlotRestore = null;
+        }
+    }
+
+    private void RestorePendingScriptListSlot(
+        IGameArchive archive,
+        ArchiveEntry entry,
+        FalloutScriptListReadResult readResult)
+    {
+        if (_pendingScriptListSlotRestore is not { } context
+            || !ReferenceEquals(context.Archive, archive)
+            || !ReferenceEquals(context.ScriptListEntry, entry))
+        {
+            return;
+        }
+
+        _pendingScriptListSlotRestore = null;
+        if (context.SlotIndex < 0 || context.SlotIndex >= readResult.Slots.Count)
+        {
+            return;
+        }
+
+        SelectedScriptListSlot = readResult.Slots[context.SlotIndex];
     }
 
     private static bool IsScriptListPath(string path) =>

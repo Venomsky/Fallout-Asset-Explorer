@@ -335,6 +335,16 @@ public sealed class ArchiveBrowserExtractionCommandTests
         Assert.False(viewModel.IsScriptListInspector);
         Assert.NotNull(viewModel.IntMetadataReadResult?.Metadata);
         Assert.Equal(2, archive.CopyCount);
+        Assert.True(viewModel.CanReturnToScriptList);
+        Assert.True(viewModel.ReturnToScriptList());
+        Assert.Same(listEntry, viewModel.SelectedEntry);
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.True(viewModel.IsScriptListInspector);
+        Assert.Same(viewModel.ScriptListSlots[3], viewModel.SelectedScriptListSlot);
+        Assert.Equal(3, archive.CopyCount);
+        Assert.False(viewModel.CanReturnToScriptList);
     }
 
     [Fact]
@@ -356,6 +366,7 @@ public sealed class ArchiveBrowserExtractionCommandTests
         Assert.False(viewModel.CanNavigateToSelectedScriptInt);
         Assert.False(viewModel.NavigateToSelectedScriptInt());
         Assert.Same(listEntry, viewModel.SelectedEntry);
+        Assert.False(viewModel.CanReturnToScriptList);
 
         viewModel.SelectedScriptListSlot = viewModel.ScriptListSlots[1];
 
@@ -363,12 +374,14 @@ public sealed class ArchiveBrowserExtractionCommandTests
         Assert.False(viewModel.CanNavigateToSelectedScriptInt);
         Assert.False(viewModel.NavigateToSelectedScriptInt());
         Assert.Same(listEntry, viewModel.SelectedEntry);
+        Assert.False(viewModel.CanReturnToScriptList);
 
         viewModel.SelectedScriptListSlot = viewModel.ScriptListSlots[2];
 
         Assert.Equal(FalloutScriptListIntTargetStatus.Invalid, viewModel.ScriptListIntTargetStatus);
         Assert.False(viewModel.NavigateToSelectedScriptInt());
         Assert.Same(listEntry, viewModel.SelectedEntry);
+        Assert.False(viewModel.CanReturnToScriptList);
     }
 
     [Fact]
@@ -392,6 +405,96 @@ public sealed class ArchiveBrowserExtractionCommandTests
         Assert.False(viewModel.CanNavigateToSelectedScriptInt);
         Assert.False(viewModel.NavigateToSelectedScriptInt());
         Assert.Same(listEntry, viewModel.SelectedEntry);
+        Assert.False(viewModel.CanReturnToScriptList);
+    }
+
+    [Fact]
+    public async Task ScriptListNavigation_ReturnContextIsClearedWhenEntriesAreReplacedOrClosed()
+    {
+        using var archive = new ControlledArchive();
+        using var replacementArchive = new ControlledArchive();
+        var listEntry = archive.AddEntry(FalloutScriptListResolver.ScriptListPath, "first.int\n"u8.ToArray());
+        var intEntry = archive.AddEntry("scripts/first.int", CreateValidInt());
+        var replacementList = replacementArchive.AddEntry(
+            FalloutScriptListResolver.ScriptListPath,
+            "second.int\n"u8.ToArray());
+        var replacementInt = replacementArchive.AddEntry("scripts/second.int", CreateValidInt());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = listEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+        viewModel.SelectedScriptListSlot = Assert.Single(viewModel.ScriptListSlots);
+
+        Assert.True(viewModel.NavigateToSelectedScriptInt());
+        Assert.Same(intEntry, viewModel.SelectedEntry);
+        Assert.True(viewModel.CanReturnToScriptList);
+
+        SetPrivateField(viewModel, "_archive", replacementArchive);
+        viewModel.SetEntries(replacementArchive.BrowserEntries);
+        Assert.False(viewModel.CanReturnToScriptList);
+        Assert.False(viewModel.ReturnToScriptList());
+
+        viewModel.SelectedEntry = replacementList;
+        await viewModel.PreviewSelectedEntryAsync();
+        viewModel.SelectedScriptListSlot = Assert.Single(viewModel.ScriptListSlots);
+        Assert.True(viewModel.NavigateToSelectedScriptInt());
+        Assert.Same(replacementInt, viewModel.SelectedEntry);
+        Assert.True(viewModel.CanReturnToScriptList);
+
+        viewModel.SetEntries([]);
+        Assert.False(viewModel.CanReturnToScriptList);
+        Assert.False(viewModel.ReturnToScriptList());
+    }
+
+    [Fact]
+    public async Task ScriptListNavigation_DoesNotRestoreSlotAfterSelectionChangesDuringRead()
+    {
+        var synchronizationContext = SynchronizationContext.Current;
+        AvaloniaTestEnvironment.EnsureInitialized();
+        SynchronizationContext.SetSynchronizationContext(synchronizationContext);
+        using var archive = new ControlledArchive();
+        var listEntry = archive.AddEntry(
+            FalloutScriptListResolver.ScriptListPath,
+            "first.int\nfirst.int\n"u8.ToArray());
+        archive.AddEntry("scripts/first.int", CreateValidInt());
+        var msgEntry = archive.AddEntry("dialog/current.msg", "{2}{}{current}"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = listEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+        viewModel.SelectedScriptListSlot = viewModel.ScriptListSlots[1];
+        Assert.True(viewModel.NavigateToSelectedScriptInt());
+        await viewModel.PreviewSelectedEntryAsync();
+
+        var listRead = archive.BlockEntry(listEntry.Path);
+        Task? stalePreview = null;
+        try
+        {
+            Assert.True(viewModel.ReturnToScriptList());
+            stalePreview = viewModel.PreviewSelectedEntryAsync();
+            await listRead.WaitStartedAsync();
+
+            viewModel.SelectedEntry = msgEntry;
+            await viewModel.PreviewSelectedEntryAsync();
+            listRead.Release();
+            await stalePreview.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Same(msgEntry, viewModel.SelectedEntry);
+            Assert.True(viewModel.IsMsgInspector);
+            Assert.False(viewModel.IsScriptListInspector);
+            Assert.Null(viewModel.SelectedScriptListSlot);
+            Assert.False(viewModel.CanReturnToScriptList);
+        }
+        finally
+        {
+            listRead.Release();
+            if (stalePreview is not null)
+            {
+                await stalePreview.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
     }
 
     [Fact]
@@ -501,6 +604,7 @@ public sealed class ArchiveBrowserExtractionCommandTests
         Assert.False(viewModel.IsMsgInspector);
         Assert.False(viewModel.IsMapInspector);
         Assert.Equal(FalloutGame.Fallout2, metadata.Game);
+        Assert.False(viewModel.CanReturnToScriptList);
         Assert.Equal(1, metadata.ProcedureCount);
         Assert.Equal(4, procedure.RawField0);
         Assert.Equal(0, procedure.RawField4);
