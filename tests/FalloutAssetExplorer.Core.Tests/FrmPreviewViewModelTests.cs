@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Buffers.Binary;
 using System.Text;
@@ -341,15 +342,63 @@ public sealed class FrmPreviewViewModelTests
 
 internal static class AvaloniaTestEnvironment
 {
-    private static readonly Lazy<bool> Initialized = new(Initialize);
+    private static readonly BlockingCollection<Action> Actions = new();
+    private static readonly Lazy<Task> Initialized = new(StartUiThread);
 
-    public static void EnsureInitialized() => _ = Initialized.Value;
+    public static void EnsureInitialized() => Initialized.Value.GetAwaiter().GetResult();
 
-    private static bool Initialize()
+    public static void RunOnUiThread(Action action)
     {
-        AppBuilder.Configure<global::FalloutAssetExplorer.App.App>()
-            .UsePlatformDetect()
-            .SetupWithoutStarting();
-        return true;
+        ArgumentNullException.ThrowIfNull(action);
+        EnsureInitialized();
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Actions.Add(() =>
+        {
+            try
+            {
+                action();
+                completed.TrySetResult();
+            }
+            catch (Exception exception)
+            {
+                completed.TrySetException(exception);
+            }
+        });
+        completed.Task.GetAwaiter().GetResult();
+    }
+
+    private static Task StartUiThread()
+    {
+        var initialized = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        var uiThread = new Thread(() =>
+        {
+            try
+            {
+                AppBuilder.Configure<global::FalloutAssetExplorer.App.App>()
+                    .UsePlatformDetect()
+                    .SetupWithoutStarting();
+                initialized.TrySetResult();
+                foreach (var action in Actions.GetConsumingEnumerable())
+                {
+                    action();
+                }
+            }
+            catch (Exception exception)
+            {
+                initialized.TrySetException(exception);
+            }
+        })
+        {
+            IsBackground = true,
+            Name = "Avalonia test UI thread"
+        };
+        if (OperatingSystem.IsWindows())
+        {
+            uiThread.SetApartmentState(ApartmentState.STA);
+        }
+
+        uiThread.Start();
+        return initialized.Task;
     }
 }

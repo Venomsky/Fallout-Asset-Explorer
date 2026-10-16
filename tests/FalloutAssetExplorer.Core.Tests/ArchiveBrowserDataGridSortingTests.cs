@@ -12,38 +12,39 @@ public sealed class ArchiveBrowserDataGridSortingTests
     [Fact]
     public void RefreshVisibleEntries_PreservesPathSortInDataGridView()
     {
-        AvaloniaTestEnvironment.EnsureInitialized();
-
-        using var viewModel = new ArchiveBrowserViewModel();
-        viewModel.Entries.Add(new ArchiveEntry("maps\\zeta.frm", 40, 30, "master.dat"));
-        viewModel.Entries.Add(new ArchiveEntry("art\\beta.frm", 20, 15, "master.dat"));
-        viewModel.Entries.Add(new ArchiveEntry("maps\\alphabet.frm", 30, 22, "master.dat"));
-        viewModel.Entries.Add(new ArchiveEntry("art\\alpha.frm", 10, 8, "master.dat"));
-        viewModel.SearchText = ".frm";
-
-        var dataGrid = new DataGrid
+        AvaloniaTestEnvironment.RunOnUiThread(() =>
         {
-            ItemsSource = viewModel.VisibleEntries
-        };
-        var collectionView = dataGrid.CollectionView;
-        Assert.NotNull(collectionView);
-        Assert.True(collectionView.CanSort);
-        var pathComparer = Comparer<ArchiveEntry>.Create(
-            (left, right) => StringComparer.Ordinal.Compare(left.Path, right.Path));
-        collectionView.SortDescriptions.Add(
-            new DataGridComparerSortDescription(pathComparer, ListSortDirection.Ascending));
+            using var viewModel = new ArchiveBrowserViewModel();
+            viewModel.Entries.Add(new ArchiveEntry("maps\\zeta.frm", 40, 30, "master.dat"));
+            viewModel.Entries.Add(new ArchiveEntry("art\\beta.frm", 20, 15, "master.dat"));
+            viewModel.Entries.Add(new ArchiveEntry("maps\\alphabet.frm", 30, 22, "master.dat"));
+            viewModel.Entries.Add(new ArchiveEntry("art\\alpha.frm", 10, 8, "master.dat"));
+            viewModel.SearchText = ".frm";
 
-        viewModel.SearchText = "alpha";
+            var dataGrid = new DataGrid
+            {
+                ItemsSource = viewModel.VisibleEntries
+            };
+            var collectionView = dataGrid.CollectionView;
+            Assert.NotNull(collectionView);
+            Assert.True(collectionView.CanSort);
+            var pathComparer = Comparer<ArchiveEntry>.Create(
+                (left, right) => StringComparer.Ordinal.Compare(left.Path, right.Path));
+            collectionView.SortDescriptions.Add(
+                new DataGridComparerSortDescription(pathComparer, ListSortDirection.Ascending));
 
-        Assert.Equal(
-            ["art\\alpha.frm", "maps\\alphabet.frm"],
-            collectionView.Cast<ArchiveEntry>().Select(entry => entry.Path));
+            viewModel.SearchText = "alpha";
 
-        viewModel.SearchText = string.Empty;
+            Assert.Equal(
+                ["art\\alpha.frm", "maps\\alphabet.frm"],
+                collectionView.Cast<ArchiveEntry>().Select(entry => entry.Path));
 
-        Assert.Equal(
-            ["art\\alpha.frm", "art\\beta.frm", "maps\\alphabet.frm", "maps\\zeta.frm"],
-            collectionView.Cast<ArchiveEntry>().Select(entry => entry.Path));
-        Assert.Single(collectionView.SortDescriptions);
+            viewModel.SearchText = string.Empty;
+
+            Assert.Equal(
+                ["art\\alpha.frm", "art\\beta.frm", "maps\\alphabet.frm", "maps\\zeta.frm"],
+                collectionView.Cast<ArchiveEntry>().Select(entry => entry.Path));
+            Assert.Single(collectionView.SortDescriptions);
+        });
     }
 }

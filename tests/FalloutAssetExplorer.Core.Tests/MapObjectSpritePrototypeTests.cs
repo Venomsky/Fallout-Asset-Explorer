@@ -450,7 +450,10 @@ public sealed class MapObjectSpritePrototypeTests
     }
 
     [Fact]
-    public void Render_ComposesOverlappingSpritesAndPreservesTransparencyInInputOrder()
+    public void Render_ComposesOverlappingSpritesAndPreservesTransparencyInInputOrder() =>
+        AvaloniaTestEnvironment.RunOnUiThread(RenderOverlappingSpritesOnUiThread);
+
+    private void RenderOverlappingSpritesOnUiThread()
     {
         EnsureAvaloniaInitialized();
 
@@ -518,7 +521,10 @@ public sealed class MapObjectSpritePrototypeTests
     }
 
     [Fact]
-    public void Render_DrawsSpritesWithoutMarkersWhenMarkerLayerIsHidden()
+    public void Render_DrawsSpritesWithoutMarkersWhenMarkerLayerIsHidden() =>
+        AvaloniaTestEnvironment.RunOnUiThread(RenderSpritesWithoutMarkersOnUiThread);
+
+    private void RenderSpritesWithoutMarkersOnUiThread()
     {
         EnsureAvaloniaInitialized();
         const int viewportWidth = 640;
@@ -568,7 +574,10 @@ public sealed class MapObjectSpritePrototypeTests
     }
 
     [Fact]
-    public void ObjectMarkerSelection_IsEnabledOnlyWhenMarkersAreVisible()
+    public void ObjectMarkerSelection_IsEnabledOnlyWhenMarkersAreVisible() =>
+        AvaloniaTestEnvironment.RunOnUiThread(CheckObjectMarkerSelectionOnUiThread);
+
+    private void CheckObjectMarkerSelectionOnUiThread()
     {
         EnsureAvaloniaInitialized();
         var view = new MapIsometricFloorView
@@ -591,7 +600,10 @@ public sealed class MapObjectSpritePrototypeTests
     }
 
     [Fact]
-    public void ContentBounds_IncludesTallSpriteWhenMarkersAreHidden()
+    public void ContentBounds_IncludesTallSpriteWhenMarkersAreHidden() =>
+        AvaloniaTestEnvironment.RunOnUiThread(CheckContentBoundsOnUiThread);
+
+    private void CheckContentBoundsOnUiThread()
     {
         EnsureAvaloniaInitialized();
         var placement = CreatePlacement(1, rotation: 0, frame: 0);
