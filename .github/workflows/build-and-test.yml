@@ -13,6 +13,7 @@ permissions:
 jobs:
   build-and-test:
     runs-on: windows-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -30,4 +31,29 @@ jobs:
         run: dotnet build FalloutAssetExplorer.sln -c Release --no-restore
 
       - name: Run tests
-        run: dotnet test FalloutAssetExplorer.sln -c Release --no-build --no-restore
+        shell: pwsh
+        run: >-
+          dotnet test FalloutAssetExplorer.sln -c Release --no-build --no-restore
+          --logger "console;verbosity=detailed"
+          --blame-hang --blame-hang-timeout 2m
+          --results-directory "$env:RUNNER_TEMP\falloutassetexplorer-test-results-${{ github.run_id }}"
+
+      - name: Check test diagnostics
+        id: test-diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          $resultsDirectory = Join-Path $env:RUNNER_TEMP "falloutassetexplorer-test-results-${{ github.run_id }}"
+          $hasFiles = $false
+          if (Test-Path -LiteralPath $resultsDirectory -PathType Container) {
+            $hasFiles = $null -ne (Get-ChildItem -LiteralPath $resultsDirectory -File -Recurse -Force | Select-Object -First 1)
+          }
+          "has_files=$($hasFiles.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+
+      - name: Upload test diagnostics
+        if: always() && steps.test-diagnostics.outputs.has_files == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-diagnostics-${{ github.run_id }}
+          path: ${{ runner.temp }}\falloutassetexplorer-test-results-${{ github.run_id }}
+          if-no-files-found: ignore
