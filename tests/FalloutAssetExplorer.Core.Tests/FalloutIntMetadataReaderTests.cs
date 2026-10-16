@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using FalloutAssetExplorer.Core;
 using Xunit;
 
@@ -58,6 +59,61 @@ public sealed class FalloutIntMetadataReaderTests
         Assert.Equal(new byte[] { (byte)'N', (byte)'A', (byte)'M', (byte)'E' }, procedure.NameBytes.ToArray());
         Assert.Equal(7, result.Metadata.IdentifierPayloadLength);
         Assert.Equal(2, result.Metadata.RawStaticStringTablePrefix);
+    }
+
+    [Fact]
+    public void Parse_ExposesRawIdentifierTableIncludingPrefixAndNonAsciiBytes()
+    {
+        var bytes = BuildFile(
+            [[6, 0, 0, 0, 60, 0]],
+            [0x80, 0xFF, (byte)'x', 0]);
+
+        var result = FalloutIntMetadataReader.Parse(FalloutGame.Fallout1, bytes);
+
+        Assert.True(result.IsSuccess);
+        var metadata = result.Metadata!;
+        Assert.Equal(
+            new byte[] { 0, 0, 0, 4, 0x80, 0xFF, (byte)'x', 0 },
+            metadata.IdentifierTableBytes.ToArray());
+        Assert.Equal(4, metadata.IdentifierPayloadLength);
+        Assert.Equal(new byte[] { (byte)'x' }, Assert.Single(metadata.Procedures).NameBytes.ToArray());
+
+        Array.Fill(bytes, (byte)0);
+        Assert.Equal(
+            new byte[] { 0, 0, 0, 4, 0x80, 0xFF, (byte)'x', 0 },
+            metadata.IdentifierTableBytes.ToArray());
+    }
+
+    [Fact]
+    public void PublicByteViews_UseReadOnlySpansAndNameBytesReturnsDetachedMemory()
+    {
+        var result = FalloutIntMetadataReader.Parse(
+            FalloutGame.Fallout2,
+            BuildFile([[4, 0, 0, 0, 60, 0]], "name\0"u8.ToArray(), [0x41, 0]));
+
+        Assert.True(result.IsSuccess);
+        var metadata = result.Metadata!;
+        var procedure = Assert.Single(metadata.Procedures);
+        var candidate = metadata.GetStaticStringCandidate(0);
+        var identifierTableBefore = metadata.IdentifierTableBytes.ToArray();
+        var nameBefore = procedure.NameBytes.ToArray();
+        var candidateBefore = candidate.CandidateBytes.ToArray();
+
+        Assert.Equal(
+            typeof(ReadOnlySpan<byte>),
+            typeof(FalloutIntMetadata).GetProperty(nameof(metadata.IdentifierTableBytes))!.PropertyType);
+        Assert.Equal(
+            typeof(ReadOnlyMemory<byte>),
+            typeof(FalloutIntProcedureMetadata).GetProperty(nameof(procedure.NameBytes))!.PropertyType);
+        Assert.Equal(
+            typeof(ReadOnlySpan<byte>),
+            typeof(FalloutIntStaticStringCandidate).GetProperty(nameof(candidate.CandidateBytes))!.PropertyType);
+
+        MutateArrayRecoveredFromMemoryMarshal(procedure.NameBytes);
+
+        Assert.Equal(identifierTableBefore, metadata.IdentifierTableBytes.ToArray());
+        Assert.Equal(nameBefore, procedure.NameBytes.ToArray());
+        Assert.Equal(candidateBefore, metadata.GetStaticStringCandidate(0).CandidateBytes.ToArray());
     }
 
     [Fact]
@@ -166,11 +222,12 @@ public sealed class FalloutIntMetadataReaderTests
     }
 
     [Theory]
+    [InlineData(0)]
     [InlineData(-1)]
     [InlineData(int.MaxValue)]
     public void Parse_PreservesRawStaticStringPrefixWithoutAssumingItsMeaning(int rawPrefix)
     {
-        var bytes = BuildFile([], [], [0xAA, 0xBB]);
+        var bytes = BuildFile([], [], [0xAA, 0x00, 0xBB]);
         WriteInt32(bytes, 50, rawPrefix);
 
         var result = FalloutIntMetadataReader.Parse(FalloutGame.Fallout2, bytes);
@@ -178,7 +235,66 @@ public sealed class FalloutIntMetadataReaderTests
         Assert.True(result.IsSuccess);
         Assert.Equal(rawPrefix, result.Metadata!.RawStaticStringTablePrefix);
         Assert.Equal(54, result.Metadata.StaticStringDataOffset);
-        Assert.Equal(2, result.Metadata.StaticStringDataAvailableLength);
+        Assert.Equal(3, result.Metadata.StaticStringDataAvailableLength);
+        var candidate = result.Metadata.GetStaticStringCandidate(0);
+        Assert.Equal(
+            FalloutIntStaticStringCandidateStatus.NullTerminatedBeforeEndOfFile,
+            candidate.Status);
+        Assert.Equal(new byte[] { 0xAA }, candidate.CandidateBytes.ToArray());
+        Assert.False(candidate.StaticStringTableBoundaryIsKnown);
+    }
+
+    [Fact]
+    public void GetStaticStringCandidate_ReturnsBytesBeforeNulWithoutDecoding()
+    {
+        var bytes = BuildFile([], [], [0x41, 0x80, 0, 0x42]);
+
+        var result = FalloutIntMetadataReader.Parse(FalloutGame.Fallout1, bytes);
+
+        Assert.True(result.IsSuccess);
+        var candidate = result.Metadata!.GetStaticStringCandidate(0);
+        Assert.Equal(
+            FalloutIntStaticStringCandidateStatus.NullTerminatedBeforeEndOfFile,
+            candidate.Status);
+        Assert.Equal(new byte[] { 0x41, 0x80 }, candidate.CandidateBytes.ToArray());
+        Assert.False(candidate.StaticStringTableBoundaryIsKnown);
+
+        Array.Fill(bytes, (byte)0);
+        Assert.Equal(new byte[] { 0x41, 0x80 }, candidate.CandidateBytes.ToArray());
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(2)]
+    [InlineData(int.MaxValue)]
+    public void GetStaticStringCandidate_ReportsInvalidOffsets(int offset)
+    {
+        var result = FalloutIntMetadataReader.Parse(
+            FalloutGame.Fallout2,
+            BuildFile([], [], [0x41, 0x42]));
+
+        Assert.True(result.IsSuccess);
+        var candidate = result.Metadata!.GetStaticStringCandidate(offset);
+        Assert.Equal(offset, candidate.Offset);
+        Assert.Equal(FalloutIntStaticStringCandidateStatus.InvalidOffset, candidate.Status);
+        Assert.Empty(candidate.CandidateBytes.ToArray());
+        Assert.False(candidate.StaticStringTableBoundaryIsKnown);
+    }
+
+    [Fact]
+    public void GetStaticStringCandidate_ReportsUnterminatedBytesThroughEndOfFile()
+    {
+        var result = FalloutIntMetadataReader.Parse(
+            FalloutGame.Fallout2,
+            BuildFile([], [], [0x41, 0x80]));
+
+        Assert.True(result.IsSuccess);
+        var candidate = result.Metadata!.GetStaticStringCandidate(1);
+        Assert.Equal(
+            FalloutIntStaticStringCandidateStatus.UnterminatedAtEndOfFile,
+            candidate.Status);
+        Assert.Equal(new byte[] { 0x80 }, candidate.CandidateBytes.ToArray());
+        Assert.False(candidate.StaticStringTableBoundaryIsKnown);
     }
 
     [Theory]
@@ -266,6 +382,13 @@ public sealed class FalloutIntMetadataReaderTests
         Assert.Equal(expectedCode, result.Diagnostic?.Code);
         Assert.True(result.Diagnostic!.ByteOffset >= 0);
         Assert.False(string.IsNullOrWhiteSpace(result.Diagnostic.Message));
+    }
+
+    private static void MutateArrayRecoveredFromMemoryMarshal(ReadOnlyMemory<byte> memory)
+    {
+        Assert.True(MemoryMarshal.TryGetArray(memory, out var segment));
+        Assert.NotNull(segment.Array);
+        segment.Array![segment.Offset] ^= 0xFF;
     }
 
     private static byte[] BuildFile(

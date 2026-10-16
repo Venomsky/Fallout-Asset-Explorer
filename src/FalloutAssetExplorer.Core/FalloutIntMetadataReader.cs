@@ -187,10 +187,11 @@ public static class FalloutIntMetadataReader
             procedureCount,
             identifierTableOffset,
             identifierPayloadLength,
+            identifierTable,
             staticStringTableOffset,
             rawStaticStringTablePrefix,
             staticStringDataOffset,
-            checked((int)(bytes.Length - staticStringDataOffset)),
+            bytes.Slice(checked((int)staticStringDataOffset)).ToArray(),
             Array.AsReadOnly(procedures.ToArray()));
         return FalloutIntMetadataReadResult.Success(metadata);
     }
@@ -299,37 +300,53 @@ public static class FalloutIntMetadataReader
             new FalloutIntMetadataDiagnostic(code, byteOffset, message));
 }
 
-public sealed record FalloutIntProcedureMetadata(
-    long RecordOffset,
-    int RawField0,
-    int RawField4,
-    int RawField8,
-    int RawField12,
-    int RawField16,
-    int RawField20,
-    ReadOnlyMemory<byte> NameBytes);
+public sealed record FalloutIntProcedureMetadata
+    (
+        long RecordOffset,
+        int RawField0,
+        int RawField4,
+        int RawField8,
+        int RawField12,
+        int RawField16,
+        int RawField20,
+        ReadOnlyMemory<byte> NameBytes)
+{
+    private byte[] nameBytes = NameBytes.ToArray();
+
+    public ReadOnlyMemory<byte> NameBytes
+    {
+        get => nameBytes.ToArray();
+        init => nameBytes = value.ToArray();
+    }
+}
 
 public sealed class FalloutIntMetadata
 {
+    private readonly byte[] identifierTable;
+    private readonly byte[] staticStringData;
+
     internal FalloutIntMetadata(
         FalloutGame game,
         int procedureCount,
         long identifierTableOffset,
         int identifierPayloadLength,
+        byte[] identifierTable,
         long staticStringTableOffset,
         int rawStaticStringTablePrefix,
         long staticStringDataOffset,
-        int staticStringDataAvailableLength,
+        byte[] staticStringData,
         IReadOnlyList<FalloutIntProcedureMetadata> procedures)
     {
         Game = game;
         ProcedureCount = procedureCount;
         IdentifierTableOffset = identifierTableOffset;
         IdentifierPayloadLength = identifierPayloadLength;
+        this.identifierTable = identifierTable;
         StaticStringTableOffset = staticStringTableOffset;
         RawStaticStringTablePrefix = rawStaticStringTablePrefix;
         StaticStringDataOffset = staticStringDataOffset;
-        StaticStringDataAvailableLength = staticStringDataAvailableLength;
+        this.staticStringData = staticStringData;
+        StaticStringDataAvailableLength = staticStringData.Length;
         Procedures = procedures;
     }
 
@@ -340,6 +357,12 @@ public sealed class FalloutIntMetadata
     public long IdentifierTableOffset { get; }
 
     public int IdentifierPayloadLength { get; }
+
+    /// <summary>
+    /// The complete length-prefixed identifier table, including its four-byte prefix, as a
+    /// read-only view. Procedure name offsets are relative to the beginning of this memory.
+    /// </summary>
+    public ReadOnlySpan<byte> IdentifierTableBytes => identifierTable;
 
     public long StaticStringTableOffset { get; }
 
@@ -358,6 +381,85 @@ public sealed class FalloutIntMetadata
     public int StaticStringDataAvailableLength { get; }
 
     public IReadOnlyList<FalloutIntProcedureMetadata> Procedures { get; }
+
+    /// <summary>
+    /// Returns bytes at an offset relative to the static-string data start. The returned range is
+    /// bounded by end of file; that boundary is not a confirmed end of the static-string table.
+    /// A found NUL is excluded from CandidateBytes.
+    /// </summary>
+    public FalloutIntStaticStringCandidate GetStaticStringCandidate(int offset)
+    {
+        if (offset < 0 || offset >= staticStringData.Length)
+        {
+            return new(
+                offset,
+                FalloutIntStaticStringCandidateStatus.InvalidOffset,
+                staticStringData,
+                0,
+                0);
+        }
+
+        var remainingData = staticStringData.AsSpan(offset);
+        var terminatorOffset = remainingData.IndexOf((byte)0);
+        if (terminatorOffset >= 0)
+        {
+            return new(
+                offset,
+                FalloutIntStaticStringCandidateStatus.NullTerminatedBeforeEndOfFile,
+                staticStringData,
+                offset,
+                terminatorOffset);
+        }
+
+        return new(
+            offset,
+            FalloutIntStaticStringCandidateStatus.UnterminatedAtEndOfFile,
+            staticStringData,
+            offset,
+            remainingData.Length);
+    }
+}
+
+public enum FalloutIntStaticStringCandidateStatus
+{
+    InvalidOffset,
+    NullTerminatedBeforeEndOfFile,
+    UnterminatedAtEndOfFile
+}
+
+public sealed class FalloutIntStaticStringCandidate
+{
+    private readonly byte[] data;
+    private readonly int dataOffset;
+    private readonly int dataLength;
+
+    internal FalloutIntStaticStringCandidate(
+        int offset,
+        FalloutIntStaticStringCandidateStatus status,
+        byte[] data,
+        int dataOffset,
+        int dataLength)
+    {
+        Offset = offset;
+        Status = status;
+        this.data = data;
+        this.dataOffset = dataOffset;
+        this.dataLength = dataLength;
+    }
+
+    public int Offset { get; }
+
+    public FalloutIntStaticStringCandidateStatus Status { get; }
+
+    /// <summary>
+    /// Candidate bytes as a read-only view. A found NUL is excluded.
+    /// </summary>
+    public ReadOnlySpan<byte> CandidateBytes => data.AsSpan(dataOffset, dataLength);
+
+    /// <summary>
+    /// The inspected CE readers do not establish the end of the static-string table.
+    /// </summary>
+    public bool StaticStringTableBoundaryIsKnown => false;
 }
 
 public enum FalloutIntMetadataDiagnosticCode
