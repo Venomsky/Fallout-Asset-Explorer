@@ -107,6 +107,14 @@ public partial class MainWindow : Window
         }
     }
 
+    private void NavigateToScriptInt_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is ArchiveBrowserViewModel viewModel)
+        {
+            viewModel.NavigateToSelectedScriptInt();
+        }
+    }
+
     private async void CopyResourcePath_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is not ArchiveBrowserViewModel viewModel

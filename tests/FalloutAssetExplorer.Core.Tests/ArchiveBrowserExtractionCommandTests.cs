@@ -78,7 +78,10 @@ public sealed class ArchiveBrowserExtractionCommandTests
         viewModel.SelectedEntry = Assert.Single(viewModel.Entries);
         await viewModel.PreviewSelectedEntryAsync();
 
-        Assert.Equal("Select a .FRM, .MAP, .PRO, .MSG, or .INT entry to inspect.", viewModel.PreviewMessage);
+        Assert.Equal(
+            $"Only '{FalloutScriptListResolver.ScriptListPath}' is supported by the script-list resolver.",
+            viewModel.PreviewMessage);
+        Assert.True(viewModel.IsScriptListInspector);
         Assert.Null(viewModel.FrmPreview.PreviewBitmap);
         Assert.False(viewModel.FrmPreview.HasPreview);
         Assert.Single(viewModel.VisibleEntries);
@@ -277,6 +280,203 @@ public sealed class ArchiveBrowserExtractionCommandTests
             $"declares {declaredSize} bytes but {msgBytes.LongLength} bytes were read",
             viewModel.MsgStatus);
         Assert.StartsWith("Could not read MSG:", viewModel.PreviewMessage);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_DisplaysScriptListSlotsAndNavigatesOnlyToUniqueIntEntry()
+    {
+        using var archive = new ControlledArchive();
+        var listEntry = archive.AddEntry(
+            "SCRIPTS\\SCRIPTS.LST",
+            "first.int\n\n# comment\nfirst.int\nbad name.int\n"u8.ToArray());
+        var targetEntry = archive.AddEntry("SCRIPTS\\FIRST.INT", CreateValidInt());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = listEntry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.True(viewModel.IsScriptListInspector);
+        Assert.Equal("Script List Inspector", viewModel.PreviewTitle);
+        Assert.Equal(5, viewModel.ScriptListSlots.Count);
+        Assert.Equal(Enumerable.Range(0, 5), viewModel.ScriptListSlots.Select(slot => slot.Slot));
+        Assert.Equal(
+            new[]
+            {
+                FalloutScriptListSlotStatus.Candidate,
+                FalloutScriptListSlotStatus.Empty,
+                FalloutScriptListSlotStatus.InvalidName,
+                FalloutScriptListSlotStatus.Candidate,
+                FalloutScriptListSlotStatus.InvalidName
+            },
+            viewModel.ScriptListSlots.Select(slot => slot.Status));
+        Assert.Equal("first", viewModel.ScriptListSlots[0].ScriptName);
+        Assert.Equal("scripts/first.int", viewModel.ScriptListSlots[0].IntPathCandidate);
+        Assert.Equal(viewModel.ScriptListSlots[0].IntPathCandidate, viewModel.ScriptListSlots[3].IntPathCandidate);
+        Assert.Equal(1, archive.CopyCount);
+
+        viewModel.SearchText = "missing-search-text";
+        viewModel.SelectedExtension = ".LST";
+        viewModel.SelectedScriptListSlot = viewModel.ScriptListSlots[3];
+
+        Assert.Equal(FalloutScriptListIntTargetStatus.Found, viewModel.ScriptListIntTargetStatus);
+        Assert.Contains("Found exactly one", viewModel.ScriptListIntTargetDetails);
+        Assert.True(viewModel.CanNavigateToSelectedScriptInt);
+        Assert.Same(listEntry, viewModel.SelectedEntry);
+
+        Assert.True(viewModel.NavigateToSelectedScriptInt());
+
+        Assert.Same(targetEntry, viewModel.SelectedEntry);
+        Assert.Equal(".INT", viewModel.SelectedExtension);
+        Assert.Equal(string.Empty, viewModel.SearchText);
+        await viewModel.PreviewSelectedEntryAsync();
+        Assert.True(viewModel.IsIntInspector);
+        Assert.False(viewModel.IsScriptListInspector);
+        Assert.NotNull(viewModel.IntMetadataReadResult?.Metadata);
+        Assert.Equal(2, archive.CopyCount);
+    }
+
+    [Fact]
+    public async Task ScriptListNavigation_DisablesMissingAndInvalidSlots()
+    {
+        using var archive = new ControlledArchive();
+        var listEntry = archive.AddEntry(
+            FalloutScriptListResolver.ScriptListPath,
+            "missing.int\n# comment\nbad name.int\n"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = listEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+
+        viewModel.SelectedScriptListSlot = viewModel.ScriptListSlots[0];
+
+        Assert.Equal(FalloutScriptListIntTargetStatus.Missing, viewModel.ScriptListIntTargetStatus);
+        Assert.False(viewModel.CanNavigateToSelectedScriptInt);
+        Assert.False(viewModel.NavigateToSelectedScriptInt());
+        Assert.Same(listEntry, viewModel.SelectedEntry);
+
+        viewModel.SelectedScriptListSlot = viewModel.ScriptListSlots[1];
+
+        Assert.Equal(FalloutScriptListIntTargetStatus.Invalid, viewModel.ScriptListIntTargetStatus);
+        Assert.False(viewModel.CanNavigateToSelectedScriptInt);
+        Assert.False(viewModel.NavigateToSelectedScriptInt());
+        Assert.Same(listEntry, viewModel.SelectedEntry);
+
+        viewModel.SelectedScriptListSlot = viewModel.ScriptListSlots[2];
+
+        Assert.Equal(FalloutScriptListIntTargetStatus.Invalid, viewModel.ScriptListIntTargetStatus);
+        Assert.False(viewModel.NavigateToSelectedScriptInt());
+        Assert.Same(listEntry, viewModel.SelectedEntry);
+    }
+
+    [Fact]
+    public async Task ScriptListNavigation_DisablesAmbiguousTarget()
+    {
+        using var archive = new ControlledArchive(FalloutGame.Fallout1);
+        var listEntry = archive.AddEntry(
+            FalloutScriptListResolver.ScriptListPath,
+            "first.int\n"u8.ToArray());
+        archive.AddEntry("scripts/first.int", CreateValidInt());
+        archive.AddDuplicateEntry("SCRIPTS\\FIRST.INT", CreateValidInt());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = listEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+        viewModel.SelectedScriptListSlot = Assert.Single(viewModel.ScriptListSlots);
+
+        Assert.Equal(FalloutScriptListIntTargetStatus.Ambiguous, viewModel.ScriptListIntTargetStatus);
+        Assert.Contains("2 archive entries", viewModel.ScriptListIntTargetDetails);
+        Assert.False(viewModel.CanNavigateToSelectedScriptInt);
+        Assert.False(viewModel.NavigateToSelectedScriptInt());
+        Assert.Same(listEntry, viewModel.SelectedEntry);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_DoesNotPublishStaleScriptListAfterSelectionChanges()
+    {
+        var synchronizationContext = SynchronizationContext.Current;
+        AvaloniaTestEnvironment.EnsureInitialized();
+        SynchronizationContext.SetSynchronizationContext(synchronizationContext);
+        using var archive = new ControlledArchive();
+        var listEntry = archive.AddEntry(FalloutScriptListResolver.ScriptListPath, "stale.int\n"u8.ToArray());
+        var msgEntry = archive.AddEntry("dialog/current.msg", "{2}{}{current}"u8.ToArray());
+        var listRead = archive.BlockEntry(listEntry.Path);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        Task? stalePreview = null;
+        try
+        {
+            viewModel.SelectedEntry = listEntry;
+            stalePreview = viewModel.PreviewSelectedEntryAsync();
+            await listRead.WaitStartedAsync();
+
+            viewModel.SelectedEntry = msgEntry;
+            await viewModel.PreviewSelectedEntryAsync();
+            listRead.Release();
+            await stalePreview.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.True(viewModel.IsMsgInspector);
+            Assert.False(viewModel.IsScriptListInspector);
+            Assert.Empty(viewModel.ScriptListSlots);
+            Assert.Equal(msgEntry.Path, viewModel.PreviewMessage);
+        }
+        finally
+        {
+            listRead.Release();
+            if (stalePreview is not null)
+            {
+                await stalePreview.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_DoesNotPublishScriptListFromReplacedArchive()
+    {
+        var synchronizationContext = SynchronizationContext.Current;
+        AvaloniaTestEnvironment.EnsureInitialized();
+        SynchronizationContext.SetSynchronizationContext(synchronizationContext);
+        using var oldArchive = new ControlledArchive();
+        using var newArchive = new ControlledArchive();
+        var oldList = oldArchive.AddEntry(FalloutScriptListResolver.ScriptListPath, "old.int\n"u8.ToArray());
+        var newList = newArchive.AddEntry(FalloutScriptListResolver.ScriptListPath, "new.int\n"u8.ToArray());
+        var oldRead = oldArchive.BlockEntry(oldList.Path);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", oldArchive);
+        viewModel.SetEntries(oldArchive.BrowserEntries);
+
+        Task? stalePreview = null;
+        try
+        {
+            viewModel.SelectedEntry = oldList;
+            stalePreview = viewModel.PreviewSelectedEntryAsync();
+            await oldRead.WaitStartedAsync();
+
+            SetPrivateField(viewModel, "_archive", newArchive);
+            viewModel.SetEntries(newArchive.BrowserEntries);
+            viewModel.SelectedEntry = newList;
+            await viewModel.PreviewSelectedEntryAsync();
+            oldRead.Release();
+            await stalePreview.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.True(viewModel.IsScriptListInspector);
+            Assert.Single(viewModel.ScriptListSlots);
+            Assert.Equal("new", viewModel.ScriptListSlots[0].ScriptName);
+            Assert.Equal(newList.Path, viewModel.PreviewMessage);
+        }
+        finally
+        {
+            oldRead.Release();
+            if (stalePreview is not null)
+            {
+                await stalePreview.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
     }
 
     [Fact]
@@ -1288,12 +1488,14 @@ public sealed class ArchiveBrowserExtractionCommandTests
     {
         private readonly Dictionary<string, (ArchiveEntry Entry, byte[] Bytes)> _entries =
             new(StringComparer.OrdinalIgnoreCase);
+        private readonly List<(ArchiveEntry Entry, byte[] Bytes)> _additionalEntries = [];
         private readonly Dictionary<string, ReadGate> _readGates =
             new(StringComparer.OrdinalIgnoreCase);
         private int _copyCount;
 
-        public ControlledArchive()
+        public ControlledArchive(FalloutGame game = FalloutGame.Fallout2)
         {
+            Game = game;
             Path = System.IO.Path.Combine(
                 System.IO.Path.GetTempPath(),
                 $"fae-controlled-{Guid.NewGuid():N}.dat");
@@ -1302,12 +1504,14 @@ public sealed class ArchiveBrowserExtractionCommandTests
 
         public string Path { get; }
 
-        public FalloutGame Game => FalloutGame.Fallout2;
+        public FalloutGame Game { get; }
 
-        public ArchiveFormat Format => ArchiveFormat.Dat2;
+        public ArchiveFormat Format => Game == FalloutGame.Fallout1 ? ArchiveFormat.Dat1 : ArchiveFormat.Dat2;
 
         public IReadOnlyList<ArchiveEntry> BrowserEntries =>
-            _entries.Values.Select(value => value.Entry).ToArray();
+            _entries.Values.Select(value => value.Entry)
+                .Concat(_additionalEntries.Select(value => value.Entry))
+                .ToArray();
 
         public int CopyCount => Volatile.Read(ref _copyCount);
 
@@ -1315,6 +1519,13 @@ public sealed class ArchiveBrowserExtractionCommandTests
         {
             var entry = new ArchiveEntry(path, uncompressedSize ?? bytes.LongLength, null, Path);
             _entries.Add(path, (entry, bytes));
+            return entry;
+        }
+
+        public ArchiveEntry AddDuplicateEntry(string path, byte[] bytes)
+        {
+            var entry = new ArchiveEntry(path, bytes.LongLength, null, Path);
+            _additionalEntries.Add((entry, bytes));
             return entry;
         }
 
@@ -1331,7 +1542,25 @@ public sealed class ArchiveBrowserExtractionCommandTests
             CancellationToken cancellationToken = default)
         {
             Interlocked.Increment(ref _copyCount);
-            if (!_entries.TryGetValue(entry.Path, out var item))
+            byte[]? bytes = null;
+            if (_entries.TryGetValue(entry.Path, out var item)
+                && ReferenceEquals(item.Entry, entry))
+            {
+                bytes = item.Bytes;
+            }
+            else
+            {
+                foreach (var additionalEntry in _additionalEntries)
+                {
+                    if (ReferenceEquals(additionalEntry.Entry, entry))
+                    {
+                        bytes = additionalEntry.Bytes;
+                        break;
+                    }
+                }
+            }
+
+            if (bytes is null)
             {
                 throw new IOException($"Unexpected synthetic archive entry: {entry.Path}");
             }
@@ -1346,7 +1575,7 @@ public sealed class ArchiveBrowserExtractionCommandTests
                     throw new IOException($"Synthetic I/O failure for {entry.Path}.");
                 }
             }
-            await destination.WriteAsync(item.Bytes, CancellationToken.None);
+            await destination.WriteAsync(bytes, CancellationToken.None);
         }
 
         public void Dispose() => File.Delete(Path);

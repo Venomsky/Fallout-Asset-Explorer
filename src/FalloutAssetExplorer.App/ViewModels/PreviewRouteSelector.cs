@@ -7,6 +7,7 @@ public enum PreviewRoute
     Map,
     Pro,
     Msg,
+    Lst,
     Int
 }
 
@@ -32,6 +33,11 @@ public static class PreviewRouteSelector
         if (string.Equals(extension, ".MSG", StringComparison.OrdinalIgnoreCase))
         {
             return PreviewRoute.Msg;
+        }
+
+        if (string.Equals(extension, ".LST", StringComparison.OrdinalIgnoreCase))
+        {
+            return PreviewRoute.Lst;
         }
 
         if (string.Equals(extension, ".INT", StringComparison.OrdinalIgnoreCase))

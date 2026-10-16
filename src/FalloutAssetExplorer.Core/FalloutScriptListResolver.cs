@@ -27,6 +27,86 @@ public sealed record FalloutScriptListDiagnostic(
     FalloutScriptListDiagnosticCode Code,
     string Message);
 
+public enum FalloutScriptListSlotStatus
+{
+    Candidate,
+    Empty,
+    InvalidName
+}
+
+public sealed class FalloutScriptListSlot
+{
+    internal FalloutScriptListSlot(
+        int slot,
+        ReadOnlyMemory<byte> rawLineBytes,
+        FalloutScriptListSlotStatus status,
+        string? scriptName,
+        string? intPathCandidate)
+    {
+        Slot = slot;
+        RawLineBytes = rawLineBytes;
+        Status = status;
+        ScriptName = scriptName;
+        IntPathCandidate = intPathCandidate;
+    }
+
+    public int Slot { get; }
+
+    public ReadOnlyMemory<byte> RawLineBytes { get; }
+
+    public FalloutScriptListSlotStatus Status { get; }
+
+    public string? ScriptName { get; }
+
+    public string? IntPathCandidate { get; }
+}
+
+public sealed class FalloutScriptListReadResult
+{
+    internal FalloutScriptListReadResult(
+        bool success,
+        IReadOnlyList<FalloutScriptListSlot> slots,
+        FalloutScriptListDiagnostic? diagnostic)
+    {
+        Success = success;
+        Slots = slots;
+        Diagnostic = diagnostic;
+    }
+
+    public bool Success { get; }
+
+    public IReadOnlyList<FalloutScriptListSlot> Slots { get; }
+
+    public FalloutScriptListDiagnostic? Diagnostic { get; }
+}
+
+public enum FalloutScriptListIntTargetStatus
+{
+    Found,
+    Missing,
+    Ambiguous,
+    Invalid
+}
+
+public sealed class FalloutScriptListIntTargetResolution
+{
+    internal FalloutScriptListIntTargetResolution(
+        FalloutScriptListIntTargetStatus status,
+        ArchiveEntry? entry,
+        int matchCount)
+    {
+        Status = status;
+        Entry = entry;
+        MatchCount = matchCount;
+    }
+
+    public FalloutScriptListIntTargetStatus Status { get; }
+
+    public ArchiveEntry? Entry { get; }
+
+    public int MatchCount { get; }
+}
+
 public static class FalloutScriptListResolver
 {
     public const string ScriptListPath = "scripts/scripts.lst";
@@ -36,30 +116,35 @@ public static class FalloutScriptListResolver
     private const int Fallout1EffectiveScriptNameLength = 15;
     private const int Fallout2MaximumScriptNameLength = 13;
 
-    /// <summary>
-    /// Maps one explicit slot to a safe name and candidate paths. Success is a local mapping only;
-    /// it does not validate every Fallout 2 list entry or guarantee that CE accepts the whole list.
-    /// </summary>
-    public static async Task<FalloutScriptListResolution> ResolveAsync(
+    public static async Task<FalloutScriptListReadResult> ReadSlotsAsync(
         IGameArchive archive,
-        int slot,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(archive);
 
-        if (slot < 0)
+        var readResult = await ReadScriptListBytesAsync(archive, cancellationToken);
+        if (!readResult.Success)
         {
-            return Failure(
-                slot,
-                FalloutScriptListDiagnosticCode.InvalidSlot,
-                "The script-list slot cannot be negative.");
+            return ReadFailure(
+                readResult.Diagnostic!.Code,
+                readResult.Diagnostic.Message);
         }
 
+        var slots = ParseSlots(archive.Game, readResult.Bytes!);
+        return new FalloutScriptListReadResult(
+            true,
+            Array.AsReadOnly(slots.ToArray()),
+            null);
+    }
+
+    private static async Task<ScriptListBytesReadResult> ReadScriptListBytesAsync(
+        IGameArchive archive,
+        CancellationToken cancellationToken)
+    {
         if (!((archive.Game == FalloutGame.Fallout1 && archive.Format == ArchiveFormat.Dat1)
             || (archive.Game == FalloutGame.Fallout2 && archive.Format == ArchiveFormat.Dat2)))
         {
-            return Failure(
-                slot,
+            return ReadBytesFailure(
                 FalloutScriptListDiagnosticCode.UnsupportedArchive,
                 "A matching Fallout 1 DAT1 or Fallout 2 DAT2 archive is required.");
         }
@@ -78,24 +163,21 @@ public static class FalloutScriptListResolver
         var normalizedListPath = NormalizeArchivePath(ScriptListPath);
         if (duplicatePaths.Contains(normalizedListPath))
         {
-            return Failure(
-                slot,
+            return ReadBytesFailure(
                 FalloutScriptListDiagnosticCode.ScriptListAmbiguous,
                 $"The archive contains multiple entries matching '{ScriptListPath}'.");
         }
 
         if (!entriesByPath.TryGetValue(normalizedListPath, out var listEntry))
         {
-            return Failure(
-                slot,
+            return ReadBytesFailure(
                 FalloutScriptListDiagnosticCode.ScriptListMissing,
                 $"The archive entry '{ScriptListPath}' is missing.");
         }
 
         if (listEntry.UncompressedSize is < 0 or > MaximumListSize)
         {
-            return Failure(
-                slot,
+            return ReadBytesFailure(
                 FalloutScriptListDiagnosticCode.ScriptListTooLarge,
                 $"The script list exceeds the {MaximumListSize}-byte size limit.");
         }
@@ -110,8 +192,7 @@ public static class FalloutScriptListResolver
 
             if (output.Length != listEntry.UncompressedSize)
             {
-                return Failure(
-                    slot,
+                return ReadBytesFailure(
                     FalloutScriptListDiagnosticCode.ScriptListLengthMismatch,
                     $"The script list declares {listEntry.UncompressedSize} bytes but {output.Length} bytes were read.");
             }
@@ -120,21 +201,48 @@ public static class FalloutScriptListResolver
         }
         catch (ListSizeLimitExceededException)
         {
-            return Failure(
-                slot,
+            return ReadBytesFailure(
                 FalloutScriptListDiagnosticCode.ScriptListTooLarge,
                 $"The script list exceeds the {MaximumListSize}-byte size limit.");
         }
         catch (Exception exception) when (
             exception is InvalidDataException or IOException or UnauthorizedAccessException)
         {
-            return Failure(
-                slot,
+            return ReadBytesFailure(
                 FalloutScriptListDiagnosticCode.ScriptListReadFailed,
                 $"The script list could not be read: {exception.Message}");
         }
 
-        if (!TryGetSlot(listBytes, slot, out var line))
+        return new ScriptListBytesReadResult(true, listBytes, null);
+    }
+
+    /// <summary>
+    /// Maps one explicit slot to candidate paths. Success does not validate that either target
+    /// entry exists in the archive.
+    /// </summary>
+    public static async Task<FalloutScriptListResolution> ResolveAsync(
+        IGameArchive archive,
+        int slot,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(archive);
+
+        if (slot < 0)
+        {
+            return Failure(
+                slot,
+                FalloutScriptListDiagnosticCode.InvalidSlot,
+                "The script-list slot cannot be negative.");
+        }
+
+        var readResult = await ReadScriptListBytesAsync(archive, cancellationToken);
+        if (!readResult.Success)
+        {
+            var diagnostic = readResult.Diagnostic!;
+            return Failure(slot, diagnostic.Code, diagnostic.Message);
+        }
+
+        if (!TryGetSlot(readResult.Bytes!, slot, out var line))
         {
             return Failure(
                 slot,
@@ -159,11 +267,70 @@ public static class FalloutScriptListResolver
             null);
     }
 
+    public static FalloutScriptListIntTargetResolution FindIntTarget(
+        IGameArchive archive,
+        FalloutScriptListSlot? slot)
+    {
+        ArgumentNullException.ThrowIfNull(archive);
+
+        if (slot is null
+            || slot.Status != FalloutScriptListSlotStatus.Candidate
+            || slot.IntPathCandidate is null)
+        {
+            return new FalloutScriptListIntTargetResolution(
+                FalloutScriptListIntTargetStatus.Invalid,
+                null,
+                0);
+        }
+
+        var candidatePath = NormalizeArchivePath(slot.IntPathCandidate);
+        ArchiveEntry? foundEntry = null;
+        var matchCount = 0;
+        foreach (var entry in archive.BrowserEntries)
+        {
+            if (!StringComparer.OrdinalIgnoreCase.Equals(
+                    NormalizeArchivePath(entry.Path),
+                    candidatePath))
+            {
+                continue;
+            }
+
+            foundEntry = entry;
+            matchCount++;
+        }
+
+        return matchCount switch
+        {
+            0 => new FalloutScriptListIntTargetResolution(
+                FalloutScriptListIntTargetStatus.Missing,
+                null,
+                0),
+            1 => new FalloutScriptListIntTargetResolution(
+                FalloutScriptListIntTargetStatus.Found,
+                foundEntry,
+                1),
+            _ => new FalloutScriptListIntTargetResolution(
+                FalloutScriptListIntTargetStatus.Ambiguous,
+                null,
+                matchCount)
+        };
+    }
+
     private static FalloutScriptListResolution Failure(
         int slot,
         FalloutScriptListDiagnosticCode code,
         string message) =>
         new(false, slot, null, null, null, new FalloutScriptListDiagnostic(code, message));
+
+    private static FalloutScriptListReadResult ReadFailure(
+        FalloutScriptListDiagnosticCode code,
+        string message) =>
+        new(false, Array.Empty<FalloutScriptListSlot>(), new FalloutScriptListDiagnostic(code, message));
+
+    private static ScriptListBytesReadResult ReadBytesFailure(
+        FalloutScriptListDiagnosticCode code,
+        string message) =>
+        new(false, null, new FalloutScriptListDiagnostic(code, message));
 
     private static string NormalizeArchivePath(string path) =>
         path.Replace('\\', '/');
@@ -178,7 +345,6 @@ public static class FalloutScriptListResolver
         var chunkLength = 0;
         var chunk = new byte[ScriptListReadBufferSize - 1];
 
-        // Match CE's 259-character reads; CRLF is one newline in its text-mode readers.
         while (offset < listBytes.Length)
         {
             var value = listBytes[offset++];
@@ -211,12 +377,104 @@ public static class FalloutScriptListResolver
         return false;
     }
 
+    private static List<FalloutScriptListSlot> ParseSlots(FalloutGame game, byte[] listBytes)
+    {
+        var lines = ReadSlots(listBytes);
+        var slots = new List<FalloutScriptListSlot>(lines.Count);
+        foreach (var line in lines)
+        {
+            var rawLine = new ReadOnlyMemory<byte>(listBytes, line.Offset, line.Length);
+            var lineBytes = rawLine.Span;
+            var status = FalloutScriptListSlotStatus.InvalidName;
+            string? scriptName = null;
+            string? intPathCandidate = null;
+
+            if (IsBlank(lineBytes))
+            {
+                status = FalloutScriptListSlotStatus.Empty;
+            }
+            else if (TryGetScriptName(game, lineBytes, out scriptName))
+            {
+                status = FalloutScriptListSlotStatus.Candidate;
+                intPathCandidate = $"scripts/{scriptName}.int";
+            }
+
+            slots.Add(new FalloutScriptListSlot(
+                slots.Count,
+                rawLine,
+                status,
+                scriptName,
+                intPathCandidate));
+        }
+
+        return slots;
+    }
+
+    private static List<ScriptListLine> ReadSlots(byte[] listBytes)
+    {
+        var lines = new List<ScriptListLine>();
+        var offset = 0;
+        var lineStart = 0;
+        var chunkLength = 0;
+
+        // Match CE's 259-character reads; CRLF is one newline in its text-mode readers.
+        while (offset < listBytes.Length)
+        {
+            var rawByteOffset = offset;
+            var value = listBytes[offset++];
+            if (value == (byte)'\r' && offset < listBytes.Length && listBytes[offset] == (byte)'\n')
+            {
+                value = listBytes[offset++];
+            }
+
+            chunkLength++;
+            if (value == (byte)'\n')
+            {
+                lines.Add(new ScriptListLine(lineStart, rawByteOffset - lineStart));
+                lineStart = offset;
+                chunkLength = 0;
+            }
+            else if (chunkLength == ScriptListReadBufferSize - 1)
+            {
+                lines.Add(new ScriptListLine(lineStart, offset - lineStart));
+                lineStart = offset;
+                chunkLength = 0;
+            }
+        }
+
+        if (chunkLength > 0)
+        {
+            lines.Add(new ScriptListLine(lineStart, offset - lineStart));
+        }
+
+        return lines;
+    }
+
+    private static bool IsBlank(ReadOnlySpan<byte> line)
+    {
+        foreach (var value in line)
+        {
+            if (value is not ((byte)' ' or (byte)'\t'))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private readonly record struct ScriptListLine(int Offset, int Length);
+
+    private sealed record ScriptListBytesReadResult(
+        bool Success,
+        byte[]? Bytes,
+        FalloutScriptListDiagnostic? Diagnostic);
+
     private static bool TryGetScriptName(
         FalloutGame game,
-        byte[] lineBytes,
+        ReadOnlySpan<byte> line,
         out string? scriptName)
     {
-        var line = lineBytes.AsSpan();
         var delimiter = game switch
         {
             FalloutGame.Fallout1 => line.IndexOf((byte)'.'),

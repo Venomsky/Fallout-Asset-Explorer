@@ -7,6 +7,93 @@ namespace FalloutAssetExplorer.Core.Tests;
 public sealed class FalloutScriptListResolverTests
 {
     [Fact]
+    public async Task ReadSlotsAsync_PreservesOrderRawLinesAndTreatsHashOnlyLinesAsInvalidNames()
+    {
+        var archive = CreateArchive(
+            FalloutGame.Fallout2,
+            ArchiveFormat.Dat2,
+            ListEntry("first.int\n\n \t# comment\n\t# local_vars=3\nbad name.int\nsame.int # local_vars=2\nsame.int\n"));
+
+        var result = await FalloutScriptListResolver.ReadSlotsAsync(archive);
+
+        Assert.True(result.Success);
+        Assert.Null(result.Diagnostic);
+        Assert.Equal(7, result.Slots.Count);
+        Assert.Equal(Enumerable.Range(0, 7), result.Slots.Select(slot => slot.Slot));
+        Assert.Equal(
+            new[]
+            {
+                FalloutScriptListSlotStatus.Candidate,
+                FalloutScriptListSlotStatus.Empty,
+                FalloutScriptListSlotStatus.InvalidName,
+                FalloutScriptListSlotStatus.InvalidName,
+                FalloutScriptListSlotStatus.InvalidName,
+                FalloutScriptListSlotStatus.Candidate,
+                FalloutScriptListSlotStatus.Candidate
+            },
+            result.Slots.Select(slot => slot.Status));
+        Assert.Equal("first", result.Slots[0].ScriptName);
+        Assert.Equal("scripts/first.int", result.Slots[0].IntPathCandidate);
+        Assert.Null(result.Slots[2].ScriptName);
+        Assert.Null(result.Slots[3].ScriptName);
+        Assert.Equal(" \t# comment"u8.ToArray(), result.Slots[2].RawLineBytes.ToArray());
+        Assert.Equal("\t# local_vars=3"u8.ToArray(), result.Slots[3].RawLineBytes.ToArray());
+        Assert.Equal("bad name.int"u8.ToArray(), result.Slots[4].RawLineBytes.ToArray());
+        Assert.Equal("same", result.Slots[5].ScriptName);
+        Assert.Equal("scripts/same.int", result.Slots[5].IntPathCandidate);
+        Assert.Equal(5, result.Slots[5].Slot);
+        Assert.Equal(6, result.Slots[6].Slot);
+        Assert.Equal(result.Slots[5].IntPathCandidate, result.Slots[6].IntPathCandidate);
+    }
+
+    [Fact]
+    public async Task FindIntTarget_UsesNormalizedCaseInsensitivePathForOneMatch()
+    {
+        var target = new EntryData("SCRIPTS\\FIRST.INT", [1]);
+        var archive = CreateArchive(
+            FalloutGame.Fallout2,
+            ArchiveFormat.Dat2,
+            ListEntry("first.int\n"),
+            target);
+        var slots = await FalloutScriptListResolver.ReadSlotsAsync(archive);
+
+        var result = FalloutScriptListResolver.FindIntTarget(archive, Assert.Single(slots.Slots));
+
+        Assert.Equal(FalloutScriptListIntTargetStatus.Found, result.Status);
+        Assert.Same(archive.BrowserEntries[1], result.Entry);
+        Assert.Equal(1, result.MatchCount);
+    }
+
+    [Fact]
+    public async Task FindIntTarget_ReportsMissingAmbiguousAndInvalidCandidates()
+    {
+        var missingArchive = CreateArchive(
+            FalloutGame.Fallout2,
+            ArchiveFormat.Dat2,
+            ListEntry("first.int\n"));
+        var missingSlots = await FalloutScriptListResolver.ReadSlotsAsync(missingArchive);
+        var missing = FalloutScriptListResolver.FindIntTarget(missingArchive, missingSlots.Slots[0]);
+
+        var ambiguousArchive = CreateArchive(
+            FalloutGame.Fallout1,
+            ArchiveFormat.Dat1,
+            ListEntry("first.int\n# comment\n"),
+            new EntryData("SCRIPTS\\first.INT", [1]),
+            new EntryData("scripts/first.int", [2]));
+        var ambiguousSlots = await FalloutScriptListResolver.ReadSlotsAsync(ambiguousArchive);
+        var ambiguous = FalloutScriptListResolver.FindIntTarget(ambiguousArchive, ambiguousSlots.Slots[0]);
+        var invalid = FalloutScriptListResolver.FindIntTarget(ambiguousArchive, ambiguousSlots.Slots[1]);
+
+        Assert.Equal(FalloutScriptListIntTargetStatus.Missing, missing.Status);
+        Assert.Null(missing.Entry);
+        Assert.Equal(FalloutScriptListIntTargetStatus.Ambiguous, ambiguous.Status);
+        Assert.Null(ambiguous.Entry);
+        Assert.Equal(2, ambiguous.MatchCount);
+        Assert.Equal(FalloutScriptListIntTargetStatus.Invalid, invalid.Status);
+        Assert.Null(invalid.Entry);
+    }
+
+    [Fact]
     public async Task ResolveAsync_MapsZeroBasedSlotsToCandidatePathsWithoutCheckingTargetEntries()
     {
         var archive = CreateArchive(
@@ -27,7 +114,7 @@ public sealed class FalloutScriptListResolverTests
     }
 
     [Fact]
-    public async Task ResolveAsync_PreservesBlankAndCommentSlots()
+    public async Task ResolveAsync_KeepsBlankAndHashOnlyLinesAsInvalidSlots()
     {
         var archive = CreateArchive(
             FalloutGame.Fallout2,

@@ -64,8 +64,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private string _mapObjectSpritesStatusDisplay = "Multi-sprite preview is not loaded.";
     private MapIsometricObjectSprite? _selectedMapObjectSprite;
     private IReadOnlyList<MapIsometricObjectSprite> _mapObjectSprites = [];
-    private string _previewMessage = "Select a .FRM, .MAP, .PRO, .MSG, or .INT entry to inspect.";
-    private string _previewDetails = "Select a .FRM, .MAP, .PRO, .MSG, or .INT entry to inspect.";
+    private string _previewMessage = "Select a .FRM, .MAP, .PRO, .MSG, .LST, or .INT entry to inspect.";
+    private string _previewDetails = "Select a .FRM, .MAP, .PRO, .MSG, .LST, or .INT entry to inspect.";
     private string _previewTitle = "Resource Inspector";
     private string _paletteStatus = "Palette discovery uses the open archive or a configured game-data folder.";
     private bool _isProInspector;
@@ -79,6 +79,15 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private FalloutMsgParseResult? _msgParseResult;
     private string _msgStatus = "Select a .MSG entry to inspect.";
     private string _msgDetails = string.Empty;
+    private bool _isScriptListInspector;
+    private FalloutScriptListReadResult? _scriptListReadResult;
+    private IReadOnlyList<FalloutScriptListSlot> _scriptListSlots = [];
+    private FalloutScriptListSlot? _selectedScriptListSlot;
+    private FalloutScriptListIntTargetResolution? _scriptListIntTargetResolution;
+    private IGameArchive? _scriptListArchive;
+    private ArchiveEntry? _scriptListEntry;
+    private string _scriptListStatus = "Select scripts/scripts.lst to inspect its slots.";
+    private string _scriptListDetails = string.Empty;
     private bool _isIntInspector;
     private FalloutIntMetadataReadResult? _intMetadataReadResult;
     private string _intStatus = "Select a .INT entry to inspect.";
@@ -124,6 +133,80 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         get => _msgDetails;
         private set => SetProperty(ref _msgDetails, value);
     }
+
+    public bool IsScriptListInspector
+    {
+        get => _isScriptListInspector;
+        private set => SetProperty(ref _isScriptListInspector, value);
+    }
+
+    public string ScriptListStatus
+    {
+        get => _scriptListStatus;
+        private set => SetProperty(ref _scriptListStatus, value);
+    }
+
+    public string ScriptListDetails
+    {
+        get => _scriptListDetails;
+        private set => SetProperty(ref _scriptListDetails, value);
+    }
+
+    public IReadOnlyList<FalloutScriptListSlot> ScriptListSlots
+    {
+        get => _scriptListSlots;
+        private set => SetProperty(ref _scriptListSlots, value);
+    }
+
+    public FalloutScriptListSlot? SelectedScriptListSlot
+    {
+        get => _selectedScriptListSlot;
+        set
+        {
+            if (value is not null
+                && !ScriptListSlots.Any(slot => ReferenceEquals(slot, value)))
+            {
+                value = null;
+            }
+
+            if (SetProperty(ref _selectedScriptListSlot, value))
+            {
+                UpdateScriptListTarget();
+                OnPropertyChanged(nameof(SelectedScriptListSlotRawHex));
+            }
+        }
+    }
+
+    public FalloutScriptListIntTargetStatus ScriptListIntTargetStatus =>
+        _scriptListIntTargetResolution?.Status ?? FalloutScriptListIntTargetStatus.Invalid;
+
+    public string ScriptListIntTargetDetails =>
+        _scriptListIntTargetResolution?.Status switch
+        {
+            FalloutScriptListIntTargetStatus.Found =>
+                $"Found exactly one archive entry: {_scriptListIntTargetResolution.Entry!.Path}.",
+            FalloutScriptListIntTargetStatus.Missing =>
+                $"Missing: no archive entry matches '{SelectedScriptListSlot?.IntPathCandidate}'.",
+            FalloutScriptListIntTargetStatus.Ambiguous =>
+                $"Ambiguous: {_scriptListIntTargetResolution.MatchCount:N0} archive entries match "
+                    + $"'{SelectedScriptListSlot?.IntPathCandidate}'. Navigation is disabled.",
+            _ => "Invalid: this slot has no safe INT path candidate."
+        };
+
+    public string SelectedScriptListSlotRawHex =>
+        SelectedScriptListSlot is { } slot
+            ? FormatScriptListLineHex(slot.RawLineBytes.Span)
+            : "Select a slot to inspect its raw line bytes.";
+
+    public bool CanNavigateToSelectedScriptInt =>
+        IsScriptListInspector
+        && _scriptListReadResult?.Success == true
+        && ReferenceEquals(_scriptListArchive, _archive)
+        && ReferenceEquals(_scriptListEntry, SelectedEntry)
+        && SelectedScriptListSlot is { } slot
+        && ScriptListSlots.Any(candidate => ReferenceEquals(candidate, slot))
+        && ScriptListIntTargetStatus == FalloutScriptListIntTargetStatus.Found
+        && _scriptListIntTargetResolution?.Entry is not null;
 
     public bool IsIntInspector
     {
@@ -270,6 +353,28 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     public int SelectedOverwritePolicyIndex { get; set; } = (int)OverwritePolicy.SkipExisting;
 
     public OverwritePolicy SelectedOverwritePolicy => (OverwritePolicy)SelectedOverwritePolicyIndex;
+
+    public bool NavigateToSelectedScriptInt()
+    {
+        if (!CanNavigateToSelectedScriptInt
+            || _archive is not { } archive
+            || SelectedScriptListSlot is not { } slot)
+        {
+            return false;
+        }
+
+        var target = FalloutScriptListResolver.FindIntTarget(archive, slot);
+        SetScriptListTargetResolution(target);
+        if (target.Status != FalloutScriptListIntTargetStatus.Found || target.Entry is null)
+        {
+            return false;
+        }
+
+        SearchText = string.Empty;
+        SelectedExtension = target.Entry.Extension;
+        SelectedEntry = target.Entry;
+        return true;
+    }
 
     public ArchiveEntry? SelectedEntry
     {
@@ -704,7 +809,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             selectedEntry = SelectedEntry;
             if (selectedEntry is null)
             {
-                PreviewMessage = "Select a .FRM, .MAP, .PRO, .MSG, or .INT entry to inspect.";
+                PreviewMessage = "Select a .FRM, .MAP, .PRO, .MSG, .LST, or .INT entry to inspect.";
                 return;
             }
 
@@ -841,6 +946,54 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 PreviewMessage = selectedEntry.Path;
                 PreviewDetails = BuildMapHeaderDetails(metadata, tileGrids);
                 PaletteStatus = "Neutral diagnostic cells; values are not encoded as terrain. Square-grid cells are separate from object hex coordinates. Object layouts requiring PRO subtype data and nested inventories may be shown as unsupported.";
+                return;
+            }
+
+            if (previewRoute == PreviewRoute.Lst)
+            {
+                IsScriptListInspector = true;
+                PreviewTitle = "Script List Inspector";
+                ScriptListStatus = "Reading scripts/scripts.lst...";
+                ScriptListDetails =
+                    $"Entry: {selectedEntry.Path}{Environment.NewLine}"
+                    + $"Declared size: {selectedEntry.UncompressedSize:N0} bytes. "
+                    + "INT paths are candidates until a unique archive entry is found.";
+
+                if (!IsScriptListPath(selectedEntry.Path))
+                {
+                    ScriptListStatus =
+                        $"Only '{FalloutScriptListResolver.ScriptListPath}' is supported by the script-list resolver.";
+                    PreviewMessage = ScriptListStatus;
+                    return;
+                }
+
+                var readResult = await FalloutScriptListResolver.ReadSlotsAsync(archive, cancellation.Token);
+                cancellation.Token.ThrowIfCancellationRequested();
+                if (!ReferenceEquals(_previewCancellation, cancellation)
+                    || !ReferenceEquals(SelectedEntry, selectedEntry)
+                    || !ReferenceEquals(_archive, archive))
+                {
+                    return;
+                }
+
+                if (!readResult.Success)
+                {
+                    var diagnostic = readResult.Diagnostic!;
+                    ScriptListStatus = $"Could not read script list: {diagnostic.Code}: {diagnostic.Message}";
+                    PreviewMessage = ScriptListStatus;
+                    return;
+                }
+
+                _scriptListReadResult = readResult;
+                _scriptListArchive = archive;
+                _scriptListEntry = selectedEntry;
+                ScriptListSlots = readResult.Slots;
+                SetScriptListTargetResolution(null);
+                OnPropertyChanged(nameof(CanNavigateToSelectedScriptInt));
+                ScriptListStatus =
+                    $"Read {readResult.Slots.Count:N0} slots in source order. "
+                    + "Candidate paths do not establish a semantic relationship.";
+                PreviewMessage = selectedEntry.Path;
                 return;
             }
 
@@ -1011,7 +1164,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
             if (previewRoute != PreviewRoute.Frm)
             {
-                PreviewMessage = "Select a .FRM, .MAP, .PRO, .MSG, or .INT entry to inspect.";
+                PreviewMessage = "Select a .FRM, .MAP, .PRO, .MSG, .LST, or .INT entry to inspect.";
                 return;
             }
 
@@ -1059,6 +1212,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                     PreviewRoute.Map => $"Could not inspect MAP: {exception.Message}",
                     PreviewRoute.Pro => $"Could not inspect standalone PRO: {exception.Message}",
                     PreviewRoute.Msg => $"Could not read MSG: {exception.Message}",
+                    PreviewRoute.Lst => $"Could not read LST: {exception.Message}",
                     PreviewRoute.Int => $"Could not read INT: {exception.Message}",
                     _ => $"Could not preview FRM: {exception.Message}"
                 };
@@ -1081,6 +1235,14 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                     && ReferenceEquals(_archive, previewArchive))
                 {
                     IntStatus = $"Could not read INT: {exception.Message}";
+                }
+
+                if (previewRoute == PreviewRoute.Lst
+                    && ReferenceEquals(_previewCancellation, cancellation)
+                    && ReferenceEquals(SelectedEntry, selectedEntry)
+                    && ReferenceEquals(_archive, previewArchive))
+                {
+                    ScriptListStatus = $"Could not read LST: {exception.Message}";
                 }
             }
         }
@@ -2173,6 +2335,58 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             _ => $"{archive.Game} {archive.Format}"
         };
 
+    private void UpdateScriptListTarget()
+    {
+        var slot = SelectedScriptListSlot;
+        if (slot is not null
+            && _scriptListReadResult?.Success == true
+            && ReferenceEquals(_scriptListArchive, _archive)
+            && ReferenceEquals(_scriptListEntry, SelectedEntry)
+            && ScriptListSlots.Any(candidate => ReferenceEquals(candidate, slot))
+            && _archive is { } archive)
+        {
+            SetScriptListTargetResolution(FalloutScriptListResolver.FindIntTarget(archive, slot));
+            return;
+        }
+
+        SetScriptListTargetResolution(null);
+    }
+
+    private void SetScriptListTargetResolution(FalloutScriptListIntTargetResolution? resolution)
+    {
+        _scriptListIntTargetResolution = resolution;
+        OnPropertyChanged(nameof(ScriptListIntTargetStatus));
+        OnPropertyChanged(nameof(ScriptListIntTargetDetails));
+        OnPropertyChanged(nameof(CanNavigateToSelectedScriptInt));
+    }
+
+    private static bool IsScriptListPath(string path) =>
+        StringComparer.OrdinalIgnoreCase.Equals(
+            path.Replace('\\', '/'),
+            FalloutScriptListResolver.ScriptListPath);
+
+    private static string FormatScriptListLineHex(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.IsEmpty)
+        {
+            return "(empty line)";
+        }
+
+        var compactHex = Convert.ToHexString(bytes);
+        var builder = new StringBuilder(compactHex.Length + bytes.Length - 1);
+        for (var index = 0; index < compactHex.Length; index += 2)
+        {
+            if (index > 0)
+            {
+                builder.Append(' ');
+            }
+
+            builder.Append(compactHex, index, 2);
+        }
+
+        return builder.ToString();
+    }
+
     private static string FormatIntIdentifierTableHex(ReadOnlySpan<byte> bytes)
     {
         var displayedLength = Math.Min(bytes.Length, MaximumIntIdentifierBytesDisplayed);
@@ -2261,6 +2475,17 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MsgParseResult = null;
         MsgStatus = "Select a .MSG entry to inspect.";
         MsgDetails = string.Empty;
+        IsScriptListInspector = false;
+        _scriptListReadResult = null;
+        _scriptListArchive = null;
+        _scriptListEntry = null;
+        ScriptListSlots = [];
+        SelectedScriptListSlot = null;
+        SetScriptListTargetResolution(null);
+        ScriptListStatus = "Select scripts/scripts.lst to inspect its slots.";
+        ScriptListDetails = string.Empty;
+        OnPropertyChanged(nameof(SelectedScriptListSlotRawHex));
+        OnPropertyChanged(nameof(CanNavigateToSelectedScriptInt));
         IsIntInspector = false;
         IntMetadataReadResult = null;
         IntStatus = "Select a .INT entry to inspect.";
@@ -2289,7 +2514,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             FrmPreview.ClearPreview();
         }
 
-        PreviewDetails = "Select a .FRM, .MAP, .PRO, .MSG, or .INT entry to inspect.";
+        PreviewDetails = "Select a .FRM, .MAP, .PRO, .MSG, .LST, or .INT entry to inspect.";
         PreviewTitle = "Resource Inspector";
         PaletteStatus = "Palette discovery uses the open archive or a configured game-data folder.";
     }

@@ -514,6 +514,89 @@
               </ScrollViewer>
             </Grid>
           </Border>
+          <Border
+              x:Name="ScriptListInspector"
+              Grid.Row="2"
+              Grid.RowSpan="3"
+              Padding="10"
+              Background="#20242B"
+              IsVisible="{Binding IsScriptListInspector}"
+              AutomationProperties.Name="Script list slot inspector">
+            <Grid RowDefinitions="Auto,Auto,Auto,2*,Auto,*" RowSpacing="6">
+              <TextBlock
+                  Grid.Row="0"
+                  FontWeight="SemiBold"
+                  Text="{Binding ScriptListStatus}"
+                  TextWrapping="Wrap" />
+              <TextBlock
+                  Grid.Row="1"
+                  FontFamily="Consolas"
+                  FontSize="11"
+                  Text="{Binding ScriptListDetails}"
+                  TextWrapping="Wrap" />
+              <Grid
+                  Grid.Row="2"
+                  ColumnDefinitions="65,100,*,*"
+                  ColumnSpacing="8">
+                <TextBlock FontSize="11" Text="Slot (zero-based)" />
+                <TextBlock Grid.Column="1" FontSize="11" Text="State" />
+                <TextBlock Grid.Column="2" FontSize="11" Text="Parsed name" />
+                <TextBlock Grid.Column="3" FontSize="11" Text="INT path candidate" />
+              </Grid>
+              <ListBox
+                  Grid.Row="3"
+                  ItemsSource="{Binding ScriptListSlots}"
+                  SelectedItem="{Binding SelectedScriptListSlot, Mode=TwoWay}"
+                  VerticalAlignment="Stretch"
+                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                  AutomationProperties.Name="Script list slots in source order">
+                <ListBox.ItemsPanel>
+                  <ItemsPanelTemplate>
+                    <VirtualizingStackPanel />
+                  </ItemsPanelTemplate>
+                </ListBox.ItemsPanel>
+                <ListBox.ItemTemplate>
+                  <DataTemplate>
+                    <Grid ColumnDefinitions="65,100,*,*" ColumnSpacing="8">
+                      <TextBlock FontFamily="Consolas" Text="{Binding Slot}" />
+                      <TextBlock Grid.Column="1" Text="{Binding Status}" />
+                      <TextBlock Grid.Column="2" Text="{Binding ScriptName}" TextWrapping="Wrap" />
+                      <TextBlock
+                          Grid.Column="3"
+                          Text="{Binding IntPathCandidate}"
+                          TextWrapping="Wrap" />
+                    </Grid>
+                  </DataTemplate>
+                </ListBox.ItemTemplate>
+              </ListBox>
+              <Grid
+                  Grid.Row="4"
+                  ColumnDefinitions="*,Auto"
+                  ColumnSpacing="8">
+                <TextBlock
+                    VerticalAlignment="Center"
+                    Text="{Binding ScriptListIntTargetDetails}"
+                    TextWrapping="Wrap" />
+                <Button
+                    Grid.Column="1"
+                    Content="Open verified INT"
+                    IsEnabled="{Binding CanNavigateToSelectedScriptInt}"
+                    Click="NavigateToScriptInt_Click"
+                    AutomationProperties.Name="Open the uniquely matched INT entry" />
+              </Grid>
+              <ScrollViewer
+                  Grid.Row="5"
+                  HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollBarVisibility="Auto">
+                <TextBlock
+                    FontFamily="Consolas"
+                    FontSize="11"
+                    Text="{Binding SelectedScriptListSlotRawHex}"
+                    TextWrapping="NoWrap"
+                    AutomationProperties.Name="Selected script-list slot raw bytes in hexadecimal" />
+              </ScrollViewer>
+            </Grid>
+          </Border>
           <local:MapInspectorView
               x:Name="MapInspectorControl"
               Grid.Row="2"
