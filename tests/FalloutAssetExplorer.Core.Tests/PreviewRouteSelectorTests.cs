@@ -14,6 +14,8 @@ public sealed class PreviewRouteSelectorTests
     [InlineData(".pRo", PreviewRoute.Pro)]
     [InlineData(".MSG", PreviewRoute.Msg)]
     [InlineData(".mSg", PreviewRoute.Msg)]
+    [InlineData(".INT", PreviewRoute.Int)]
+    [InlineData(".iNt", PreviewRoute.Int)]
     public void Select_RecognizesSupportedExtensionsCaseInsensitively(
         string extension,
         PreviewRoute expectedRoute)
@@ -23,7 +25,6 @@ public sealed class PreviewRouteSelectorTests
 
     [Theory]
     [InlineData(".LST")]
-    [InlineData(".INT")]
     [InlineData(".BIN")]
     [InlineData("")]
     [InlineData(null)]

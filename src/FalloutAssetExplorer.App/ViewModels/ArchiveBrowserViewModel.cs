@@ -18,6 +18,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     // App preview budget, not a MAP-format limit; keeps UI reads well below the archive reader's 512 MiB entry cap.
     public const long MaximumMapPreviewSizeBytes = 64L * 1024 * 1024;
 
+    private const int MaximumIntIdentifierBytesDisplayed = 4096;
     private static readonly string[] SupportedExtensions = [".FRM", ".MAP", ".PRO", ".MSG", ".LST", ".INT"];
 
     private string _searchText = string.Empty;
@@ -63,8 +64,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private string _mapObjectSpritesStatusDisplay = "Multi-sprite preview is not loaded.";
     private MapIsometricObjectSprite? _selectedMapObjectSprite;
     private IReadOnlyList<MapIsometricObjectSprite> _mapObjectSprites = [];
-    private string _previewMessage = "Select a .FRM, .MAP, .PRO, or .MSG entry to inspect.";
-    private string _previewDetails = "Select a .FRM, .MAP, .PRO, or .MSG entry to inspect.";
+    private string _previewMessage = "Select a .FRM, .MAP, .PRO, .MSG, or .INT entry to inspect.";
+    private string _previewDetails = "Select a .FRM, .MAP, .PRO, .MSG, or .INT entry to inspect.";
     private string _previewTitle = "Resource Inspector";
     private string _paletteStatus = "Palette discovery uses the open archive or a configured game-data folder.";
     private bool _isProInspector;
@@ -78,6 +79,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private FalloutMsgParseResult? _msgParseResult;
     private string _msgStatus = "Select a .MSG entry to inspect.";
     private string _msgDetails = string.Empty;
+    private bool _isIntInspector;
+    private FalloutIntMetadataReadResult? _intMetadataReadResult;
+    private string _intStatus = "Select a .INT entry to inspect.";
+    private string _intIdentifierTableHex = string.Empty;
     private bool _isDisposed;
 
     public ArchiveBrowserViewModel()
@@ -112,6 +117,50 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         get => _msgDetails;
         private set => SetProperty(ref _msgDetails, value);
+    }
+
+    public bool IsIntInspector
+    {
+        get => _isIntInspector;
+        private set => SetProperty(ref _isIntInspector, value);
+    }
+
+    public FalloutIntMetadataReadResult? IntMetadataReadResult
+    {
+        get => _intMetadataReadResult;
+        private set
+        {
+            if (SetProperty(ref _intMetadataReadResult, value))
+            {
+                OnPropertyChanged(nameof(HasIntDiagnostic));
+                OnPropertyChanged(nameof(IntDiagnosticDisplay));
+                OnPropertyChanged(nameof(IntProcedureCountDisplay));
+            }
+        }
+    }
+
+    public bool HasIntDiagnostic => IntMetadataReadResult?.Diagnostic is not null;
+
+    public string IntDiagnosticDisplay =>
+        IntMetadataReadResult?.Diagnostic is { } diagnostic
+            ? $"{diagnostic.Code} at byte {diagnostic.ByteOffset}: {diagnostic.Message}"
+            : string.Empty;
+
+    public string IntProcedureCountDisplay =>
+        IntMetadataReadResult?.Metadata is { } metadata
+            ? $"Procedure count: {metadata.ProcedureCount:N0}"
+            : "Procedure metadata is unavailable.";
+
+    public string IntStatus
+    {
+        get => _intStatus;
+        private set => SetProperty(ref _intStatus, value);
+    }
+
+    public string IntIdentifierTableHex
+    {
+        get => _intIdentifierTableHex;
+        private set => SetProperty(ref _intIdentifierTableHex, value);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -647,7 +696,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             selectedEntry = SelectedEntry;
             if (selectedEntry is null)
             {
-                PreviewMessage = "Select a .FRM, .MAP, .PRO, or .MSG entry to inspect.";
+                PreviewMessage = "Select a .FRM, .MAP, .PRO, .MSG, or .INT entry to inspect.";
                 return;
             }
 
@@ -787,6 +836,65 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 return;
             }
 
+            if (previewRoute == PreviewRoute.Int)
+            {
+                IsIntInspector = true;
+                PreviewTitle = "INT Metadata Inspector";
+                IntStatus = "Reading INT metadata...";
+
+                if (selectedEntry.UncompressedSize < 0)
+                {
+                    IntStatus = "Could not read INT: the archive reports a negative uncompressed size.";
+                    PreviewMessage = IntStatus;
+                    return;
+                }
+
+                if (selectedEntry.UncompressedSize > FalloutIntMetadataReader.MaximumFileSizeBytes)
+                {
+                    IntStatus =
+                        $"INT preview is limited to {FalloutIntMetadataReader.MaximumFileSizeBytes:N0} bytes; "
+                        + "the entry was not read.";
+                    PreviewMessage = IntStatus;
+                    return;
+                }
+
+                PreviewMessage = "Reading INT bytes...";
+                using var intBuffer = new MemoryStream();
+                await archive.CopyEntryToAsync(selectedEntry, intBuffer, cancellation.Token);
+                cancellation.Token.ThrowIfCancellationRequested();
+                if (intBuffer.Length != selectedEntry.UncompressedSize)
+                {
+                    throw new InvalidDataException(
+                        $"INT entry declares {selectedEntry.UncompressedSize} bytes but {intBuffer.Length} bytes were read.");
+                }
+
+                var intData = intBuffer.GetBuffer().AsMemory(0, checked((int)intBuffer.Length));
+                var readResult = await Task.Run(
+                    () => FalloutIntMetadataReader.Parse(archive.Game, intData),
+                    cancellation.Token);
+                cancellation.Token.ThrowIfCancellationRequested();
+
+                if (!ReferenceEquals(_previewCancellation, cancellation)
+                    || !ReferenceEquals(SelectedEntry, selectedEntry)
+                    || !ReferenceEquals(_archive, archive))
+                {
+                    return;
+                }
+
+                IntMetadataReadResult = readResult;
+                if (!readResult.IsSuccess)
+                {
+                    IntStatus = $"Parsing failed: {IntDiagnosticDisplay}";
+                    PreviewMessage = "Could not parse INT; no partial metadata was published.";
+                    return;
+                }
+
+                IntIdentifierTableHex = FormatIntIdentifierTableHex(readResult.Metadata!.IdentifierTableBytes);
+                IntStatus = $"Parsed {readResult.Metadata.ProcedureCount:N0} procedure records.";
+                PreviewMessage = selectedEntry.Path;
+                return;
+            }
+
             if (previewRoute == PreviewRoute.Msg)
             {
                 IsMsgInspector = true;
@@ -895,7 +1003,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
             if (previewRoute != PreviewRoute.Frm)
             {
-                PreviewMessage = "Select a .FRM, .MAP, .PRO, or .MSG entry to inspect.";
+                PreviewMessage = "Select a .FRM, .MAP, .PRO, .MSG, or .INT entry to inspect.";
                 return;
             }
 
@@ -943,6 +1051,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                     PreviewRoute.Map => $"Could not inspect MAP: {exception.Message}",
                     PreviewRoute.Pro => $"Could not inspect standalone PRO: {exception.Message}",
                     PreviewRoute.Msg => $"Could not read MSG: {exception.Message}",
+                    PreviewRoute.Int => $"Could not read INT: {exception.Message}",
                     _ => $"Could not preview FRM: {exception.Message}"
                 };
                 if (previewRoute == PreviewRoute.Msg)
@@ -956,6 +1065,14 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                     && ReferenceEquals(_archive, previewArchive))
                 {
                     StandaloneProStatus = $"Could not inspect standalone PRO: {exception.Message}";
+                }
+
+                if (previewRoute == PreviewRoute.Int
+                    && ReferenceEquals(_previewCancellation, cancellation)
+                    && ReferenceEquals(SelectedEntry, selectedEntry)
+                    && ReferenceEquals(_archive, previewArchive))
+                {
+                    IntStatus = $"Could not read INT: {exception.Message}";
                 }
             }
         }
@@ -2048,6 +2165,45 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             _ => $"{archive.Game} {archive.Format}"
         };
 
+    private static string FormatIntIdentifierTableHex(ReadOnlySpan<byte> bytes)
+    {
+        var displayedLength = Math.Min(bytes.Length, MaximumIntIdentifierBytesDisplayed);
+        var builder = new StringBuilder();
+        for (var offset = 0; offset < displayedLength; offset += 16)
+        {
+            if (offset > 0)
+            {
+                builder.AppendLine();
+            }
+
+            builder.Append(offset.ToString("X8", CultureInfo.InvariantCulture));
+            builder.Append("  ");
+            var lineEnd = Math.Min(offset + 16, displayedLength);
+            for (var index = offset; index < lineEnd; index++)
+            {
+                if (index > offset)
+                {
+                    builder.Append(' ');
+                }
+
+                builder.Append(bytes[index].ToString("X2", CultureInfo.InvariantCulture));
+            }
+        }
+
+        if (displayedLength < bytes.Length)
+        {
+            if (displayedLength > 0)
+            {
+                builder.AppendLine();
+            }
+
+            builder.Append(
+                $"... {bytes.Length - displayedLength:N0} more bytes omitted from this preview.");
+        }
+
+        return builder.ToString();
+    }
+
     private void ClearPreview()
     {
         _standaloneProExportCancellation?.Cancel();
@@ -2097,6 +2253,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MsgParseResult = null;
         MsgStatus = "Select a .MSG entry to inspect.";
         MsgDetails = string.Empty;
+        IsIntInspector = false;
+        IntMetadataReadResult = null;
+        IntStatus = "Select a .INT entry to inspect.";
+        IntIdentifierTableHex = string.Empty;
         StandaloneProStatus = "Select a .PRO entry to inspect.";
         StandaloneProDetails = string.Empty;
         StandaloneProFieldsDisplay = string.Empty;
@@ -2121,7 +2281,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             FrmPreview.ClearPreview();
         }
 
-        PreviewDetails = "Select a .FRM, .MAP, .PRO, or .MSG entry to inspect.";
+        PreviewDetails = "Select a .FRM, .MAP, .PRO, .MSG, or .INT entry to inspect.";
         PreviewTitle = "Resource Inspector";
         PaletteStatus = "Palette discovery uses the open archive or a configured game-data folder.";
     }

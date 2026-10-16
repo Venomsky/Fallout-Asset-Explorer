@@ -78,7 +78,7 @@ public sealed class ArchiveBrowserExtractionCommandTests
         viewModel.SelectedEntry = Assert.Single(viewModel.Entries);
         await viewModel.PreviewSelectedEntryAsync();
 
-        Assert.Equal("Select a .FRM, .MAP, .PRO, or .MSG entry to inspect.", viewModel.PreviewMessage);
+        Assert.Equal("Select a .FRM, .MAP, .PRO, .MSG, or .INT entry to inspect.", viewModel.PreviewMessage);
         Assert.Null(viewModel.FrmPreview.PreviewBitmap);
         Assert.False(viewModel.FrmPreview.HasPreview);
         Assert.Single(viewModel.VisibleEntries);
@@ -220,6 +220,196 @@ public sealed class ArchiveBrowserExtractionCommandTests
             $"declares {declaredSize} bytes but {msgBytes.LongLength} bytes were read",
             viewModel.MsgStatus);
         Assert.StartsWith("Could not read MSG:", viewModel.PreviewMessage);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_ParsesIntMetadataAndDisplaysRawFieldsAndIdentifierBytes()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry("scripts/TEST.INT", CreateValidInt());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        var result = Assert.IsType<FalloutIntMetadataReadResult>(viewModel.IntMetadataReadResult);
+        var metadata = Assert.IsType<FalloutIntMetadata>(result.Metadata);
+        var procedure = Assert.Single(metadata.Procedures);
+        Assert.Equal(1, archive.CopyCount);
+        Assert.Contains(".INT", viewModel.ExtensionOptions);
+        Assert.Equal("INT Metadata Inspector", viewModel.PreviewTitle);
+        Assert.True(viewModel.IsIntInspector);
+        Assert.False(viewModel.IsMsgInspector);
+        Assert.False(viewModel.IsMapInspector);
+        Assert.Equal(FalloutGame.Fallout2, metadata.Game);
+        Assert.Equal(1, metadata.ProcedureCount);
+        Assert.Equal(4, procedure.RawField0);
+        Assert.Equal(0, procedure.RawField4);
+        Assert.Equal(0x01020304, procedure.RawField8);
+        Assert.Equal(0x11223344, procedure.RawField12);
+        Assert.Equal(42, procedure.RawField16);
+        Assert.Equal(0x55667788, procedure.RawField20);
+        Assert.Contains("Procedure count: 1", viewModel.IntProcedureCountDisplay);
+        Assert.Contains("00000000  00 00 00 04 41 42 43 00", viewModel.IntIdentifierTableHex);
+        Assert.Equal(entry.Path, viewModel.PreviewMessage);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_ShowsIntParserDiagnosticWithoutPartialMetadata()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry("scripts/MALFORMED.INT", new byte[42]);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        var result = Assert.IsType<FalloutIntMetadataReadResult>(viewModel.IntMetadataReadResult);
+        Assert.False(result.IsSuccess);
+        Assert.Null(result.Metadata);
+        Assert.Equal(FalloutIntMetadataDiagnosticCode.TruncatedProcedureCount, result.Diagnostic?.Code);
+        Assert.Equal(42, result.Diagnostic?.ByteOffset);
+        Assert.True(viewModel.HasIntDiagnostic);
+        Assert.Contains("TruncatedProcedureCount at byte 42", viewModel.IntDiagnosticDisplay);
+        Assert.Contains("TruncatedProcedureCount", viewModel.IntStatus);
+        Assert.Contains("Could not parse INT", viewModel.PreviewMessage);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_RejectsOversizedIntBeforeReadingPayload()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry(
+            "scripts/OVERSIZED.INT",
+            [1],
+            FalloutIntMetadataReader.MaximumFileSizeBytes + 1L);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Equal(0, archive.CopyCount);
+        Assert.True(viewModel.IsIntInspector);
+        Assert.Null(viewModel.IntMetadataReadResult);
+        Assert.Contains("INT preview is limited", viewModel.IntStatus);
+        Assert.Contains("the entry was not read", viewModel.PreviewMessage);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_ClearsPreviousIntStateWhenReadFails()
+    {
+        using var archive = new ControlledArchive();
+        var bytes = CreateValidInt();
+        var validEntry = archive.AddEntry("scripts/VALID.INT", bytes);
+        var mismatchedEntry = archive.AddEntry("scripts/MISMATCH.INT", bytes, bytes.LongLength - 1);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        viewModel.SelectedEntry = validEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+        Assert.NotNull(viewModel.IntMetadataReadResult?.Metadata);
+        Assert.NotEmpty(viewModel.IntIdentifierTableHex);
+
+        viewModel.SelectedEntry = mismatchedEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.True(viewModel.IsIntInspector);
+        Assert.Null(viewModel.IntMetadataReadResult);
+        Assert.Empty(viewModel.IntIdentifierTableHex);
+        Assert.Contains("Could not read INT", viewModel.IntStatus);
+        Assert.Contains("declares", viewModel.PreviewMessage);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_ClearsIntStateWhenSwitchingToAnotherRoute()
+    {
+        using var archive = new ControlledArchive();
+        var intEntry = archive.AddEntry("scripts/VALID.INT", CreateValidInt());
+        var msgEntry = archive.AddEntry("text/english/dialog/sample.MSG", "{1}{}{text}"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        viewModel.SelectedEntry = intEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+        Assert.NotNull(viewModel.IntMetadataReadResult?.Metadata);
+
+        viewModel.SelectedEntry = msgEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.False(viewModel.IsIntInspector);
+        Assert.Null(viewModel.IntMetadataReadResult);
+        Assert.Empty(viewModel.IntIdentifierTableHex);
+        Assert.True(viewModel.IsMsgInspector);
+        Assert.True(viewModel.MsgParseResult?.IsSuccess);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_CancelsIntReadWhenSelectionChanges()
+    {
+        var synchronizationContext = SynchronizationContext.Current;
+        AvaloniaTestEnvironment.EnsureInitialized();
+        SynchronizationContext.SetSynchronizationContext(synchronizationContext);
+        using var archive = new ControlledArchive();
+        var intEntry = archive.AddEntry("scripts/STALE.INT", CreateValidInt());
+        var msgEntry = archive.AddEntry("text/english/dialog/CURRENT.MSG", "{2}{}{current}"u8.ToArray());
+        var intRead = archive.BlockEntry(intEntry.Path);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        Task? intPreview = null;
+        try
+        {
+            viewModel.SelectedEntry = intEntry;
+            intPreview = viewModel.PreviewSelectedEntryAsync();
+            await intRead.WaitStartedAsync();
+
+            viewModel.SelectedEntry = msgEntry;
+            await viewModel.PreviewSelectedEntryAsync();
+
+            Assert.False(viewModel.IsIntInspector);
+            Assert.Null(viewModel.IntMetadataReadResult);
+            Assert.True(viewModel.MsgParseResult?.IsSuccess);
+            intRead.Release();
+            await intPreview.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.Equal(msgEntry.Path, viewModel.PreviewMessage);
+            Assert.Null(viewModel.IntMetadataReadResult);
+        }
+        finally
+        {
+            intRead.Release();
+            if (intPreview is not null)
+            {
+                await intPreview.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Dispose_ClearsIntPreviewState()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry("scripts/VALID.INT", CreateValidInt());
+        var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+        await viewModel.PreviewSelectedEntryAsync();
+        Assert.NotNull(viewModel.IntMetadataReadResult?.Metadata);
+
+        viewModel.Dispose();
+
+        Assert.False(viewModel.IsIntInspector);
+        Assert.Null(viewModel.IntMetadataReadResult);
+        Assert.Empty(viewModel.IntIdentifierTableHex);
     }
 
     [Fact]
@@ -952,6 +1142,29 @@ public sealed class ArchiveBrowserExtractionCommandTests
         stream.Position = stream.Length;
         stream.Write(payload);
         return stream.ToArray();
+    }
+
+    private static byte[] CreateValidInt()
+    {
+        byte[] identifierPayload = [0x41, 0x42, 0x43, 0x00];
+        var procedureTableOffset = 42 + sizeof(int);
+        var identifierTableOffset = procedureTableOffset + 6 * sizeof(int);
+        var staticStringTableOffset = identifierTableOffset + sizeof(int) + identifierPayload.Length;
+        var data = new byte[staticStringTableOffset + sizeof(int)];
+
+        BinaryPrimitives.WriteInt32BigEndian(data.AsSpan(42), 1);
+        int[] fields = [4, 0, 0x01020304, 0x11223344, 42, 0x55667788];
+        for (var index = 0; index < fields.Length; index++)
+        {
+            BinaryPrimitives.WriteInt32BigEndian(
+                data.AsSpan(procedureTableOffset + index * sizeof(int)),
+                fields[index]);
+        }
+
+        BinaryPrimitives.WriteInt32BigEndian(data.AsSpan(identifierTableOffset), identifierPayload.Length);
+        identifierPayload.CopyTo(data.AsSpan(identifierTableOffset + sizeof(int)));
+        BinaryPrimitives.WriteInt32BigEndian(data.AsSpan(staticStringTableOffset), 0x12345678);
+        return data;
     }
 
     private static byte[] CreateValidEmptyMap()

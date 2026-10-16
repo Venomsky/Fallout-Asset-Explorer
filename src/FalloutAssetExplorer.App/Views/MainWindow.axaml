@@ -385,6 +385,84 @@
               </ListBox>
             </Grid>
           </Border>
+          <Border
+              x:Name="IntInspector"
+              Grid.Row="2"
+              Grid.RowSpan="3"
+              Padding="10"
+              Background="#20242B"
+              IsVisible="{Binding IsIntInspector}"
+              AutomationProperties.Name="INT metadata inspector">
+            <Grid RowDefinitions="Auto,Auto,Auto,2*,Auto,*" RowSpacing="6">
+              <TextBlock
+                  Grid.Row="0"
+                  FontWeight="SemiBold"
+                  Text="{Binding IntStatus}"
+                  TextWrapping="Wrap" />
+              <TextBlock
+                  Grid.Row="1"
+                  Foreground="#E7A86A"
+                  Text="{Binding IntDiagnosticDisplay}"
+                  TextWrapping="Wrap"
+                  IsVisible="{Binding HasIntDiagnostic}" />
+              <TextBlock
+                  Grid.Row="2"
+                  Text="{Binding IntProcedureCountDisplay}" />
+              <Grid
+                  Grid.Row="3"
+                  RowDefinitions="Auto,*"
+                  RowSpacing="4">
+                <Grid ColumnDefinitions="*,*,*,*,*,*" ColumnSpacing="4">
+                  <TextBlock FontFamily="Consolas" Text="RawField0" />
+                  <TextBlock Grid.Column="1" FontFamily="Consolas" Text="RawField4" />
+                  <TextBlock Grid.Column="2" FontFamily="Consolas" Text="RawField8" />
+                  <TextBlock Grid.Column="3" FontFamily="Consolas" Text="RawField12" />
+                  <TextBlock Grid.Column="4" FontFamily="Consolas" Text="RawField16" />
+                  <TextBlock Grid.Column="5" FontFamily="Consolas" Text="RawField20" />
+                </Grid>
+                <ListBox
+                    Grid.Row="1"
+                    ItemsSource="{Binding IntMetadataReadResult.Metadata.Procedures}"
+                    VerticalAlignment="Stretch"
+                    ScrollViewer.VerticalScrollBarVisibility="Auto"
+                    ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                    AutomationProperties.Name="Raw INT procedure fields">
+                  <ListBox.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <VirtualizingStackPanel />
+                    </ItemsPanelTemplate>
+                  </ListBox.ItemsPanel>
+                  <ListBox.ItemTemplate>
+                    <DataTemplate>
+                      <Grid ColumnDefinitions="*,*,*,*,*,*" ColumnSpacing="4">
+                        <TextBlock FontFamily="Consolas" Text="{Binding RawField0}" />
+                        <TextBlock Grid.Column="1" FontFamily="Consolas" Text="{Binding RawField4}" />
+                        <TextBlock Grid.Column="2" FontFamily="Consolas" Text="{Binding RawField8}" />
+                        <TextBlock Grid.Column="3" FontFamily="Consolas" Text="{Binding RawField12}" />
+                        <TextBlock Grid.Column="4" FontFamily="Consolas" Text="{Binding RawField16}" />
+                        <TextBlock Grid.Column="5" FontFamily="Consolas" Text="{Binding RawField20}" />
+                      </Grid>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+              </Grid>
+              <TextBlock
+                  Grid.Row="4"
+                  Text="Raw length-prefixed identifier table bytes (hex; offsets are relative to this display):"
+                  TextWrapping="Wrap" />
+              <ScrollViewer
+                  Grid.Row="5"
+                  HorizontalScrollBarVisibility="Auto"
+                  VerticalScrollBarVisibility="Auto">
+                <TextBlock
+                    FontFamily="Consolas"
+                    FontSize="11"
+                    Text="{Binding IntIdentifierTableHex}"
+                    TextWrapping="NoWrap"
+                    AutomationProperties.Name="Raw INT identifier table bytes in hexadecimal" />
+              </ScrollViewer>
+            </Grid>
+          </Border>
           <local:MapInspectorView
               x:Name="MapInspectorControl"
               Grid.Row="2"
