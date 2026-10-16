@@ -136,6 +136,63 @@ public sealed class ArchiveBrowserExtractionCommandTests
     }
 
     [Fact]
+    public async Task PreviewSelectedEntryAsync_ResetsMsgInspectorWhenChangingMessageFiles()
+    {
+        using var archive = new ControlledArchive();
+        var firstEntry = archive.AddEntry(
+            "dialog/first.msg",
+            "{5}{audio}{first}{5}{other-audio}{second}"u8.ToArray());
+        var secondEntry = archive.AddEntry("dialog/second.msg", "{9}{}{new file}"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        viewModel.SelectedEntry = firstEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+        viewModel.MsgInspector.IdFilterText = "5";
+        viewModel.MsgInspector.SelectedMessage = viewModel.MsgInspector.VisibleMessages[1];
+        viewModel.MsgInspector.SelectedPayloadField = MsgPayloadField.Audio;
+
+        viewModel.SelectedEntry = secondEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Empty(viewModel.MsgInspector.IdFilterText);
+        Assert.Single(viewModel.MsgInspector.VisibleMessages);
+        Assert.Equal(9, viewModel.MsgInspector.VisibleMessages[0].Id);
+        Assert.Null(viewModel.MsgInspector.SelectedMessage);
+        Assert.Equal(MsgPayloadField.Text, viewModel.MsgInspector.SelectedPayloadField);
+        Assert.Empty(viewModel.MsgInspector.SelectedPayloadHex);
+    }
+
+    [Fact]
+    public async Task PreviewSelectedEntryAsync_ClearsMsgInspectorStateForMalformedFile()
+    {
+        using var archive = new ControlledArchive();
+        var validEntry = archive.AddEntry("dialog/valid.msg", "{5}{}{first}"u8.ToArray());
+        var malformedEntry = archive.AddEntry("dialog/malformed.msg", "{2}{}{broken"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        viewModel.SelectedEntry = validEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+        viewModel.MsgInspector.IdFilterText = "5";
+        viewModel.MsgInspector.SelectedMessage = Assert.Single(viewModel.MsgInspector.VisibleMessages);
+        viewModel.MsgInspector.SelectedPayloadField = MsgPayloadField.Audio;
+
+        viewModel.SelectedEntry = malformedEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.False(viewModel.MsgInspector.ParseResult?.IsSuccess);
+        Assert.Empty(viewModel.MsgInspector.VisibleMessages);
+        Assert.Null(viewModel.MsgInspector.SelectedMessage);
+        Assert.Empty(viewModel.MsgInspector.IdFilterText);
+        Assert.Equal(MsgPayloadField.Text, viewModel.MsgInspector.SelectedPayloadField);
+        Assert.Empty(viewModel.MsgInspector.SelectedPayloadHex);
+        Assert.Contains("Parsing failed at byte", viewModel.MsgStatus);
+    }
+
+    [Fact]
     public async Task PreviewSelectedEntryAsync_ShowsEmptyMsgAsSuccessfulWithNoEntries()
     {
         using var archive = new ControlledArchive();

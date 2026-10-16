@@ -104,7 +104,13 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     public FalloutMsgParseResult? MsgParseResult
     {
         get => _msgParseResult;
-        private set => SetProperty(ref _msgParseResult, value);
+        private set
+        {
+            if (SetProperty(ref _msgParseResult, value))
+            {
+                MsgInspector.SetParseResult(value);
+            }
+        }
     }
 
     public string MsgStatus
@@ -177,6 +183,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     public MapInspectorViewModel MapInspector { get; } = new();
 
     public FrmPreviewViewModel FrmPreview { get; } = new();
+
+    public MsgInspectorViewModel MsgInspector { get; } = new();
 
     public ObservableCollection<MapObjectPlacement> MapObjectPlacements { get; } = [];
 
