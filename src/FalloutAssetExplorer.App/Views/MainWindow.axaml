@@ -120,6 +120,18 @@
       </DataGrid>
 
       <Border
+          Grid.Column="0"
+          HorizontalAlignment="Center"
+          VerticalAlignment="Center"
+          Padding="12"
+          Background="#20242B"
+          IsVisible="{Binding IsFilterResultEmpty}"
+          IsHitTestVisible="False"
+          AutomationProperties.Name="No resources match the current filters">
+        <TextBlock Text="No results match the current filters." />
+      </Border>
+
+      <Border
           x:Name="PreviewPane"
           Grid.Column="1"
           Padding="12"

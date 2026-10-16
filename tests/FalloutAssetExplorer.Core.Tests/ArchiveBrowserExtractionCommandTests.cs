@@ -58,6 +58,57 @@ public sealed class ArchiveBrowserExtractionCommandTests
     }
 
     [Fact]
+    public void IsFilterResultEmpty_TracksFilterMatchesAndRestoredResults()
+    {
+        using var archive = new ControlledArchive();
+        archive.AddEntry("ART/CRITTERS/HAPOWRAG.FRM", [1]);
+        archive.AddEntry("TEXT/ENGLISH/DIALOG/GECKO.MSG", [2]);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        var notifiedProperties = new List<string?>();
+        viewModel.PropertyChanged += (_, args) => notifiedProperties.Add(args.PropertyName);
+
+        Assert.False(viewModel.IsFilterResultEmpty);
+
+        viewModel.SelectedExtension = ".FRM";
+        Assert.False(viewModel.IsFilterResultEmpty);
+        Assert.Single(viewModel.VisibleEntries);
+
+        viewModel.SearchText = "no-such-resource";
+        Assert.True(viewModel.IsFilterResultEmpty);
+        Assert.Contains(nameof(viewModel.IsFilterResultEmpty), notifiedProperties);
+
+        viewModel.SearchText = "HAPOWRAG";
+        Assert.False(viewModel.IsFilterResultEmpty);
+        Assert.Single(viewModel.VisibleEntries);
+
+        viewModel.SearchText = string.Empty;
+        viewModel.SelectedExtension = ".MSG";
+        Assert.False(viewModel.IsFilterResultEmpty);
+        Assert.Single(viewModel.VisibleEntries);
+    }
+
+    [Fact]
+    public void IsFilterResultEmpty_IsFalseBeforeArchiveLoad()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+
+        Assert.False(viewModel.IsFilterResultEmpty);
+    }
+
+    [Fact]
+    public void IsFilterResultEmpty_IsFalseForLoadedEmptyArchive()
+    {
+        using var archive = new ControlledArchive();
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries([]);
+
+        Assert.False(viewModel.IsFilterResultEmpty);
+    }
+
+    [Fact]
     public async Task PreviewSelectedEntryAsync_LeavesUnsupportedEntriesBrowsableAndExtractable()
     {
         AvaloniaTestEnvironment.EnsureInitialized();

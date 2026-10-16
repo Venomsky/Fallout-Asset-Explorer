@@ -318,6 +318,11 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     public string EntryCountDisplay => _archivePath is null ? "Not loaded" : $"{Entries.Count:N0} entries";
 
+    public bool IsFilterResultEmpty =>
+        _archive is not null
+        && Entries.Count > 0
+        && VisibleEntries.Count == 0;
+
     public string SelectionDisplay =>
         _selectedEntryCount == 0 ? "No selection" : $"{_selectedEntryCount:N0} selected";
 
@@ -2318,6 +2323,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
 
         OnPropertyChanged(nameof(CanExtractVisible));
+        OnPropertyChanged(nameof(IsFilterResultEmpty));
     }
 
     private void NotifyExtractionAvailability()
