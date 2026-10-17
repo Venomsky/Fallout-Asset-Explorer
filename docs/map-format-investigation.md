@@ -143,6 +143,8 @@ After tiles, the engine loads five script lists and then the object section. The
 
 The object section starts with a total count and then per-elevation counts. A base object includes identity, hex tile, offsets, frame/rotation, FID, flags, elevation, PID, combat/light state, and script references. Its remainder is not a fixed record size: inventory members are nested, and subtype payload depends on the object's PID and prototype data. Items, scenery (including doors, stairs, ladders and elevators), critters, and exit-grid objects can carry different data. A parser that tries to walk objects therefore needs bounded recursive inventory handling and game-correct PRO subtype knowledge; merely reading the 0x48-byte base object cannot establish the next record boundary.
 
+For a nested inventory record, the MAP stream stores a 32-bit quantity immediately before the child object record. The decoder retains that quantity as `InventoryQuantity` on the child and associates it with `ParentRecordIndex`; Fallout 2 CE's `_obj_load_obj` likewise reads the quantity before recursively loading that child. Its item-add path rejects quantities below 1 (`itemAttemptAdd` in `src/item.cc`), but the map loader itself reads the signed integer without validating a range. The edit-session API therefore permits only positive `Int32` values and does not claim a format-wide upper bound or validate that every value is safe for every game operation. This in-memory change does not update source bytes and does not enable MAP serialization.
+
 Resource relationships supported by the engine/reference are:
 
 - Square-grid tile art ids resolve through `art/tiles/tiles.lst`; rendering needs the corresponding tile art, not just the packed grid values.

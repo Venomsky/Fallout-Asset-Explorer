@@ -9,7 +9,9 @@ public sealed record MapEditSessionObject(
 public sealed class MapEditSession
 {
     private readonly Dictionary<int, MapEditSessionObject> _objectsByRecordIndex;
-    private readonly IReadOnlyList<MapEditSessionObject> _objects;
+    private readonly Dictionary<int, int> _objectIndexesByRecordIndex;
+    private readonly List<MapEditSessionObject> _objects;
+    private readonly IReadOnlyList<MapEditSessionObject> _readOnlyObjects;
 
     public MapEditSession(
         MapSourceData sourceData,
@@ -21,7 +23,8 @@ public sealed class MapEditSession
         SourceData = sourceData;
         SessionId = Guid.NewGuid();
         _objectsByRecordIndex = new Dictionary<int, MapEditSessionObject>(sourcePlacements.Count);
-        var objects = new List<MapEditSessionObject>(sourcePlacements.Count);
+        _objectIndexesByRecordIndex = new Dictionary<int, int>(sourcePlacements.Count);
+        _objects = new List<MapEditSessionObject>(sourcePlacements.Count);
 
         foreach (var sourcePlacement in sourcePlacements)
         {
@@ -42,17 +45,18 @@ public sealed class MapEditSession
                 new MapEditObjectId(SessionId, sourcePlacement.RecordIndex),
                 workingPlacement);
             _objectsByRecordIndex.Add(sourcePlacement.RecordIndex, sessionObject);
-            objects.Add(sessionObject);
+            _objectIndexesByRecordIndex.Add(sourcePlacement.RecordIndex, _objects.Count);
+            _objects.Add(sessionObject);
         }
 
-        _objects = Array.AsReadOnly(objects.ToArray());
+        _readOnlyObjects = _objects.AsReadOnly();
     }
 
     public Guid SessionId { get; }
 
     public MapSourceData SourceData { get; }
 
-    public IReadOnlyList<MapEditSessionObject> Objects => _objects;
+    public IReadOnlyList<MapEditSessionObject> Objects => _readOnlyObjects;
 
     public MapEditSessionObject? GetObject(MapEditObjectId id) =>
         id.SessionId == SessionId ? GetObject(id.RecordIndex) : null;
@@ -61,4 +65,38 @@ public sealed class MapEditSession
         _objectsByRecordIndex.TryGetValue(recordIndex, out var sessionObject)
             ? sessionObject
             : null;
+
+    public bool TrySetInventoryQuantity(
+        MapEditObjectId id,
+        int quantity,
+        out string? error)
+    {
+        if (quantity < 1)
+        {
+            error = "Inventory quantity must be at least 1.";
+            return false;
+        }
+
+        if (GetObject(id) is not { } sessionObject)
+        {
+            error = "The object does not belong to this MAP edit session.";
+            return false;
+        }
+
+        if (sessionObject.Placement.ParentRecordIndex is null
+            || sessionObject.Placement.InventoryQuantity is null)
+        {
+            error = "The object has no decoded inventory quantity.";
+            return false;
+        }
+
+        var updatedObject = sessionObject with
+        {
+            Placement = sessionObject.Placement with { InventoryQuantity = quantity }
+        };
+        _objectsByRecordIndex[id.RecordIndex] = updatedObject;
+        _objects[_objectIndexesByRecordIndex[id.RecordIndex]] = updatedObject;
+        error = null;
+        return true;
+    }
 }

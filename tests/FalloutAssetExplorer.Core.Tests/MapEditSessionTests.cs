@@ -66,10 +66,76 @@ public sealed class MapEditSessionTests
             () => new MapEditSession(sourceData, duplicatePlacements));
     }
 
+    [Fact]
+    public void TrySetInventoryQuantityUpdatesWorkingCopyAndCanBeRetrievedAgain()
+    {
+        var sourceBytes = new byte[] { 1, 2, 3, 4 };
+        var sourceData = new MapSourceData(sourceBytes);
+        var parent = CreatePlacement(3);
+        var child = CreatePlacement(7, parentRecordIndex: 3, inventoryQuantity: 4);
+        var session = new MapEditSession(sourceData, [parent, child]);
+        var childId = new MapEditObjectId(session.SessionId, child.RecordIndex);
+        var originalSessionObject = session.GetObject(childId);
+
+        Assert.True(session.TrySetInventoryQuantity(childId, 12, out var error));
+
+        var updatedSessionObject = session.GetObject(childId);
+        Assert.Null(error);
+        Assert.NotSame(originalSessionObject, updatedSessionObject);
+        Assert.Equal(12, updatedSessionObject!.Placement.InventoryQuantity);
+        Assert.Same(
+            updatedSessionObject,
+            session.Objects.Single(sessionObject => sessionObject.Id == childId));
+        Assert.Equal(4, child.InventoryQuantity);
+        Assert.Equal(sourceBytes, sourceData.GetRange(0, sourceData.Length).ToArray());
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-1)]
+    public void TrySetInventoryQuantityRejectsNonPositiveValuesWithoutChangingSession(int quantity)
+    {
+        var child = CreatePlacement(7, parentRecordIndex: 3, inventoryQuantity: 4);
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1, 2, 3 }),
+            [CreatePlacement(3), child]);
+        var childId = new MapEditObjectId(session.SessionId, child.RecordIndex);
+        var originalSessionObject = session.GetObject(childId);
+
+        Assert.False(session.TrySetInventoryQuantity(childId, quantity, out var error));
+
+        Assert.False(string.IsNullOrWhiteSpace(error));
+        Assert.Same(originalSessionObject, session.GetObject(childId));
+        Assert.Equal(4, session.GetObject(childId)!.Placement.InventoryQuantity);
+    }
+
+    [Fact]
+    public void TrySetInventoryQuantityRejectsNonInventoryAndForeignObjects()
+    {
+        var topLevelPlacement = CreatePlacement(3);
+        var session = new MapEditSession(new MapSourceData(new byte[] { 1 }), [topLevelPlacement]);
+        var topLevelId = new MapEditObjectId(session.SessionId, topLevelPlacement.RecordIndex);
+        var originalSessionObject = session.GetObject(topLevelId);
+
+        Assert.False(session.TrySetInventoryQuantity(topLevelId, 2, out var nonInventoryError));
+        Assert.False(string.IsNullOrWhiteSpace(nonInventoryError));
+        Assert.False(
+            session.TrySetInventoryQuantity(
+                new MapEditObjectId(Guid.NewGuid(), topLevelPlacement.RecordIndex),
+                2,
+                out var foreignObjectError));
+
+        Assert.False(string.IsNullOrWhiteSpace(foreignObjectError));
+        Assert.Same(originalSessionObject, session.GetObject(topLevelId));
+        Assert.Null(session.GetObject(topLevelId)!.Placement.InventoryQuantity);
+    }
+
     private static MapObjectPlacement CreatePlacement(
         int recordIndex,
-        IReadOnlyList<int>? payload = null) =>
-        new(
+        IReadOnlyList<int>? payload = null,
+        int? parentRecordIndex = null,
+        int? inventoryQuantity = null) =>
+        new MapObjectPlacement(
             RecordIndex: recordIndex,
             RecordOffset: 32,
             ElevationGroup: 1,
@@ -99,5 +165,9 @@ public sealed class MapEditSessionTests
             RawInventoryPointer: 0,
             RawPayloadWords: payload ?? [],
             Warning: null,
-            UnsupportedReason: null);
+            UnsupportedReason: null)
+        {
+            ParentRecordIndex = parentRecordIndex,
+            InventoryQuantity = inventoryQuantity
+        };
 }
