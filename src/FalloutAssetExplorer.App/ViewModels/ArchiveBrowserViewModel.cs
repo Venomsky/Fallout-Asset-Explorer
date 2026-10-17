@@ -98,6 +98,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private string _intStatus = "Select a .INT entry to inspect.";
     private string _intIdentifierTableHex = string.Empty;
     private bool _isDisposed;
+    private int _selectedWorkspaceIndex;
 
     private sealed record ScriptListNavigationContext(
         IGameArchive Archive,
@@ -113,6 +114,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MapObjectPlacements.CollectionChanged += MapObjectPlacements_CollectionChanged;
         MapInspector.PropertyChanged += MapInspector_PropertyChanged;
         MapInspector.SelectedMapObjectChanged += MapInspector_SelectedMapObjectChanged;
+        SpriteExplorer = new SpriteExplorerViewModel();
     }
 
     public bool IsMsgInspector
@@ -286,9 +288,17 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     public FrmPreviewViewModel FrmPreview { get; } = new();
 
+    public SpriteExplorerViewModel SpriteExplorer { get; }
+
     public MsgInspectorViewModel MsgInspector { get; } = new();
 
     public ObservableCollection<MapObjectPlacement> MapObjectPlacements { get; } = [];
+
+    public int SelectedWorkspaceIndex
+    {
+        get => _selectedWorkspaceIndex;
+        set => SetProperty(ref _selectedWorkspaceIndex, value);
+    }
 
     public string SearchText
     {
@@ -331,6 +341,13 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     public string GameDataDirectoryDisplay => _gameDataDirectory ?? "Not configured";
 
+    public bool CanOpenSelectedFrmInSpriteExplorer =>
+        !_isDisposed
+        && !IsLoading
+        && _archivePath is not null
+        && SelectedEntry is { } entry
+        && IsFrmEntry(entry);
+
     public string StatusMessage
     {
         get => _statusMessage;
@@ -347,6 +364,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             if (SetProperty(ref _isLoading, value))
             {
                 OnPropertyChanged(nameof(CanOpenArchive));
+                OnPropertyChanged(nameof(CanOpenSelectedFrmInSpriteExplorer));
                 NotifyExtractionAvailability();
             }
         }
@@ -473,6 +491,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 OnPropertyChanged(nameof(CanCopySelectedEntryPath));
                 OnPropertyChanged(nameof(SelectedEntryPathToCopy));
                 OnPropertyChanged(nameof(CanReturnToScriptList));
+                OnPropertyChanged(nameof(CanOpenSelectedFrmInSpriteExplorer));
             }
         }
     }
@@ -1101,6 +1120,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         CancelFrmBatchExport(updateStatus: false);
         ClearScriptListNavigationContext();
         FrmPreview.Dispose();
+        SpriteExplorer.Dispose();
         _previewCancellation?.Cancel();
         _previewCancellation = null;
         _mapFloorTileCancellation?.Cancel();
@@ -1124,6 +1144,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         SetEntries([]);
         OnPropertyChanged(nameof(ArchivePathDisplay));
         OnPropertyChanged(nameof(ArchiveFormatDisplay));
+        OnPropertyChanged(nameof(CanOpenSelectedFrmInSpriteExplorer));
         IsLoading = true;
         StatusMessage = "Detecting archive format and reading its directory...";
         try
@@ -1138,6 +1159,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             StatusMessage = $"Loaded {Entries.Count:N0} {GetArchiveFormatDisplay(archive)} entries.";
             OnPropertyChanged(nameof(ArchivePathDisplay));
             OnPropertyChanged(nameof(ArchiveFormatDisplay));
+            OnPropertyChanged(nameof(CanOpenSelectedFrmInSpriteExplorer));
         }
         catch (Exception exception) when (
             exception is InvalidDataException
@@ -1647,6 +1669,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
 
         _gameDataDirectory = fullPath;
+        SpriteExplorer.SetGameDataDirectory(fullPath);
         OnPropertyChanged(nameof(GameDataDirectoryDisplay));
 
         if (SelectedEntry is not null
@@ -1658,6 +1681,21 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         {
             PaletteStatus = $"Configured game-data folder: {fullPath}";
         }
+
+        await SpriteExplorer.RefreshPaletteAsync();
+    }
+
+    public async Task OpenSelectedFrmInSpriteExplorerAsync()
+    {
+        if (!CanOpenSelectedFrmInSpriteExplorer
+            || _archivePath is not { } archivePath
+            || SelectedEntry is not { } entry)
+        {
+            return;
+        }
+
+        SelectedWorkspaceIndex = 1;
+        await SpriteExplorer.OpenSourceAsync(archivePath, entry.Path, _gameDataDirectory);
     }
 
     public void ReportError(string message)

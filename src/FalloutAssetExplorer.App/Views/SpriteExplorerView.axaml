@@ -1,0 +1,280 @@
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="clr-namespace:FalloutAssetExplorer.App.Views"
+    x:Class="FalloutAssetExplorer.App.Views.SpriteExplorerView">
+  <Grid Margin="12" ColumnDefinitions="340,*" ColumnSpacing="12" RowDefinitions="Auto,*" RowSpacing="10">
+    <Grid Grid.ColumnSpan="2" ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+      <Button
+          Content="Open DAT archive..."
+          Click="OpenArchive_Click"
+          IsEnabled="{Binding CanOpenArchive}" />
+      <TextBlock
+          Grid.Column="1"
+          VerticalAlignment="Center"
+          Text="{Binding SourceArchiveDisplay}"
+          TextTrimming="CharacterEllipsis"
+          AutomationProperties.Name="Sprite Explorer source archive" />
+      <TextBlock
+          Grid.Column="2"
+          VerticalAlignment="Center"
+          Text="{Binding StatusMessage}"
+          TextTrimming="CharacterEllipsis"
+          AutomationProperties.LiveSetting="Polite" />
+    </Grid>
+
+    <Border
+        Grid.Row="1"
+        Padding="10"
+        Background="#20242B"
+        BorderBrush="#343A44"
+        BorderThickness="1"
+        CornerRadius="4">
+      <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="8">
+        <TextBox
+            Watermark="Search FRM paths..."
+            Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+            AutomationProperties.Name="Search FRM paths" />
+        <ComboBox
+            Grid.Row="1"
+            ItemsSource="{Binding ArchiveLocationOptions}"
+            SelectedItem="{Binding SelectedArchiveLocation}"
+            AutomationProperties.Name="Filter FRMs by archive location" />
+        <ListBox
+            Grid.Row="2"
+            ItemsSource="{Binding VisibleEntries}"
+            SelectedItem="{Binding SelectedEntry, Mode=TwoWay}"
+            AutomationProperties.Name="FRM entries in the source archive">
+          <ListBox.ItemsPanel>
+            <ItemsPanelTemplate>
+              <VirtualizingStackPanel />
+            </ItemsPanelTemplate>
+          </ListBox.ItemsPanel>
+          <ListBox.ItemTemplate>
+            <DataTemplate>
+              <StackPanel Margin="2,4" Spacing="2">
+                <TextBlock Text="{Binding Path}" TextWrapping="Wrap" />
+                <TextBlock
+                    Foreground="#AAB2BF"
+                    FontSize="11"
+                    Text="{Binding ArchiveLocation}"
+                    TextTrimming="CharacterEllipsis" />
+              </StackPanel>
+            </DataTemplate>
+          </ListBox.ItemTemplate>
+        </ListBox>
+        <TextBlock
+            Grid.Row="3"
+            Foreground="#AAB2BF"
+            Text="{Binding StatusMessage}"
+            TextWrapping="Wrap" />
+        <Border
+            Grid.Row="2"
+            Padding="12"
+            Background="#20242B"
+            IsVisible="{Binding IsFilterResultEmpty}"
+            IsHitTestVisible="False"
+            AutomationProperties.Name="No FRM entries match the current filters">
+          <TextBlock Text="No FRM entries match the current filters." />
+        </Border>
+      </Grid>
+    </Border>
+
+    <Border
+        Grid.Row="1"
+        Grid.Column="1"
+        Padding="12"
+        Background="#20242B"
+        BorderBrush="#343A44"
+        BorderThickness="1"
+        CornerRadius="4">
+      <Grid RowDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto" RowSpacing="8">
+        <StackPanel Spacing="3">
+          <TextBlock FontSize="16" FontWeight="SemiBold" Text="{Binding SelectedEntryDisplay}" />
+          <TextBlock
+              Foreground="#AAB2BF"
+              FontSize="11"
+              Text="{Binding SelectedEntrySizeDisplay}" />
+        </StackPanel>
+        <StackPanel Grid.Row="1" Spacing="4">
+          <WrapPanel Orientation="Horizontal" ItemSpacing="8" LineSpacing="6">
+            <Button
+                Content="Export Current Frame to PNG"
+                Click="ExportCurrentFrame_Click"
+                IsEnabled="{Binding CanExportCurrentFrame}" />
+            <Button
+                Content="Export Current Direction to PNG Spritesheet"
+                Click="ExportCurrentDirection_Click"
+                IsEnabled="{Binding CanExportCurrentDirection}" />
+            <Button
+                Content="Export All Directions to PNG Spritesheet"
+                Click="ExportAllDirections_Click"
+                IsEnabled="{Binding CanExportAllDirections}" />
+            <Button
+                Content="Cancel Export"
+                Click="CancelExport_Click"
+                IsVisible="{Binding IsExporting}"
+                IsEnabled="{Binding CanCancelExport}" />
+          </WrapPanel>
+          <TextBlock
+              Foreground="#AAB2BF"
+              FontSize="11"
+              Text="Spritesheets pack raw frame pixels from each frame's top-left; FRM offsets and direction shifts stay in PNG metadata. All directions are stacked top-to-bottom with transparent gaps." />
+        </StackPanel>
+        <StackPanel
+            Grid.Row="2"
+            Orientation="Horizontal"
+            Spacing="12">
+          <RadioButton
+              GroupName="SpritePreviewMode"
+              Content="Animation"
+              IsChecked="{Binding IsAnimationMode, Mode=TwoWay}" />
+          <RadioButton
+              GroupName="SpritePreviewMode"
+              Content="Sprite Sheet"
+              IsChecked="{Binding IsSpriteSheetMode, Mode=TwoWay}" />
+          <CheckBox
+              Content="All Directions"
+              IsChecked="{Binding IsAllDirectionsSpriteSheet}"
+              IsVisible="{Binding IsSpriteSheetMode}"
+              IsEnabled="{Binding HasSpriteSheetSource}" />
+          <TextBlock
+              VerticalAlignment="Center"
+              Text="{Binding SpriteSheetSummary}"
+              TextTrimming="CharacterEllipsis"
+              IsVisible="{Binding IsSpriteSheetMode}" />
+          <Button
+              Content="Export Visible Sprite Sheet to PNG"
+              Click="ExportVisibleSpriteSheet_Click"
+              IsEnabled="{Binding CanExportVisibleSpriteSheet}"
+              IsVisible="{Binding IsSpriteSheetMode}" />
+        </StackPanel>
+        <TextBlock
+            Grid.Row="3"
+            Foreground="#AAB2BF"
+            FontSize="11"
+            Text="{Binding SpriteSheetStatus}"
+            TextWrapping="Wrap"
+            IsVisible="{Binding IsSpriteSheetMode}" />
+        <StackPanel
+            Grid.Row="4"
+            Orientation="Horizontal"
+            Spacing="8"
+            IsVisible="{Binding IsAnimationMode}">
+          <TextBlock VerticalAlignment="Center" Text="Direction" />
+          <ComboBox
+              Width="125"
+              ItemsSource="{Binding Preview.DirectionOptions}"
+              SelectedIndex="{Binding Preview.SelectedDirectionIndex}"
+              AutomationProperties.Name="Sprite direction" />
+          <TextBlock VerticalAlignment="Center" Text="Frame" />
+          <ComboBox
+              Width="85"
+              ItemsSource="{Binding Preview.FrameOptions}"
+              SelectedItem="{Binding Preview.SelectedFrameIndex}"
+              AutomationProperties.Name="Sprite frame" />
+          <CheckBox
+              Content="Checkerboard"
+              IsChecked="{Binding Preview.IsCheckerboardBackground}"
+              AutomationProperties.Name="Sprite transparency background" />
+        </StackPanel>
+        <Border Grid.Row="5" Background="#171A1F" ClipToBounds="True" MinHeight="80">
+          <Grid IsVisible="{Binding HasDisplayBitmap}">
+            <local:CheckerboardBackground
+                IsVisible="{Binding Preview.IsCheckerboardBackground}"
+                IsHitTestVisible="False" />
+            <Canvas
+                x:Name="SpriteViewport"
+                Background="Transparent"
+                ClipToBounds="True"
+                SizeChanged="SpriteViewport_SizeChanged"
+                PointerWheelChanged="SpriteViewport_PointerWheelChanged"
+                PointerPressed="SpriteViewport_PointerPressed"
+                PointerMoved="SpriteViewport_PointerMoved"
+                PointerReleased="SpriteViewport_PointerReleased"
+                PointerCaptureLost="SpriteViewport_PointerCaptureLost">
+              <Image
+                  x:Name="SpriteImage"
+                  Canvas.Left="0"
+                  Canvas.Top="0"
+                  Source="{Binding DisplayBitmap}"
+                  Stretch="None"
+                  RenderOptions.BitmapInterpolationMode="None"
+                  RenderTransformOrigin="0%, 0%"
+                  AutomationProperties.Name="Sprite frame preview" />
+              <local:SpriteSheetFrameOverlay
+                  x:Name="SpriteSheetFrameOverlay"
+                  IsVisible="{Binding IsSpriteSheetMode}"
+                  IsHitTestVisible="False"
+                  Width="{Binding SpriteSheetWidth}"
+                  Height="{Binding SpriteSheetHeight}"
+                  ClipToBounds="True" />
+            </Canvas>
+          </Grid>
+        </Border>
+        <StackPanel
+            Grid.Row="6"
+            Orientation="Horizontal"
+            HorizontalAlignment="Center"
+            Spacing="8">
+          <Button Content="+" Click="ZoomIn_Click" IsEnabled="{Binding Zoom.HasImage}" />
+          <Button Content="−" Click="ZoomOut_Click" IsEnabled="{Binding Zoom.HasImage}" />
+          <Button Content="100%" Click="Zoom100_Click" IsEnabled="{Binding Zoom.HasImage}" />
+          <Button Content="Fit" Click="ZoomFit_Click" IsEnabled="{Binding Zoom.HasImage}" />
+          <TextBlock
+              VerticalAlignment="Center"
+              MinWidth="48"
+              Text="{Binding Zoom.ZoomDisplay}"
+              TextAlignment="Right" />
+        </StackPanel>
+        <Grid
+            Grid.Row="7"
+            ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto"
+            ColumnSpacing="8"
+            IsVisible="{Binding Preview.HasPreview}">
+          <Button
+              Content="{Binding Preview.PlayPauseButtonText}"
+              Click="TogglePlayback_Click"
+              IsEnabled="{Binding Preview.CanPlay}"
+              AutomationProperties.Name="Play or pause sprite animation" />
+          <CheckBox
+              Grid.Column="1"
+              VerticalAlignment="Center"
+              Content="Loop"
+              IsChecked="{Binding Preview.IsLoopEnabled}"
+              IsEnabled="{Binding Preview.CanPlay}" />
+          <TextBlock
+              Grid.Column="2"
+              VerticalAlignment="Center"
+              Text="{Binding Preview.CurrentFrameDisplay}" />
+          <TextBlock Grid.Column="3" VerticalAlignment="Center" Text="FPS" />
+          <Slider
+              Grid.Column="4"
+              Minimum="1"
+              Maximum="30"
+              TickFrequency="1"
+              IsSnapToTickEnabled="True"
+              Value="{Binding Preview.PlaybackSpeed}"
+              AutomationProperties.Name="Sprite animation frames per second" />
+          <TextBlock
+              Grid.Column="5"
+              VerticalAlignment="Center"
+              Text="{Binding Preview.PlaybackSpeedDisplay}" />
+        </Grid>
+        <StackPanel Grid.Row="8" Spacing="4">
+          <TextBlock
+              Foreground="#AAB2BF"
+              FontSize="12"
+              Text="{Binding Preview.PreviewDetails}"
+              TextWrapping="Wrap"
+              IsVisible="{Binding Preview.HasPreview}" />
+          <TextBlock
+              Foreground="#AAB2BF"
+              FontSize="12"
+              Text="{Binding PaletteStatus}"
+              TextWrapping="Wrap" />
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

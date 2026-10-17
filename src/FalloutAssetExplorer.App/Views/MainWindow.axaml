@@ -11,11 +11,19 @@
     Background="#171A1F"
     Foreground="#E7EAF0"
     FontFamily="Segoe UI">
-  <DockPanel LastChildFill="True">
+  <TabControl
+      x:Name="WorkspaceTabs"
+      SelectedIndex="{Binding SelectedWorkspaceIndex, Mode=TwoWay}">
+    <TabItem Header="Archive Browser">
+      <DockPanel LastChildFill="True">
     <Menu DockPanel.Dock="Top">
       <MenuItem Header="_File">
         <MenuItem Header="_Open Archive..." Click="OpenArchive_Click" IsEnabled="{Binding CanOpenArchive}" />
         <MenuItem Header="Set _Game Data Folder..." Click="SetGameDataFolder_Click" />
+        <MenuItem
+            Header="Open Selected FRM in Sprite Explorer"
+            Click="OpenSelectedFrmInSpriteExplorer_Click"
+            IsEnabled="{Binding CanOpenSelectedFrmInSpriteExplorer}" />
         <MenuItem Header="_Extract Selected..." Click="ExtractSelected_Click" IsEnabled="{Binding CanExtractSelected}" />
         <MenuItem Header="Extract _Visible..." Click="ExtractVisible_Click" IsEnabled="{Binding CanExtractVisible}" />
         <MenuItem Header="Extract _All..." Click="ExtractAll_Click" IsEnabled="{Binding CanExtractAll}" />
@@ -124,6 +132,10 @@
                 Header="Copy Resource Path"
                 IsEnabled="{Binding CanCopySelectedEntryPath}"
                 Click="CopyResourcePath_Click" />
+            <MenuItem
+                Header="Open in Sprite Explorer"
+                IsEnabled="{Binding CanOpenSelectedFrmInSpriteExplorer}"
+                Click="OpenSelectedFrmInSpriteExplorer_Click" />
           </ContextMenu>
         </DataGrid.ContextMenu>
         <DataGrid.Columns>
@@ -638,5 +650,10 @@
         </Grid>
       </Border>
     </Grid>
-  </DockPanel>
+      </DockPanel>
+    </TabItem>
+    <TabItem Header="Sprite Explorer">
+      <local:SpriteExplorerView DataContext="{Binding SpriteExplorer}" />
+    </TabItem>
+  </TabControl>
 </Window>

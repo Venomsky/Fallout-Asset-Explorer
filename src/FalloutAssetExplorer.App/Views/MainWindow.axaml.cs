@@ -158,6 +158,14 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void OpenSelectedFrmInSpriteExplorer_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is ArchiveBrowserViewModel viewModel)
+        {
+            await viewModel.OpenSelectedFrmInSpriteExplorerAsync();
+        }
+    }
+
     private void ObserveViewModel(ArchiveBrowserViewModel viewModel)
     {
         if (ReferenceEquals(_observedViewModel, viewModel))

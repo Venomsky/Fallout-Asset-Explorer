@@ -12,6 +12,8 @@ namespace FalloutAssetExplorer.App.ViewModels;
 
 public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
 {
+    public const int SpriteSheetDirectionGap = 24;
+
     private static readonly string[] DirectionNames = ["NE", "E", "SE", "SW", "W", "NW"];
     private static readonly FrmSpritesheetPackingLimits SpritesheetExportLimits = new(
         maximumWidth: 16_384,
@@ -79,10 +81,22 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
     public bool CanExportSpritesheet =>
         !_isDisposed
         && !_isExportingPng
-        && _document is not null
         && _palette is not null
+        && HasSpriteSheetData;
+
+    public bool HasSpriteSheetData =>
+        !_isDisposed
+        && _document is not null
         && _document.Directions.Count > 0
         && _document.Directions.Any(direction => direction.Frames.Count > 0);
+
+    public bool CanExportCurrentDirectionSpritesheet =>
+        CanExportSpritesheet
+        && _document is not null
+        && (uint)_selectedDirectionIndex < (uint)_document.Directions.Count
+        && _document.Directions[_selectedDirectionIndex].Frames.Count > 0;
+
+    public bool IsExportingPng => _isExportingPng;
 
     public string SuggestedPngFileName
     {
@@ -109,22 +123,23 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
 
     public string SuggestedSpritesheetPngFileName
     {
+        get => CreateSuggestedPngFileName("_spritesheet", "FRM_spritesheet");
+    }
+
+    public string SuggestedCurrentDirectionSpritesheetPngFileName
+    {
         get
         {
-            var fileName = _resourcePath is null
-                ? "FRM"
-                : Path.GetFileNameWithoutExtension(_resourcePath);
-            var unsanitized = $"{fileName}_spritesheet";
-            var invalidCharacters = Path.GetInvalidFileNameChars()
-                .Concat("<>:\"/\\|?*")
-                .ToHashSet();
-            var sanitized = new string(unsanitized
-                .Select(character => invalidCharacters.Contains(character) ? '_' : character)
-                .ToArray())
-                .TrimEnd('.', ' ');
-            return $"{(string.IsNullOrWhiteSpace(sanitized) ? "FRM_spritesheet" : sanitized)}.png";
+            var directionName = _document is not null
+                && (uint)_selectedDirectionIndex < (uint)_document.Directions.Count
+                ? _document.Directions[_selectedDirectionIndex].Name
+                : DirectionNames[0];
+            return CreateSuggestedPngFileName($"_{directionName}_spritesheet", "FRM_spritesheet");
         }
     }
+
+    public string SuggestedAllDirectionsSpritesheetPngFileName =>
+        CreateSuggestedPngFileName("_all-directions_spritesheet", "FRM_all-directions_spritesheet");
 
     public bool IsPlaying => _playback.IsPlaying;
 
@@ -133,6 +148,14 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
     public string CurrentFrameDisplay => _document is null
         ? "Frame —"
         : $"Frame {_playback.CurrentFrameIndex + 1} / {_playback.CurrentDirectionFrameCount}";
+
+    public FrmSpritesheetFrameKey? SelectedSpriteSheetFrameKey =>
+        _document is not null
+        && (uint)_selectedDirectionIndex < (uint)_document.Directions.Count
+            ? new FrmSpritesheetFrameKey(
+                _document.Directions[_selectedDirectionIndex].Index,
+                _selectedFrameIndex)
+            : null;
 
     public bool IsLoopEnabled
     {
@@ -204,9 +227,12 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
             _playbackTimer.Stop();
             SetProperty(ref _selectedDirectionIndex, value);
             SetProperty(ref _selectedFrameIndex, _playback.CurrentFrameIndex, nameof(SelectedFrameIndex));
+            RefreshFrameOptions();
             RefreshPreviewFrame();
             NotifyPlaybackState();
             OnPropertyChanged(nameof(SuggestedPngFileName));
+            OnPropertyChanged(nameof(SuggestedCurrentDirectionSpritesheetPngFileName));
+            OnPropertyChanged(nameof(CanExportCurrentDirectionSpritesheet));
         }
     }
 
@@ -246,19 +272,19 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         _selectedDirectionIndex = _playback.DirectionIndex;
         _selectedFrameIndex = _playback.CurrentFrameIndex;
 
-        FrameOptions.Clear();
-        for (var index = 0; index < document.FramesPerDirection; index++)
-        {
-            FrameOptions.Add(index);
-        }
+        RefreshFrameOptions();
 
         OnPropertyChanged(nameof(SelectedDirectionIndex));
         OnPropertyChanged(nameof(SelectedFrameIndex));
         NotifyPlaybackState();
         OnPropertyChanged(nameof(CanExportPng));
         OnPropertyChanged(nameof(CanExportSpritesheet));
+        OnPropertyChanged(nameof(CanExportCurrentDirectionSpritesheet));
+        OnPropertyChanged(nameof(HasSpriteSheetData));
         OnPropertyChanged(nameof(SuggestedPngFileName));
         OnPropertyChanged(nameof(SuggestedSpritesheetPngFileName));
+        OnPropertyChanged(nameof(SuggestedCurrentDirectionSpritesheetPngFileName));
+        OnPropertyChanged(nameof(SuggestedAllDirectionsSpritesheetPngFileName));
         RefreshPreviewFrame();
     }
 
@@ -270,6 +296,52 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         }
 
         ResetPreviewState();
+    }
+
+    public void SelectFrameByDirectionIndex(int directionIndex, int frameIndex)
+    {
+        if (_document is null)
+        {
+            throw new InvalidOperationException("A valid FRM must be loaded before selecting a sprite-sheet frame.");
+        }
+
+        var directionPosition = -1;
+        for (var index = 0; index < _document.Directions.Count; index++)
+        {
+            if (_document.Directions[index].Index == directionIndex)
+            {
+                directionPosition = index;
+                break;
+            }
+        }
+
+        if (directionPosition < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(directionIndex));
+        }
+
+        if ((uint)frameIndex >= (uint)_document.Directions[directionPosition].Frames.Count)
+        {
+            throw new ArgumentOutOfRangeException(nameof(frameIndex));
+        }
+
+        if (directionPosition == _selectedDirectionIndex && frameIndex == _selectedFrameIndex)
+        {
+            return;
+        }
+
+        _playbackTimer.Stop();
+        _playback.SelectDirection(directionPosition);
+        _playback.SelectFrame(frameIndex);
+        SetProperty(ref _selectedDirectionIndex, directionPosition, nameof(SelectedDirectionIndex));
+        SetProperty(ref _selectedFrameIndex, frameIndex, nameof(SelectedFrameIndex));
+        RefreshFrameOptions();
+        RefreshPreviewFrame();
+        NotifyPlaybackState();
+        OnPropertyChanged(nameof(SelectedSpriteSheetFrameKey));
+        OnPropertyChanged(nameof(SuggestedPngFileName));
+        OnPropertyChanged(nameof(SuggestedCurrentDirectionSpritesheetPngFileName));
+        OnPropertyChanged(nameof(CanExportCurrentDirectionSpritesheet));
     }
 
     public void TogglePlayback()
@@ -292,7 +364,9 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         NotifyPlaybackState();
     }
 
-    public async Task ExportSelectedFramePngAsync(Stream destination)
+    public async Task ExportSelectedFramePngAsync(
+        Stream destination,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(destination);
         if (!CanExportPng || _document is null || _palette is null)
@@ -303,26 +377,22 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
 
         var document = _document;
         var palette = _palette;
-        var directionIndex = _selectedDirectionIndex;
+        var directionIndex = _document.Directions[_selectedDirectionIndex].Index;
         var frameIndex = _selectedFrameIndex;
-        _isExportingPng = true;
-        OnPropertyChanged(nameof(CanExportPng));
-        OnPropertyChanged(nameof(CanExportSpritesheet));
-
-        try
-        {
-            await Task.Run(
-                () => FrmPngExporter.Write(document, directionIndex, frameIndex, palette, destination));
-        }
-        finally
-        {
-            _isExportingPng = false;
-            OnPropertyChanged(nameof(CanExportPng));
-            OnPropertyChanged(nameof(CanExportSpritesheet));
-        }
+        await RunPngExportAsync(
+            () => FrmPngExporter.Write(
+                document,
+                directionIndex,
+                frameIndex,
+                palette,
+                destination,
+                cancellationToken),
+            cancellationToken);
     }
 
-    public async Task ExportSpritesheetPngAsync(Stream destination)
+    public async Task ExportSpritesheetPngAsync(
+        Stream destination,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(destination);
         if (!CanExportSpritesheet || _document is null || _palette is null)
@@ -339,27 +409,170 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
             assetName = _resourcePath;
         }
 
-        _isExportingPng = true;
-        OnPropertyChanged(nameof(CanExportPng));
-        OnPropertyChanged(nameof(CanExportSpritesheet));
+        await RunPngExportAsync(
+            () => WriteSpritesheetPng(document, palette, destination, assetName, cancellationToken),
+            cancellationToken);
+    }
 
-        try
+    public async Task ExportCurrentDirectionSpritesheetPngAsync(
+        Stream destination,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if (!CanExportCurrentDirectionSpritesheet || _document is null || _palette is null)
         {
-            await Task.Run(
-                () => FrmSpritesheetPngExporter.Write(
+            throw new InvalidOperationException(
+                "Direction spritesheet export requires a valid selected FRM direction and a resolved Fallout COLOR.PAL.");
+        }
+
+        var document = _document;
+        var palette = _palette;
+        var directionIndex = _selectedDirectionIndex;
+        var assetName = Path.GetFileName(_resourcePath);
+        if (string.IsNullOrWhiteSpace(assetName))
+        {
+            assetName = _resourcePath;
+        }
+
+        await RunPngExportAsync(
+            () => FrmSpritesheetPngExporter.WriteDirection(
+                document,
+                directionIndex,
+                palette,
+                destination,
+                SpritesheetExportLimits,
+                DefaultSpritesheetSpacing,
+                assetName,
+                cancellationToken),
+            cancellationToken);
+    }
+
+    public async Task ExportAllDirectionsSeparatedSpritesheetPngAsync(
+        Stream destination,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if (!CanExportSpritesheet || _document is null || _palette is null)
+        {
+            throw new InvalidOperationException(
+                "Spritesheet export requires a valid FRM document and a resolved Fallout COLOR.PAL.");
+        }
+
+        var document = _document;
+        var palette = _palette;
+        var assetName = Path.GetFileName(_resourcePath);
+        if (string.IsNullOrWhiteSpace(assetName))
+        {
+            assetName = _resourcePath;
+        }
+
+        await RunPngExportAsync(
+            () => FrmSpritesheetPngExporter.WriteAllDirectionsSeparated(
+                document,
+                palette,
+                destination,
+                SpritesheetExportLimits,
+                DefaultSpritesheetSpacing,
+                assetName: assetName,
+                cancellationToken: cancellationToken),
+            cancellationToken);
+    }
+
+    public async Task ExportVisibleSpriteSheetPngAsync(
+        Stream destination,
+        bool allDirections,
+        int selectedDirectionIndex,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(destination);
+        if (!CanExportSpritesheet || _document is null || _palette is null)
+        {
+            throw new InvalidOperationException(
+                "Sprite-sheet export requires a valid FRM document and a resolved Fallout COLOR.PAL.");
+        }
+
+        var document = _document;
+        var palette = _palette;
+        int? directionIndex = allDirections
+            ? null
+            : document.Directions[(uint)selectedDirectionIndex < (uint)document.Directions.Count
+                ? selectedDirectionIndex
+                : throw new ArgumentOutOfRangeException(nameof(selectedDirectionIndex))].Index;
+        var assetName = Path.GetFileName(_resourcePath);
+        if (string.IsNullOrWhiteSpace(assetName))
+        {
+            assetName = _resourcePath;
+        }
+
+        await RunPngExportAsync(
+            () => FrmSpritesheetPngExporter.WriteAndGetLayout(
+                document,
+                palette,
+                destination,
+                SpritesheetExportLimits,
+                directionIndex,
+                separateDirections: allDirections,
+                frameSpacing: DefaultSpritesheetSpacing,
+                directionSpacing: SpriteSheetDirectionGap,
+                assetName: assetName,
+                cancellationToken: cancellationToken),
+            cancellationToken);
+    }
+
+    public async Task<(MemoryStream Png, FrmSpritesheetLayout Layout)> RenderSpriteSheetPngAsync(
+        bool allDirections,
+        int selectedDirectionIndex,
+        CancellationToken cancellationToken = default)
+    {
+        if (_isDisposed || _document is null || _palette is null)
+        {
+            throw new InvalidOperationException(
+                "Sprite-sheet preview requires a valid FRM document and a resolved Fallout COLOR.PAL.");
+        }
+
+        var document = _document;
+        var palette = _palette;
+        int? directionIndex = allDirections
+            ? null
+            : document.Directions[(uint)selectedDirectionIndex < (uint)document.Directions.Count
+                ? selectedDirectionIndex
+                : throw new ArgumentOutOfRangeException(nameof(selectedDirectionIndex))].Index;
+        var assetName = Path.GetFileName(_resourcePath);
+        if (string.IsNullOrWhiteSpace(assetName))
+        {
+            assetName = _resourcePath;
+        }
+
+        return await Task.Run(() =>
+        {
+            var png = new MemoryStream();
+            var completed = false;
+            try
+            {
+                var layout = FrmSpritesheetPngExporter.WriteAndGetLayout(
                     document,
                     palette,
-                    destination,
+                    png,
                     SpritesheetExportLimits,
-                    DefaultSpritesheetSpacing,
-                    assetName));
-        }
-        finally
-        {
-            _isExportingPng = false;
-            OnPropertyChanged(nameof(CanExportPng));
-            OnPropertyChanged(nameof(CanExportSpritesheet));
-        }
+                    directionIndex,
+                    separateDirections: allDirections,
+                    frameSpacing: DefaultSpritesheetSpacing,
+                    directionSpacing: SpriteSheetDirectionGap,
+                    assetName: assetName,
+                    cancellationToken: cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                png.Position = 0;
+                completed = true;
+                return (png, layout);
+            }
+            finally
+            {
+                if (!completed)
+                {
+                    png.Dispose();
+                }
+            }
+        }, cancellationToken);
     }
 
     internal static void WriteSpritesheetPng(
@@ -404,7 +617,9 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
             ReplacePreviewBitmap(null);
             PreviewDetails = DefaultPreviewDetails;
             OnPropertyChanged(nameof(CurrentFrameDisplay));
+            OnPropertyChanged(nameof(SelectedSpriteSheetFrameKey));
             OnPropertyChanged(nameof(CanExportPng));
+            OnPropertyChanged(nameof(CanExportCurrentDirectionSpritesheet));
             OnPropertyChanged(nameof(SuggestedPngFileName));
             return;
         }
@@ -439,7 +654,9 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         ReplacePreviewBitmap(bitmap);
         PreviewDetails = BuildPreviewDetails(_document, _selectedDirectionIndex, _selectedFrameIndex);
         OnPropertyChanged(nameof(CurrentFrameDisplay));
+        OnPropertyChanged(nameof(SelectedSpriteSheetFrameKey));
         OnPropertyChanged(nameof(CanExportPng));
+        OnPropertyChanged(nameof(CanExportCurrentDirectionSpritesheet));
         OnPropertyChanged(nameof(SuggestedPngFileName));
     }
 
@@ -527,8 +744,12 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         NotifyPlaybackState();
         OnPropertyChanged(nameof(CanExportPng));
         OnPropertyChanged(nameof(CanExportSpritesheet));
+        OnPropertyChanged(nameof(CanExportCurrentDirectionSpritesheet));
+        OnPropertyChanged(nameof(HasSpriteSheetData));
         OnPropertyChanged(nameof(SuggestedPngFileName));
         OnPropertyChanged(nameof(SuggestedSpritesheetPngFileName));
+        OnPropertyChanged(nameof(SuggestedCurrentDirectionSpritesheetPngFileName));
+        OnPropertyChanged(nameof(SuggestedAllDirectionsSpritesheetPngFileName));
     }
 
     private void ReplacePreviewBitmap(Bitmap? bitmap)
@@ -543,12 +764,72 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         previousBitmap?.Dispose();
     }
 
+    private void RefreshFrameOptions()
+    {
+        FrameOptions.Clear();
+        if (_document is null || (uint)_selectedDirectionIndex >= (uint)_document.Directions.Count)
+        {
+            return;
+        }
+
+        var frameCount = _document.Directions[_selectedDirectionIndex].Frames.Count;
+        for (var index = 0; index < frameCount; index++)
+        {
+            FrameOptions.Add(index);
+        }
+    }
+
     private void NotifyPlaybackState()
     {
         OnPropertyChanged(nameof(CanPlay));
         OnPropertyChanged(nameof(IsPlaying));
         OnPropertyChanged(nameof(PlayPauseButtonText));
         OnPropertyChanged(nameof(CurrentFrameDisplay));
+    }
+
+    private async Task RunPngExportAsync(Action write, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        _isExportingPng = true;
+        NotifyPngExportState();
+
+        try
+        {
+            await Task.Run(write, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        finally
+        {
+            _isExportingPng = false;
+            if (!_isDisposed)
+            {
+                NotifyPngExportState();
+            }
+        }
+    }
+
+    private void NotifyPngExportState()
+    {
+        OnPropertyChanged(nameof(IsExportingPng));
+        OnPropertyChanged(nameof(CanExportPng));
+        OnPropertyChanged(nameof(CanExportSpritesheet));
+        OnPropertyChanged(nameof(CanExportCurrentDirectionSpritesheet));
+    }
+
+    private string CreateSuggestedPngFileName(string suffix, string fallback)
+    {
+        var fileName = _resourcePath is null
+            ? "FRM"
+            : Path.GetFileNameWithoutExtension(_resourcePath);
+        var unsanitized = $"{fileName}{suffix}";
+        var invalidCharacters = Path.GetInvalidFileNameChars()
+            .Concat("<>:\"/\\|?*")
+            .ToHashSet();
+        var sanitized = new string(unsanitized
+            .Select(character => invalidCharacters.Contains(character) ? '_' : character)
+            .ToArray())
+            .TrimEnd('.', ' ');
+        return $"{(string.IsNullOrWhiteSpace(sanitized) ? fallback : sanitized)}.png";
     }
 
     private TimeSpan GetPlaybackInterval() =>

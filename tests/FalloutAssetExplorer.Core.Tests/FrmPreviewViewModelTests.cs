@@ -28,6 +28,7 @@ public sealed class FrmPreviewViewModelTests
         Assert.False(viewModel.CanPlay);
         Assert.False(viewModel.CanExportPng);
         Assert.False(viewModel.CanExportSpritesheet);
+        Assert.False(viewModel.CanExportCurrentDirectionSpritesheet);
         Assert.Empty(viewModel.FrameOptions);
         Assert.Equal(0, viewModel.SelectedDirectionIndex);
         Assert.Equal(0, viewModel.SelectedFrameIndex);
@@ -41,6 +42,7 @@ public sealed class FrmPreviewViewModelTests
         Assert.True(viewModel.CanPlay);
         Assert.True(viewModel.CanExportPng);
         Assert.True(viewModel.CanExportSpritesheet);
+        Assert.True(viewModel.CanExportCurrentDirectionSpritesheet);
 
         var displayedBitmap = viewModel.PreviewBitmap;
         viewModel.ClearPreview();
@@ -50,6 +52,7 @@ public sealed class FrmPreviewViewModelTests
         Assert.False(viewModel.CanPlay);
         Assert.False(viewModel.CanExportPng);
         Assert.False(viewModel.CanExportSpritesheet);
+        Assert.False(viewModel.CanExportCurrentDirectionSpritesheet);
         Assert.Empty(viewModel.FrameOptions);
         Assert.Equal(0, viewModel.SelectedDirectionIndex);
         Assert.Equal(0, viewModel.SelectedFrameIndex);
@@ -210,6 +213,66 @@ public sealed class FrmPreviewViewModelTests
     }
 
     [Fact]
+    public async Task DirectionExportActions_WriteSelectedAndSeparatedDirectionMetadata()
+    {
+        using var viewModel = new FrmPreviewViewModel();
+        viewModel.SetPreview(CreateDocument(), CreatePalette(), "art/critters/test.frm");
+        viewModel.SelectedDirectionIndex = 1;
+        Assert.Equal("test_E_spritesheet.png", viewModel.SuggestedCurrentDirectionSpritesheetPngFileName);
+        Assert.Equal("test_all-directions_spritesheet.png", viewModel.SuggestedAllDirectionsSpritesheetPngFileName);
+
+        using var directionOutput = new MemoryStream();
+        await viewModel.ExportCurrentDirectionSpritesheetPngAsync(directionOutput);
+        using var directionMetadata = ReadSpritesheetMetadata(directionOutput.ToArray());
+        var selectedDirection = Assert.Single(
+            directionMetadata.RootElement.GetProperty("directions").EnumerateArray());
+        Assert.Equal(1, selectedDirection.GetProperty("index").GetInt32());
+        Assert.Equal("E", selectedDirection.GetProperty("name").GetString());
+        Assert.True(viewModel.CanExportCurrentDirectionSpritesheet);
+
+        using var allDirectionsOutput = new MemoryStream();
+        await viewModel.ExportAllDirectionsSeparatedSpritesheetPngAsync(allDirectionsOutput);
+        using var allDirectionsMetadata = ReadSpritesheetMetadata(allDirectionsOutput.ToArray());
+        Assert.Equal(
+            2,
+            allDirectionsMetadata.RootElement.GetProperty("directions").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task PngExport_CancellationBeforeEncodingDoesNotWriteOutput()
+    {
+        using var viewModel = new FrmPreviewViewModel();
+        viewModel.SetPreview(CreateDocument(), CreatePalette(), "art/critters/test.frm");
+        using var output = new MemoryStream();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            viewModel.ExportSelectedFramePngAsync(output, cancellation.Token));
+
+        Assert.Empty(output.ToArray());
+        Assert.True(viewModel.CanExportPng);
+        Assert.False(viewModel.IsExportingPng);
+    }
+
+    [Fact]
+    public async Task PngExport_CancellationDuringEncodingStopsAtRowBoundary()
+    {
+        using var viewModel = new FrmPreviewViewModel();
+        viewModel.SetPreview(CreateDocument(), CreatePalette(), "art/critters/test.frm");
+        using var cancellation = new CancellationTokenSource();
+        using var output = new CancelOnWriteStream(cancellation);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            viewModel.ExportSelectedFramePngAsync(output, cancellation.Token));
+
+        Assert.NotEmpty(output.ToArray());
+        Assert.False(Encoding.ASCII.GetString(output.ToArray()).Contains("IEND", StringComparison.Ordinal));
+        Assert.False(viewModel.IsExportingPng);
+        Assert.True(viewModel.CanExportPng);
+    }
+
+    [Fact]
     public async Task ExportSpritesheetPngAsync_ReportsDestinationWriteFailureAndRestoresAvailability()
     {
         using var viewModel = new FrmPreviewViewModel();
@@ -336,6 +399,21 @@ public sealed class FrmPreviewViewModelTests
             _writeStarted.TrySetResult(true);
             _release.Wait();
             base.Write(buffer);
+        }
+    }
+
+    private sealed class CancelOnWriteStream(CancellationTokenSource cancellation) : MemoryStream
+    {
+        private bool _hasWritten;
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            base.Write(buffer, offset, count);
+            if (!_hasWritten)
+            {
+                _hasWritten = true;
+                cancellation.Cancel();
+            }
         }
     }
 }
