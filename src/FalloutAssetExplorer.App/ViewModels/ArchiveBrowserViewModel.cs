@@ -1321,6 +1321,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                     _isReplacingMapObjectPlacements = false;
                 }
 
+                MapInspector.SetMapEditSession(
+                    objectPlacements?.SourceData is { } sourceData
+                        ? new MapEditSession(sourceData, MapObjectPlacements)
+                        : null);
                 MapInspector.SetMapObjectPlacements(MapObjectPlacements);
                 MapInspector.ClearSelectedMapObject();
                 ScheduleMapObjectSpriteBatch();

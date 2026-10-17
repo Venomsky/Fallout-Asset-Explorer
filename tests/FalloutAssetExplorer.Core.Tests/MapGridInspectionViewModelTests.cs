@@ -81,6 +81,72 @@ public sealed class MapGridInspectionViewModelTests
     }
 
     [Fact]
+    public void EditSessionUsesExistingSelectionAndShowsOnlyConfirmedPlacementFields()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var inspector = viewModel.MapInspector;
+        var placement = CreateMarkerPlacement(7, elevation: 0);
+        var sourceData = new MapSourceData(new byte[] { 1, 2, 3 });
+        inspector.SetMapObjectPlacements([placement]);
+        inspector.SetMapEditSession(new MapEditSession(sourceData, [placement]));
+
+        Assert.Null(inspector.SelectedEditObject);
+        Assert.Equal(
+            "Select a parsed object to inspect its confirmed placement fields.",
+            inspector.MapObjectDetailsDisplay);
+        Assert.True(inspector.HasEditSession);
+
+        inspector.SelectedMapObject = placement;
+
+        Assert.Same(placement, inspector.SelectedMapObject);
+        Assert.NotSame(placement, inspector.SelectedEditObject!.Placement);
+        Assert.Equal(
+            new MapEditObjectId(inspector.EditSession!.SessionId, placement.RecordIndex),
+            inspector.SelectedEditObject.Id);
+        Assert.Equal(
+            "Session-local object ID: 7"
+                + Environment.NewLine
+                + "Elevation group: 0"
+                + Environment.NewLine
+                + "Hex-grid coordinates: (100, 100)",
+            inspector.MapObjectDetailsDisplay);
+        Assert.DoesNotContain("FID", inspector.MapObjectDetailsDisplay);
+        Assert.DoesNotContain("Raw", inspector.MapObjectDetailsDisplay);
+
+        inspector.ClearSelectedMapObject();
+        inspector.SelectMapObjectFromFloorMarker(placement);
+        Assert.Equal(placement.RecordIndex, inspector.SelectedEditObject?.Id.RecordIndex);
+
+        inspector.ClearSelectedMapObject();
+        inspector.SelectMapObjectFromIsometricMarker(placement.RecordIndex, placement.ElevationGroup);
+        Assert.Equal(placement.RecordIndex, inspector.SelectedEditObject?.Id.RecordIndex);
+    }
+
+    [Fact]
+    public void ReplacingEditSessionForNewMapClearsSelectionEvenWhenRecordIndexIsReused()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var inspector = viewModel.MapInspector;
+        var oldPlacement = CreateMarkerPlacement(7, elevation: 0);
+        var newPlacement = oldPlacement with { HexX = 99, HexY = 100 };
+        var oldSource = new MapSourceData(new byte[] { 1, 2, 3 });
+        var newSource = new MapSourceData(new byte[] { 4, 5, 6 });
+        inspector.SetMapObjectPlacements([oldPlacement]);
+        inspector.SetMapEditSession(new MapEditSession(oldSource, [oldPlacement]));
+        inspector.SelectedMapObject = oldPlacement;
+
+        var staleId = inspector.SelectedEditObject!.Id;
+        inspector.SetMapObjectPlacements([newPlacement]);
+        var newSession = new MapEditSession(newSource, [newPlacement]);
+        inspector.SetMapEditSession(newSession);
+
+        Assert.Null(inspector.SelectedMapObject);
+        Assert.Null(inspector.SelectedEditObject);
+        Assert.Null(newSession.GetObject(staleId));
+        Assert.NotSame(newSession.SourceData, oldSource);
+    }
+
+    [Fact]
     public void PrototypeDiagnostics_FollowSelectionChangesAndClearWhenDeselected()
     {
         using var viewModel = new ArchiveBrowserViewModel();

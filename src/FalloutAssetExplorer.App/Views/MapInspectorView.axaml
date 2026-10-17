@@ -189,11 +189,19 @@
                 BorderThickness="1"
                 CornerRadius="4"
                 AutomationProperties.Name="Selected MAP object details">
-              <TextBlock
-                  Foreground="#E7EAF0"
-                  FontSize="11"
-                  Text="{Binding MapInspector.MapObjectDetailsDisplay}"
-                  TextWrapping="Wrap" />
+              <StackPanel Spacing="4">
+                <TextBlock
+                    Foreground="#AAB2BF"
+                    FontSize="10"
+                    Text="{Binding MapInspector.EditSessionStatusDisplay}"
+                    IsVisible="{Binding MapInspector.HasEditSession}"
+                    TextWrapping="Wrap" />
+                <TextBlock
+                    Foreground="#E7EAF0"
+                    FontSize="11"
+                    Text="{Binding MapInspector.MapObjectDetailsDisplay}"
+                    TextWrapping="Wrap" />
+              </StackPanel>
             </Border>
             <TextBlock
                 Foreground="#E7EAF0"

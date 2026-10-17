@@ -32,6 +32,7 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
     private bool _isReorderingSortedMapObjectPlacements;
     private bool _sortedListReportedTransientSelectionClear;
     private MapObjectPlacement? _selectedMapObject;
+    private MapEditSession? _mapEditSession;
     private string _mapObjectDetailsDisplay = "Select a parsed object to inspect its raw fields.";
     private string _mapObjectPrototypeDiagnosticStatus = DefaultMapObjectPrototypeDiagnosticStatus;
     private string _mapObjectPrototypeDiagnosticDetails = string.Empty;
@@ -250,6 +251,24 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
 
     public int? SelectedMapObjectRecordIndex => _selectedMapObject?.RecordIndex;
 
+    public MapEditSession? EditSession => _mapEditSession;
+
+    public bool HasEditSession => _mapEditSession is not null;
+
+    public MapEditSessionObject? SelectedEditObject =>
+        _mapEditSession is { } session && _selectedMapObject is { } placement
+            ? session.GetObject(new MapEditObjectId(session.SessionId, placement.RecordIndex))
+            : null;
+
+    public string EditSessionStatusDisplay =>
+        _mapEditSession is { } session
+            ? string.Format(
+                CultureInfo.CurrentCulture,
+                "In-memory MAP session: {0:N0} parsed objects; {1:N0} source bytes retained. MAP editing and saving are not implemented.",
+                session.Objects.Count,
+                session.SourceData.Length)
+            : string.Empty;
+
     public string MapObjectDetailsDisplay
     {
         get => _mapObjectDetailsDisplay;
@@ -360,10 +379,34 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
 
     public void ResetMapState()
     {
+        SetMapEditSession(null);
         ClearSelectedMapObject();
         SelectedMapDiagnosticLayerIndex = SquareTilesLayerIndex;
         SetAvailableElevations([], preferredElevationIndex: null);
         ClearMapObjectPrototypeDiagnostic();
+    }
+
+    public void SetMapEditSession(MapEditSession? session)
+    {
+        if (ReferenceEquals(_mapEditSession, session))
+        {
+            return;
+        }
+
+        _mapEditSession = session;
+        OnPropertyChanged(nameof(EditSession));
+        OnPropertyChanged(nameof(HasEditSession));
+        OnPropertyChanged(nameof(SelectedEditObject));
+        OnPropertyChanged(nameof(EditSessionStatusDisplay));
+
+        if (_selectedMapObject is not null)
+        {
+            ClearSelectedMapObject();
+        }
+        else
+        {
+            MapObjectDetailsDisplay = FormatMapObjectDetailsDisplay(null);
+        }
     }
 
     public void SetMapInspectorActive(bool isActive)
@@ -551,6 +594,18 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
         MapObjectPlacement? placement,
         MapObjectSelectionSource source)
     {
+        if (placement is not null && _mapEditSession is { } session)
+        {
+            var belongsToCurrentMap = _mapObjectPlacements.Any(candidate =>
+                candidate.RecordIndex == placement.RecordIndex
+                && ReferenceEquals(candidate, placement));
+            if (!belongsToCurrentMap
+                || session.GetObject(new MapEditObjectId(session.SessionId, placement.RecordIndex)) is null)
+            {
+                placement = null;
+            }
+        }
+
         if (placement is not null && !MatchesMapObjectFilters(placement))
         {
             placement = null;
@@ -569,12 +624,42 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
         if (SetProperty(ref _selectedMapObject, placement, nameof(SelectedMapObject)))
         {
             OnPropertyChanged(nameof(SelectedMapObjectRecordIndex));
-            MapObjectDetailsDisplay = placement?.Details
-                ?? "Select a parsed object to inspect its raw fields.";
+            OnPropertyChanged(nameof(SelectedEditObject));
+            MapObjectDetailsDisplay = FormatMapObjectDetailsDisplay(placement);
             SelectedMapObjectChanged?.Invoke(
                 this,
                 new MapObjectSelectionChangedEventArgs(placement, source));
         }
+    }
+
+    private string FormatMapObjectDetailsDisplay(MapObjectPlacement? placement)
+    {
+        if (_mapEditSession is not { } session)
+        {
+            return placement?.Details ?? "Select a parsed object to inspect its raw fields.";
+        }
+
+        if (placement is null)
+        {
+            return "Select a parsed object to inspect its confirmed placement fields.";
+        }
+
+        var sessionObject = session.GetObject(
+            new MapEditObjectId(session.SessionId, placement.RecordIndex));
+        if (sessionObject is null)
+        {
+            return "The selected object is not available in the current MAP edit session.";
+        }
+
+        var workingPlacement = sessionObject.Placement;
+        var coordinates = workingPlacement.HexX is int x && workingPlacement.HexY is int y
+            ? $"({x}, {y})"
+            : "unavailable";
+        return $"Session-local object ID: {sessionObject.Id.RecordIndex}"
+            + Environment.NewLine
+            + $"Elevation group: {workingPlacement.ElevationGroup}"
+            + Environment.NewLine
+            + $"Hex-grid coordinates: {coordinates}";
     }
 
     private void NotifyMapObjectSearchFeedbackChanged()
