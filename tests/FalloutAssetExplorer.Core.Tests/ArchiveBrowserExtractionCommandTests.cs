@@ -321,6 +321,31 @@ public sealed class ArchiveBrowserExtractionCommandTests
     }
 
     [Fact]
+    public async Task LoadArchiveAsync_ResetsPreviewMessageWhenReplacingArchive()
+    {
+        const string previewPath = "text/english/dialog/previous.msg";
+        using var firstArchive = new TemporaryArchive(
+            CreateDat1Archive(previewPath, "{7}{}{previous}"u8.ToArray()));
+        using var secondArchive = new TemporaryArchive(
+            CreateDat1Archive("text/english/dialog/next.msg", "{8}{}{next}"u8.ToArray()));
+        using var viewModel = new ArchiveBrowserViewModel();
+
+        await viewModel.LoadArchiveAsync(firstArchive.Path);
+        var previewEntry = Assert.Single(viewModel.Entries);
+        viewModel.SelectedEntry = previewEntry;
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Equal(previewPath, viewModel.PreviewMessage);
+
+        await viewModel.LoadArchiveAsync(secondArchive.Path);
+
+        Assert.Null(viewModel.SelectedEntry);
+        Assert.Equal("Select a .FRM, .MAP, .PRO, .MSG, .LST, or .INT entry to inspect.",
+            viewModel.PreviewMessage);
+        Assert.DoesNotContain(previewPath, viewModel.PreviewMessage);
+    }
+
+    [Fact]
     public async Task PreviewSelectedEntryAsync_ResetsMsgInspectorWhenChangingMessageFiles()
     {
         using var archive = new ControlledArchive();

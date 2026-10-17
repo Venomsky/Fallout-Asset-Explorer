@@ -2637,6 +2637,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             FrmPreview.ClearPreview();
         }
 
+        PreviewMessage = "Select a .FRM, .MAP, .PRO, .MSG, .LST, or .INT entry to inspect.";
         PreviewDetails = "Select a .FRM, .MAP, .PRO, .MSG, .LST, or .INT entry to inspect.";
         PreviewTitle = "Resource Inspector";
         PaletteStatus = "Palette discovery uses the open archive or a configured game-data folder.";
