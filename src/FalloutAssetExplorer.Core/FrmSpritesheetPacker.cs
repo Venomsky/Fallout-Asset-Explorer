@@ -3,6 +3,85 @@ namespace FalloutAssetExplorer.Core;
 public static class FrmSpritesheetPacker
 {
     /// <summary>
+    /// Packs each direction into its own shelf-packed block, stacked top-to-bottom
+    /// with a transparent gap. Frames in each block retain input order.
+    /// </summary>
+    public static FrmSpritesheetLayout PackByDirectionRows(
+        IReadOnlyList<FrmSpritesheetFrame> frames,
+        int frameSpacing,
+        int directionSpacing,
+        FrmSpritesheetPackingLimits limits)
+    {
+        ArgumentNullException.ThrowIfNull(frames);
+        ArgumentNullException.ThrowIfNull(limits);
+        ArgumentOutOfRangeException.ThrowIfNegative(frameSpacing);
+        ArgumentOutOfRangeException.ThrowIfNegative(directionSpacing);
+
+        if (frames.Count == 0)
+        {
+            return new FrmSpritesheetLayout(
+                0,
+                0,
+                new Dictionary<FrmSpritesheetFrameKey, FrmSpritesheetPlacement>());
+        }
+
+        FrmSpritesheetFrameKey? previousKey = null;
+        for (var index = 0; index < frames.Count; index++)
+        {
+            var frame = frames[index]
+                ?? throw new ArgumentException("The frame list cannot contain null entries.", nameof(frames));
+            ValidateFrame(frame, previousKey, index);
+            previousKey = frame.Key;
+        }
+
+        var groups = frames.GroupBy(frame => frame.Key.DirectionIndex).ToArray();
+        var placements = new Dictionary<FrmSpritesheetFrameKey, FrmSpritesheetPlacement>(frames.Count);
+        long currentY = 0;
+        long maximumWidth = 0;
+
+        for (var groupIndex = 0; groupIndex < groups.Length; groupIndex++)
+        {
+            var groupLayout = Pack(groups[groupIndex].ToArray(), frameSpacing, limits);
+            if (groupIndex > 0)
+            {
+                currentY = checked(currentY + directionSpacing);
+            }
+
+            var groupBottom = checked(currentY + groupLayout.Height);
+            if (groupBottom > limits.MaximumHeight)
+            {
+                throw new InvalidOperationException(
+                    "The direction-separated spritesheet exceeds the configured maximum height.");
+            }
+
+            foreach (var placement in groupLayout.Placements.Values)
+            {
+                var rectangle = placement.Rectangle;
+                placements.Add(
+                    placement.Frame.Key,
+                    placement with
+                    {
+                        Rectangle = rectangle with { Y = checked(rectangle.Y + (int)currentY) }
+                    });
+            }
+
+            currentY = groupBottom;
+            maximumWidth = Math.Max(maximumWidth, groupLayout.Width);
+        }
+
+        var width = checked((int)maximumWidth);
+        var height = checked((int)currentY);
+        var pixelCount = checked((long)width * height);
+        if (pixelCount > limits.MaximumPixelCount)
+        {
+            throw new InvalidOperationException(
+                "The direction-separated spritesheet exceeds the configured maximum pixel count.");
+        }
+
+        return new FrmSpritesheetLayout(width, height, placements);
+    }
+
+    /// <summary>
     /// Packs frames in input order using shelf rows. Input keys must be strictly
     /// increasing by direction index, then frame index. The maximum width is also
     /// the row-wrap width; the returned sheet has no outer margin.

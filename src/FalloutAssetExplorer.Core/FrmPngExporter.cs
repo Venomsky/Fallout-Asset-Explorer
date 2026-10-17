@@ -14,7 +14,8 @@ public static class FrmPngExporter
         int directionIndex,
         int frameIndex,
         FalloutPalette palette,
-        Stream destination)
+        Stream destination,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(palette);
@@ -76,6 +77,7 @@ public static class FrmPngExporter
                 var row = new byte[checked(frame.Width * 4 + 1)];
                 for (var y = 0; y < frame.Height; y++)
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     row[0] = 0;
                     var sourceOffset = y * frame.Width;
                     for (var x = 0; x < frame.Width; x++)

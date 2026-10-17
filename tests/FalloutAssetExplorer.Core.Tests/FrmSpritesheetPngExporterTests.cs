@@ -124,6 +124,121 @@ public sealed class FrmSpritesheetPngExporterTests
     }
 
     [Fact]
+    public void WriteDirection_ExportsOnlyTheRequestedDirection()
+    {
+        var document = CreateDocument(
+            new FrmDirection(0, "NE", 0, 0, [new FrmFrame(1, 1, 0, 0, [1])]),
+            new FrmDirection(1, "E", 12, -7,
+            [
+                new FrmFrame(1, 1, -2, 3, [2]),
+                new FrmFrame(2, 1, 4, -5, [3, 0])
+            ]));
+        using var output = new MemoryStream();
+
+        FrmSpritesheetPngExporter.WriteDirection(
+            document,
+            directionIndex: 1,
+            CreatePalette(),
+            output,
+            CreateLimits(maximumWidth: 4),
+            spacing: 1);
+
+        var png = DecodePng(output.ToArray());
+        Assert.Equal(4, png.Width);
+        Assert.Equal(1, png.Height);
+        AssertRgba(png, 0, 0, 252, 4, 0, 255);
+        AssertRgba(png, 1, 0, 0, 0, 0, 0);
+        AssertRgba(png, 2, 0, 0, 0, 252, 255);
+        AssertRgba(png, 3, 0, 0, 0, 0, 0);
+
+        using var metadata = JsonDocument.Parse(png.MetadataJson);
+        var direction = Assert.Single(metadata.RootElement.GetProperty("directions").EnumerateArray());
+        Assert.Equal(1, direction.GetProperty("index").GetInt32());
+        Assert.Equal("E", direction.GetProperty("name").GetString());
+        var frames = direction.GetProperty("frames");
+        Assert.Equal(2, frames.GetArrayLength());
+        Assert.Equal(-2, frames[0].GetProperty("offsetX").GetInt16());
+        Assert.Equal(12, frames[0].GetProperty("shiftX").GetInt16());
+    }
+
+    [Fact]
+    public void WriteAllDirectionsSeparated_StacksVariableSizedDirectionBlocksWithTransparentGaps()
+    {
+        var document = CreateDocument(
+            new FrmDirection(0, "NE", 0, 0,
+            [
+                new FrmFrame(2, 1, -1, 2, [1, 0]),
+                new FrmFrame(1, 2, 3, -4, [2, 3])
+            ]),
+            new FrmDirection(1, "E", 8, 9, [new FrmFrame(1, 1, 10, 11, [3])]));
+        using var output = new MemoryStream();
+
+        FrmSpritesheetPngExporter.WriteAllDirectionsSeparated(
+            document,
+            CreatePalette(),
+            output,
+            CreateLimits(maximumWidth: 4),
+            directionSpacing: 2);
+
+        var png = DecodePng(output.ToArray());
+        Assert.Equal(3, png.Width);
+        Assert.Equal(5, png.Height);
+        AssertRgba(png, 0, 0, 40, 80, 120, 255);
+        AssertRgba(png, 1, 0, 0, 0, 0, 0);
+        AssertRgba(png, 2, 0, 252, 4, 0, 255);
+        AssertRgba(png, 2, 1, 0, 0, 252, 255);
+        for (var y = 2; y <= 3; y++)
+        {
+            for (var x = 0; x < png.Width; x++)
+            {
+                AssertRgba(png, x, y, 0, 0, 0, 0);
+            }
+        }
+
+        AssertRgba(png, 0, 4, 0, 0, 252, 255);
+        using var metadata = JsonDocument.Parse(png.MetadataJson);
+        var directions = metadata.RootElement.GetProperty("directions").EnumerateArray().ToArray();
+        Assert.Equal(2, directions.Length);
+        Assert.Equal(0, directions[0].GetProperty("frames")[0]
+            .GetProperty("atlas").GetProperty("y").GetInt32());
+        Assert.Equal(4, directions[1].GetProperty("frames")[0]
+            .GetProperty("atlas").GetProperty("y").GetInt32());
+        Assert.Equal(10, directions[1].GetProperty("frames")[0].GetProperty("offsetX").GetInt16());
+    }
+
+    [Fact]
+    public void WriteAndGetLayout_ReturnsTheExactDirectionSeparatedPngPlacements()
+    {
+        var document = CreateDocument(
+            new FrmDirection(0, "NE", 0, 0,
+            [
+                new FrmFrame(2, 1, -1, 2, [1, 0]),
+                new FrmFrame(1, 2, 3, -4, [2, 3])
+            ]),
+            new FrmDirection(1, "E", 8, 9, [new FrmFrame(1, 1, 10, 11, [3])]));
+        using var output = new MemoryStream();
+
+        var layout = FrmSpritesheetPngExporter.WriteAndGetLayout(
+            document,
+            CreatePalette(),
+            output,
+            CreateLimits(maximumWidth: 4),
+            separateDirections: true,
+            frameSpacing: 1,
+            directionSpacing: 24);
+
+        var png = DecodePng(output.ToArray());
+        Assert.Equal((layout.Width, layout.Height), (png.Width, png.Height));
+        Assert.Equal(new FrmAtlasRectangle(0, 0, 2, 1), layout.Placements[new(0, 0)].Rectangle);
+        Assert.Equal(new FrmAtlasRectangle(3, 0, 1, 2), layout.Placements[new(0, 1)].Rectangle);
+        Assert.Equal(new FrmAtlasRectangle(0, 26, 1, 1), layout.Placements[new(1, 0)].Rectangle);
+        AssertRgba(png, 0, 0, 40, 80, 120, 255);
+        AssertRgba(png, 1, 0, 0, 0, 0, 0);
+        AssertRgba(png, 3, 0, 252, 4, 0, 255);
+        AssertRgba(png, 0, 26, 0, 0, 252, 255);
+    }
+
+    [Fact]
     public void Write_OmitsAssetNameWhenUnavailable()
     {
         var document = CreateDocument(
@@ -147,6 +262,34 @@ public sealed class FrmSpritesheetPngExporterTests
             FrmSpritesheetPngExporter.Write(document, CreatePalette(), output, CreateLimits()));
 
         Assert.Empty(output.ToArray());
+    }
+
+    [Fact]
+    public void Write_CancelsDuringIdatEncodingAndDoesNotWriteIend()
+    {
+        const int width = 512;
+        const int height = 512;
+        var pixels = new byte[width * height];
+        new Random(1729).NextBytes(pixels);
+        var document = CreateDocument(
+            new FrmDirection(0, "NE", 0, 0, [new FrmFrame(width, height, 0, 0, pixels)]));
+        using var cancellation = new CancellationTokenSource();
+        using var output = new CancelOnIdatWriteStream(cancellation);
+
+        Assert.ThrowsAny<OperationCanceledException>(() =>
+            FrmSpritesheetPngExporter.Write(
+                document,
+                CreateHighEntropyPalette(),
+                output,
+                CreateLimits(
+                    maximumWidth: width,
+                    maximumHeight: height,
+                    maximumPixelCount: width * height),
+                cancellationToken: cancellation.Token));
+
+        Assert.True(output.SawIdat);
+        Assert.False(output.SawIend);
+        Assert.True(cancellation.IsCancellationRequested);
     }
 
     [Fact]
@@ -272,6 +415,20 @@ public sealed class FrmSpritesheetPngExporterTests
         bytes[9] = 0;
         bytes[10] = 0;
         bytes[11] = 63;
+        return FalloutPalette.Parse(bytes);
+    }
+
+    private static FalloutPalette CreateHighEntropyPalette()
+    {
+        var bytes = new byte[FalloutPalette.MinimalFileSize];
+        for (var index = 0; index < 256; index++)
+        {
+            var offset = index * 3;
+            bytes[offset] = (byte)(index % 64);
+            bytes[offset + 1] = (byte)((index * 17) % 64);
+            bytes[offset + 2] = (byte)((index * 37) % 64);
+        }
+
         return FalloutPalette.Parse(bytes);
     }
 
@@ -418,5 +575,37 @@ public sealed class FrmSpritesheetPngExporterTests
 
         public override void Write(byte[] buffer, int offset, int count) =>
             throw new IOException("Simulated destination write failure.");
+    }
+
+    private sealed class CancelOnIdatWriteStream(CancellationTokenSource cancellation) : MemoryStream
+    {
+        public bool SawIdat { get; private set; }
+
+        public bool SawIend { get; private set; }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            base.Write(buffer);
+            ObserveChunkType(buffer);
+        }
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            base.Write(buffer, offset, count);
+            ObserveChunkType(buffer.AsSpan(offset, count));
+        }
+
+        private void ObserveChunkType(ReadOnlySpan<byte> bytes)
+        {
+            if (bytes.SequenceEqual("IDAT"u8))
+            {
+                SawIdat = true;
+                cancellation.Cancel();
+            }
+            else if (bytes.SequenceEqual("IEND"u8))
+            {
+                SawIend = true;
+            }
+        }
     }
 }

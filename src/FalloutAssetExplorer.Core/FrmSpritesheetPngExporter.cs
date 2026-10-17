@@ -24,8 +24,102 @@ public static class FrmSpritesheetPngExporter
         Stream destination,
         FrmSpritesheetPackingLimits limits,
         int spacing = 0,
-        string? assetName = null)
+        string? assetName = null,
+        CancellationToken cancellationToken = default)
     {
+        WriteCore(document, palette, destination, limits, spacing, assetName, null, false, 0, cancellationToken);
+    }
+
+    public static FrmSpritesheetLayout WriteAndGetLayout(
+        FrmDocument document,
+        FalloutPalette? palette,
+        Stream destination,
+        FrmSpritesheetPackingLimits limits,
+        int? directionIndex = null,
+        bool separateDirections = false,
+        int frameSpacing = 0,
+        int directionSpacing = 4,
+        string? assetName = null,
+        CancellationToken cancellationToken = default) =>
+        WriteCore(
+            document,
+            palette,
+            destination,
+            limits,
+            frameSpacing,
+            assetName,
+            directionIndex,
+            separateDirections,
+            directionSpacing,
+            cancellationToken);
+
+    /// <summary>
+    /// Packs one direction's frames in frame order. Pixel data is placed at each atlas
+    /// rectangle's origin; FRM offsets and direction shifts remain in PNG metadata.
+    /// </summary>
+    public static void WriteDirection(
+        FrmDocument document,
+        int directionIndex,
+        FalloutPalette? palette,
+        Stream destination,
+        FrmSpritesheetPackingLimits limits,
+        int spacing = 0,
+        string? assetName = null,
+        CancellationToken cancellationToken = default)
+    {
+        WriteCore(
+            document,
+            palette,
+            destination,
+            limits,
+            spacing,
+            assetName,
+            directionIndex,
+            false,
+            0,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Packs each direction independently in a horizontal block, then stacks those
+    /// blocks top-to-bottom with a transparent gap. Offsets and shifts remain metadata.
+    /// </summary>
+    public static void WriteAllDirectionsSeparated(
+        FrmDocument document,
+        FalloutPalette? palette,
+        Stream destination,
+        FrmSpritesheetPackingLimits limits,
+        int frameSpacing = 0,
+        int directionSpacing = 4,
+        string? assetName = null,
+        CancellationToken cancellationToken = default)
+    {
+        WriteCore(
+            document,
+            palette,
+            destination,
+            limits,
+            frameSpacing,
+            assetName,
+            null,
+            true,
+            directionSpacing,
+            cancellationToken);
+    }
+
+    private static FrmSpritesheetLayout WriteCore(
+        FrmDocument document,
+        FalloutPalette? palette,
+        Stream destination,
+        FrmSpritesheetPackingLimits limits,
+        int spacing,
+        string? assetName,
+        int? directionIndex,
+        bool separateDirections,
+        int directionSpacing,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(document);
         ArgumentNullException.ThrowIfNull(destination);
         ArgumentNullException.ThrowIfNull(limits);
@@ -52,10 +146,26 @@ public static class FrmSpritesheetPngExporter
         }
 
         var directions = GetOrderedDirections(document.Directions);
+        if (directionIndex is int selectedDirectionIndex)
+        {
+            var selectedDirection = directions.FirstOrDefault(
+                direction => direction.Index == selectedDirectionIndex);
+            if (selectedDirection is null)
+            {
+                throw new ArgumentOutOfRangeException(
+                    nameof(directionIndex),
+                    selectedDirectionIndex,
+                    "The requested FRM direction does not exist.");
+            }
+
+            directions = [selectedDirection];
+        }
+
         var layoutFrames = new List<FrmSpritesheetFrame>();
         var sourceFrames = new Dictionary<FrmSpritesheetFrameKey, FrmFrame>();
         foreach (var direction in directions)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (direction.Frames is null)
             {
                 throw new InvalidDataException($"FRM direction {direction.Index} has no frame list.");
@@ -63,6 +173,7 @@ public static class FrmSpritesheetPngExporter
 
             for (var frameIndex = 0; frameIndex < direction.Frames.Count; frameIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 var frame = direction.Frames[frameIndex];
                 if (frame is null || frame.Pixels is null)
                 {
@@ -94,7 +205,11 @@ public static class FrmSpritesheetPngExporter
             throw new InvalidDataException("The FRM document contains no animation frames to export.");
         }
 
-        var layout = FrmSpritesheetPacker.Pack(layoutFrames, spacing, limits);
+        cancellationToken.ThrowIfCancellationRequested();
+        var layout = separateDirections
+            ? FrmSpritesheetPacker.PackByDirectionRows(layoutFrames, spacing, directionSpacing, limits)
+            : FrmSpritesheetPacker.Pack(layoutFrames, spacing, limits);
+        cancellationToken.ThrowIfCancellationRequested();
         var metadata = CreateMetadata(document, assetName, directions, layout);
         var metadataJson = JsonSerializer.SerializeToUtf8Bytes(metadata, MetadataJsonOptions);
         var internationalText = CreateInternationalTextChunk(metadataJson);
@@ -104,6 +219,7 @@ public static class FrmSpritesheetPngExporter
             .ThenBy(placement => placement.Rectangle.X)
             .ToArray();
 
+        cancellationToken.ThrowIfCancellationRequested();
         WritePngHeader(destination, layout.Width, layout.Height);
         FrmPngExporter.WriteChunk(destination, "iTXt"u8, internationalText);
 
@@ -111,11 +227,20 @@ public static class FrmSpritesheetPngExporter
         {
             using (var compressor = new ZLibStream(idatChunks, CompressionLevel.Optimal, leaveOpen: true))
             {
-                WriteImageData(compressor, layout, placements, sourceFrames, palette, rowBuffer);
+                WriteImageData(
+                    compressor,
+                    layout,
+                    placements,
+                    sourceFrames,
+                    palette,
+                    rowBuffer,
+                    cancellationToken);
             }
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         FrmPngExporter.WriteChunk(destination, "IEND"u8, ReadOnlySpan<byte>.Empty);
+        return layout;
     }
 
     private static FrmDirection[] GetOrderedDirections(IReadOnlyList<FrmDirection> sourceDirections)
@@ -226,13 +351,15 @@ public static class FrmSpritesheetPngExporter
         IReadOnlyList<FrmSpritesheetPlacement> placements,
         IReadOnlyDictionary<FrmSpritesheetFrameKey, FrmFrame> sourceFrames,
         FalloutPalette palette,
-        byte[] rowBuffer)
+        byte[] rowBuffer,
+        CancellationToken cancellationToken)
     {
         var activePlacements = new List<FrmSpritesheetPlacement>();
         var nextPlacementIndex = 0;
 
         for (var y = 0; y < layout.Height; y++)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             while (nextPlacementIndex < placements.Count
                 && placements[nextPlacementIndex].Rectangle.Y <= y)
             {
