@@ -1247,19 +1247,20 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                         $"MAP entry declares {selectedEntry.UncompressedSize} bytes but {mapBuffer.Length} bytes were read.");
                 }
 
-                var mapData = mapBuffer.GetBuffer().AsMemory(0, checked((int)mapBuffer.Length));
+                var mapSource = new MapSourceData(
+                    mapBuffer.GetBuffer().AsMemory(0, checked((int)mapBuffer.Length)));
                 var mapDecode = await Task.Run(async () =>
                 {
                     cancellation.Token.ThrowIfCancellationRequested();
-                    var metadata = MapHeaderDecoder.Decode(mapData, archive.Game);
-                    var tileGrids = MapTileGridDecoder.Decode(mapData, metadata);
+                    var metadata = MapHeaderDecoder.Decode(mapSource, archive.Game);
+                    var tileGrids = MapTileGridDecoder.Decode(mapSource, metadata);
                     var prototypeResolver = new Fallout2PrototypeResolver(archive);
                     MapObjectPlacementData? objectPlacements = null;
                     string? objectPlacementError = null;
                     try
                     {
                         objectPlacements = await MapObjectPlacementDecoder.DecodeAsync(
-                            mapData,
+                            mapSource,
                             metadata,
                             archive,
                             cancellation.Token,

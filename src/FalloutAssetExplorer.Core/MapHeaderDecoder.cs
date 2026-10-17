@@ -10,6 +10,12 @@ public static class MapHeaderDecoder
     public const int BytesPerElevation = SquareGridTileCount * sizeof(uint);
     public const int ReservedDataSize = HeaderSize - 0x3C;
 
+    public static MapHeaderMetadata Decode(MapSourceData source, FalloutGame game)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        return Decode(source.Memory, game) with { SourceData = source };
+    }
+
     public static MapHeaderMetadata Decode(ReadOnlyMemory<byte> data, FalloutGame game)
     {
         if (data.Length < HeaderSize)
@@ -136,4 +142,7 @@ public sealed record MapHeaderMetadata(
     long LocalVariablesLength,
     long TileDataOffset,
     long TileDataLength,
-    int PresentElevationCount);
+    int PresentElevationCount)
+{
+    public MapSourceData? SourceData { get; init; }
+}

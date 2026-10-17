@@ -7,6 +7,11 @@ public static class MapObjectPlacementDecoder
     public const int HexGridHeight = 200;
     public const int HexGridTileCount = HexGridWidth * HexGridHeight;
 
+    public static MapObjectPlacementData Decode(
+        MapSourceData source,
+        MapHeaderMetadata header) =>
+        DecodeAsync(source, header).GetAwaiter().GetResult();
+
     private const int ScriptListCount = 5;
     private const int ScriptExtentSize = 16;
     private const int ScriptRecordBaseIntCount = 16;
@@ -30,6 +35,39 @@ public static class MapObjectPlacementDecoder
 
     public static MapObjectPlacementData Decode(ReadOnlyMemory<byte> data, MapHeaderMetadata header) =>
         DecodeAsync(data, header).GetAwaiter().GetResult();
+
+    public static Task<MapObjectPlacementData> DecodeAsync(
+        MapSourceData source,
+        MapHeaderMetadata header,
+        IGameArchive? archive = null,
+        CancellationToken cancellationToken = default,
+        Fallout2PrototypeResolver? prototypeResolver = null)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(header);
+        if (!ReferenceEquals(header.SourceData, source))
+        {
+            throw new InvalidDataException("The MAP header metadata is not bound to this source data.");
+        }
+
+        return DecodeSourceAsync(source, header, archive, cancellationToken, prototypeResolver);
+    }
+
+    private static async Task<MapObjectPlacementData> DecodeSourceAsync(
+        MapSourceData source,
+        MapHeaderMetadata header,
+        IGameArchive? archive,
+        CancellationToken cancellationToken,
+        Fallout2PrototypeResolver? prototypeResolver)
+    {
+        var decoded = await DecodeAsync(
+            source.Memory,
+            header,
+            archive,
+            cancellationToken,
+            prototypeResolver);
+        return decoded with { SourceData = source };
+    }
 
     public static Task<MapObjectPlacementData> DecodeAsync(
         ReadOnlyMemory<byte> data,
@@ -664,6 +702,8 @@ public sealed record MapObjectPlacementData(
     string? UnsupportedReason,
     int UnparsedByteCount)
 {
+    public MapSourceData? SourceData { get; init; }
+
     public int DecodedTopLevelObjectCount => Objects.Count(placement => placement.ParentRecordIndex is null);
 
     public bool IsComplete =>

@@ -34,6 +34,19 @@ public static class MapTileGridDecoder
         return y * GridWidth + GridWidth - 1 - x;
     }
 
+    public static MapTileGridData Decode(MapSourceData source, MapHeaderMetadata header)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(header);
+        if (!ReferenceEquals(header.SourceData, source))
+        {
+            throw new InvalidDataException("The MAP header metadata is not bound to this source data.");
+        }
+
+        var decoded = Decode(source.Memory, header);
+        return decoded with { Header = decoded.Header with { SourceData = source } };
+    }
+
     public static MapTileGridData Decode(ReadOnlyMemory<byte> data, MapHeaderMetadata header)
     {
         ArgumentNullException.ThrowIfNull(header);

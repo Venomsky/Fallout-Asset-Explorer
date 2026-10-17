@@ -353,3 +353,9 @@ if hexX is odd and hexX > 100:  screenX += 32
 ```
 
 The projected points are uniformly scaled and centered to fit the diagnostic control. This provides a parity-aware coordinate visualization, not the game's tile/sprite renderer or exact inverse hit-testing. Camera scrolling, art bounds, animation, roof offsets, and runtime picking masks are intentionally not reproduced. Repeated clicks on a marker cycle among records at that exact hex; the existing object list remains the direct way to select a particular record. Selecting a record in the list switches the overlay to that record's elevation.
+
+## MAP source-byte snapshot
+
+The MAP preview can retain a `MapSourceData` snapshot alongside decoded header and object-placement results. It copies the input bytes into private storage; the public API exposes only the length and validated `MapSourceRange` objects whose `ToArray()` method returns a copy. The source-based decoder overloads bind results to the same snapshot instance, while the existing `ReadOnlyMemory<byte>` overloads remain available and do not retain a source.
+
+The current metadata establishes the header range (`0xEC` bytes), global/local variable section offsets and lengths from their counts, and the tile-data offset and length from the header flags. The object parser records the object-section start and each decoded record's starting offset, but does not retain record lengths. Script records are skipped, variable values are not decoded, and unsupported layouts may leave bytes uninterpreted. Therefore this snapshot/range API does not promise MAP serialization, editing, or a lossless parse/serialize round trip.
