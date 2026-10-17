@@ -1280,6 +1280,236 @@ public sealed class ArchiveBrowserExtractionCommandTests
     }
 
     [Fact]
+    public async Task ExportFrmSpritesheetsAsync_ExportsVisibleFramesWithArchivePalette()
+    {
+        using var archive = new ControlledArchive();
+        archive.AddEntry("COLOR.PAL", new byte[FalloutPalette.MinimalFileSize]);
+        archive.AddEntry(
+            "art/critters/first.frm",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [11])]]));
+        archive.AddEntry(
+            "art/critters/second.frm",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [22])]]));
+        archive.AddEntry(
+            "art/critters/third.frm",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [33])]]));
+        archive.AddEntry("text/english/dialog/readme.msg", "{1}{}{readme}"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        using var destination = new TemporaryDirectory();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        Assert.True(viewModel.CanExportVisibleFrms);
+        await viewModel.ExportFrmSpritesheetsAsync(viewModel.VisibleEntries.ToArray(), destination.Path);
+
+        AssertPngFile(Path.Combine(destination.Path, "first.png"));
+        AssertPngFile(Path.Combine(destination.Path, "second.png"));
+        AssertPngFile(Path.Combine(destination.Path, "third.png"));
+        Assert.Equal(3, Directory.GetFiles(destination.Path, "*.png").Length);
+        Assert.Contains("3 exported, 2 skipped, 0 failed", viewModel.StatusMessage);
+        Assert.Contains("Palette: COLOR.PAL in", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ExportFrmSpritesheetsAsync_ExportsOnlySelectedFrmEntries()
+    {
+        using var archive = new ControlledArchive();
+        archive.AddEntry("COLOR.PAL", new byte[FalloutPalette.MinimalFileSize]);
+        var frmEntry = archive.AddEntry(
+            "art/critters/selected-first.frm",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [11])]]));
+        var secondFrmEntry = archive.AddEntry(
+            "art/critters/selected-second.frm",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [22])]]));
+        var thirdFrmEntry = archive.AddEntry(
+            "art/critters/selected-third.frm",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [33])]]));
+        var msgEntry = archive.AddEntry("text/english/dialog/readme.msg", "{1}{}{readme}"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        using var destination = new TemporaryDirectory();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        viewModel.SearchText = ".msg";
+        Assert.False(viewModel.CanExportVisibleFrms);
+        viewModel.SearchText = string.Empty;
+        viewModel.UpdateSelectionCount(4);
+        viewModel.UpdateSelectedFrmCount(3);
+        Assert.True(viewModel.CanExportSelectedFrms);
+
+        await viewModel.ExportFrmSpritesheetsAsync(
+            [frmEntry, secondFrmEntry, thirdFrmEntry, msgEntry],
+            destination.Path);
+
+        AssertPngFile(Path.Combine(destination.Path, "selected-first.png"));
+        AssertPngFile(Path.Combine(destination.Path, "selected-second.png"));
+        AssertPngFile(Path.Combine(destination.Path, "selected-third.png"));
+        Assert.Equal(3, Directory.GetFiles(destination.Path, "*.png").Length);
+        Assert.Contains("3 exported, 1 skipped, 0 failed", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ExportFrmSpritesheetsAsync_UsesAdjacentMasterPaletteForCritterArchive()
+    {
+        using var gameDirectory = new TemporaryDirectory();
+        var paletteBytes = new byte[FalloutPalette.MinimalFileSize];
+        paletteBytes[3] = 18;
+        File.WriteAllBytes(
+            Path.Combine(gameDirectory.Path, "MASTER.DAT"),
+            CreateDat1Archive("COLOR.PAL", paletteBytes));
+        using var archive = new ControlledArchive(
+            FalloutGame.Fallout1,
+            Path.Combine(gameDirectory.Path, "CRITTER.DAT"));
+        archive.AddEntry(
+            "ART/CRITTERS/HERO.FRM",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [1])]]));
+        using var viewModel = new ArchiveBrowserViewModel();
+        using var destination = new TemporaryDirectory();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        await viewModel.ExportFrmSpritesheetsAsync(viewModel.VisibleEntries.ToArray(), destination.Path);
+
+        AssertPngFile(Path.Combine(destination.Path, "HERO.png"));
+        Assert.Contains("Palette: COLOR.PAL in MASTER.DAT", viewModel.StatusMessage);
+        Assert.Contains("1 exported, 0 skipped, 0 failed", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ExportFrmSpritesheetsAsync_ContinuesAfterOneMalformedFrm()
+    {
+        using var archive = new ControlledArchive();
+        archive.AddEntry("COLOR.PAL", new byte[FalloutPalette.MinimalFileSize]);
+        archive.AddEntry(
+            "art/critters/valid-before.frm",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [11])]]));
+        var malformedEntry = archive.AddEntry("art/critters/malformed.frm", [1, 2, 3]);
+        archive.AddEntry(
+            "art/critters/valid-after.frm",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [22])]]));
+        using var viewModel = new ArchiveBrowserViewModel();
+        using var destination = new TemporaryDirectory();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        await viewModel.ExportFrmSpritesheetsAsync(viewModel.VisibleEntries.ToArray(), destination.Path);
+
+        AssertPngFile(Path.Combine(destination.Path, "valid-before.png"));
+        AssertPngFile(Path.Combine(destination.Path, "valid-after.png"));
+        Assert.Equal(2, Directory.GetFiles(destination.Path, "*.png").Length);
+        Assert.Contains("2 exported, 1 skipped, 1 failed", viewModel.StatusMessage);
+        Assert.Contains(malformedEntry.Path, viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ExportFrmSpritesheetsAsync_UsesSafeUniqueOutputNames()
+    {
+        using var archive = new ControlledArchive();
+        archive.AddEntry("COLOR.PAL", new byte[FalloutPalette.MinimalFileSize]);
+        archive.AddEntry(
+            @"..\..\escape.frm",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [11])]]));
+        archive.AddEntry(
+            "other/ESCAPE.FRM",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [22])]]));
+        using var viewModel = new ArchiveBrowserViewModel();
+        using var destination = new TemporaryDirectory();
+        var existingFile = Path.Combine(destination.Path, "escape.png");
+        File.WriteAllText(existingFile, "preserve existing output");
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        await viewModel.ExportFrmSpritesheetsAsync(viewModel.VisibleEntries.ToArray(), destination.Path);
+
+        Assert.Equal("preserve existing output", File.ReadAllText(existingFile));
+        AssertPngFile(Path.Combine(destination.Path, "escape (2).png"));
+        AssertPngFile(Path.Combine(destination.Path, "ESCAPE (3).png"));
+        Assert.Equal(3, Directory.GetFiles(destination.Path, "*.png").Length);
+        Assert.All(
+            Directory.GetFiles(destination.Path),
+            path => Assert.Equal(destination.Path, Path.GetDirectoryName(Path.GetFullPath(path))));
+    }
+
+    [Fact]
+    public async Task ExportFrmSpritesheetsAsync_CancelsWithoutPublishingPartialOutput()
+    {
+        using var archive = new ControlledArchive();
+        archive.AddEntry("COLOR.PAL", new byte[FalloutPalette.MinimalFileSize]);
+        var entry = archive.AddEntry(
+            "art/critters/cancel.frm",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [11])]]));
+        var read = archive.BlockEntry(entry.Path);
+        using var viewModel = new ArchiveBrowserViewModel();
+        using var destination = new TemporaryDirectory();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        var export = viewModel.ExportFrmSpritesheetsAsync([entry], destination.Path);
+        await read.WaitStartedAsync();
+        viewModel.CancelFrmBatchExport();
+        read.Release();
+        await export.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Empty(Directory.GetFiles(destination.Path));
+        Assert.False(viewModel.IsExportingFrms);
+        Assert.Contains("FRM spritesheet export cancelled", viewModel.StatusMessage);
+        Assert.Contains("0 exported, 1 skipped, 0 failed", viewModel.StatusMessage);
+    }
+
+    [Fact]
+    public async Task ExportFrmSpritesheetsAsync_DoesNotPublishStatusAfterArchiveReplacement()
+    {
+        using var archive = new ControlledArchive();
+        archive.AddEntry("COLOR.PAL", new byte[FalloutPalette.MinimalFileSize]);
+        var entry = archive.AddEntry(
+            "art/critters/stale.frm",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [11])]]));
+        var read = archive.BlockEntry(entry.Path);
+        using var viewModel = new ArchiveBrowserViewModel();
+        using var destination = new TemporaryDirectory();
+        using var replacement = new TemporaryArchive(CreateDat1Archive("other.bin"));
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        var export = viewModel.ExportFrmSpritesheetsAsync([entry], destination.Path);
+        await read.WaitStartedAsync();
+        await viewModel.LoadArchiveAsync(replacement.Path);
+        var replacementStatus = viewModel.StatusMessage;
+        read.Release();
+        await export.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(replacementStatus, viewModel.StatusMessage);
+        Assert.False(viewModel.IsExportingFrms);
+        Assert.Empty(Directory.GetFiles(destination.Path));
+    }
+
+    [Fact]
+    public async Task ExportFrmSpritesheetsAsync_DoesNotPublishStatusAfterViewModelDisposal()
+    {
+        using var archive = new ControlledArchive();
+        archive.AddEntry("COLOR.PAL", new byte[FalloutPalette.MinimalFileSize]);
+        var entry = archive.AddEntry(
+            "art/critters/closed.frm",
+            FrmFixture.Create([[new FrmFixtureFrame(1, 1, 0, 0, [11])]]));
+        var read = archive.BlockEntry(entry.Path);
+        var viewModel = new ArchiveBrowserViewModel();
+        using var destination = new TemporaryDirectory();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        var export = viewModel.ExportFrmSpritesheetsAsync([entry], destination.Path);
+        await read.WaitStartedAsync();
+        viewModel.Dispose();
+        var disposedStatus = viewModel.StatusMessage;
+        read.Release();
+        await export.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(disposedStatus, viewModel.StatusMessage);
+        Assert.False(viewModel.IsExportingFrms);
+        Assert.Empty(Directory.GetFiles(destination.Path));
+    }
+
+    [Fact]
     public async Task PreviewSelectedEntryAsync_RejectsOversizedProBeforeReadingPayload()
     {
         using var archive = new ControlledArchive();
@@ -1757,6 +1987,34 @@ public sealed class ArchiveBrowserExtractionCommandTests
         stream.Write(buffer);
     }
 
+    private static void AssertPngFile(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        Assert.True(bytes.Length >= 8);
+        Assert.Equal(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, bytes[..8]);
+    }
+
+    private sealed class TemporaryDirectory : IDisposable
+    {
+        public TemporaryDirectory()
+        {
+            Path = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(),
+                $"fae-frm-export-test-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(Path);
+        }
+
+        public string Path { get; }
+
+        public void Dispose()
+        {
+            if (Directory.Exists(Path))
+            {
+                Directory.Delete(Path, recursive: true);
+            }
+        }
+    }
+
     private sealed class TemporaryArchive : IDisposable
     {
         public TemporaryArchive(byte[] content)
@@ -1804,12 +2062,13 @@ public sealed class ArchiveBrowserExtractionCommandTests
             new(StringComparer.OrdinalIgnoreCase);
         private int _copyCount;
 
-        public ControlledArchive(FalloutGame game = FalloutGame.Fallout2)
+        public ControlledArchive(FalloutGame game = FalloutGame.Fallout2, string? path = null)
         {
             Game = game;
-            Path = System.IO.Path.Combine(
-                System.IO.Path.GetTempPath(),
-                $"fae-controlled-{Guid.NewGuid():N}.dat");
+            Path = path
+                ?? System.IO.Path.Combine(
+                    System.IO.Path.GetTempPath(),
+                    $"fae-controlled-{Guid.NewGuid():N}.dat");
             File.WriteAllBytes(Path, []);
         }
 

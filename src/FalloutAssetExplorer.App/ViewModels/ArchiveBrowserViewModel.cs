@@ -27,12 +27,15 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private string? _archivePath;
     private string _statusMessage = "Open a Fallout DAT archive to begin.";
     private int _selectedEntryCount;
+    private int _selectedFrmCount;
     private ArchiveEntry? _selectedEntry;
     private bool _isLoading;
     private bool _isExtracting;
+    private bool _isExportingFrms;
     private IGameArchive? _archive;
     private readonly FalloutPaletteResolver _paletteResolver = new();
     private CancellationTokenSource? _previewCancellation;
+    private CancellationTokenSource? _frmBatchExportCancellation;
     private CancellationTokenSource? _mapFloorTileCancellation;
     private CancellationTokenSource? _mapObjectSpriteCancellation;
     private CancellationTokenSource? _mapObjectSpritesCancellation;
@@ -349,7 +352,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
     }
 
-    public bool CanOpenArchive => !IsLoading && !IsExtracting;
+    public bool CanOpenArchive => !IsLoading && !IsExtracting && !IsExportingFrms;
 
     public bool IsExtracting
     {
@@ -362,15 +365,46 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 OnPropertyChanged(nameof(CanExtractSelected));
                 OnPropertyChanged(nameof(CanExtractVisible));
                 OnPropertyChanged(nameof(CanExtractAll));
+                NotifyFrmBatchExportAvailability();
             }
         }
     }
 
-    public bool CanExtractSelected => !IsLoading && !IsExtracting && _archive is not null && _selectedEntryCount > 0;
+    public bool CanExtractSelected =>
+        !IsLoading && !IsExtracting && !IsExportingFrms && _archive is not null && _selectedEntryCount > 0;
 
-    public bool CanExtractVisible => !IsLoading && !IsExtracting && _archive is not null && VisibleEntries.Count > 0;
+    public bool CanExtractVisible =>
+        !IsLoading && !IsExtracting && !IsExportingFrms && _archive is not null && VisibleEntries.Count > 0;
 
-    public bool CanExtractAll => !IsLoading && !IsExtracting && _archive is not null && Entries.Count > 0;
+    public bool CanExtractAll =>
+        !IsLoading && !IsExtracting && !IsExportingFrms && _archive is not null && Entries.Count > 0;
+
+    public bool IsExportingFrms
+    {
+        get => _isExportingFrms;
+        private set
+        {
+            if (SetProperty(ref _isExportingFrms, value))
+            {
+                OnPropertyChanged(nameof(CanOpenArchive));
+                OnPropertyChanged(nameof(CanCancelFrmExport));
+                NotifyExtractionAvailability();
+            }
+        }
+    }
+
+    public bool CanCancelFrmExport =>
+        IsExportingFrms
+        && _frmBatchExportCancellation is { IsCancellationRequested: false };
+
+    public bool CanExportVisibleFrms =>
+        CanStartFrmBatchExport && VisibleEntries.Any(IsFrmEntry);
+
+    public bool CanExportSelectedFrms =>
+        CanStartFrmBatchExport && _selectedFrmCount > 0;
+
+    private bool CanStartFrmBatchExport =>
+        !IsLoading && !IsExtracting && !IsExportingFrms && !_isDisposed && _archive is not null;
 
     public int SelectedOverwritePolicyIndex { get; set; } = (int)OverwritePolicy.SkipExisting;
 
@@ -731,6 +765,274 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         await ExtractEntriesAsync(Entries.ToList(), destinationDirectory, "all archive entries", cancellationToken);
     }
 
+    public async Task ExportFrmSpritesheetsAsync(
+        IReadOnlyList<ArchiveEntry> entries,
+        string destinationDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(entries);
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);
+
+        if (_isDisposed)
+        {
+            return;
+        }
+
+        if (IsLoading || IsExtracting || IsExportingFrms)
+        {
+            StatusMessage = "Wait for the current archive operation to finish before exporting FRMs.";
+            return;
+        }
+
+        var archive = _archive;
+        if (archive is null)
+        {
+            StatusMessage = "Open a Fallout archive before exporting FRM spritesheets.";
+            return;
+        }
+
+        var entrySnapshot = entries.ToArray();
+        if (entrySnapshot.Any(entry => !Entries.Any(current => ReferenceEquals(current, entry))))
+        {
+            StatusMessage = "The archive or selection changed before the FRM export started.";
+            return;
+        }
+
+        var frmEntries = entrySnapshot.Where(IsFrmEntry).ToArray();
+        var skippedEntries = entrySnapshot.Length - frmEntries.Length;
+        if (frmEntries.Length == 0)
+        {
+            StatusMessage = "No selected or visible FRM entries are available to export.";
+            return;
+        }
+
+        var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _frmBatchExportCancellation = cancellation;
+        IsExportingFrms = true;
+
+        var exported = 0;
+        var processed = 0;
+        var failures = new List<(string EntryPath, string Message)>();
+        var wasCancelled = false;
+        string? paletteSource = null;
+        string? startupError = null;
+
+        try
+        {
+            var outputRoot = Path.GetFullPath(destinationDirectory);
+            Directory.CreateDirectory(outputRoot);
+            if (!IsCurrentFrmBatchExport(cancellation, archive))
+            {
+                return;
+            }
+
+            StatusMessage = $"Resolving Fallout palette for {frmEntries.Length:N0} FRM entries...";
+            var paletteResolution = await ResolvePaletteAsync(archive, cancellation.Token);
+            cancellation.Token.ThrowIfCancellationRequested();
+            if (!IsCurrentFrmBatchExport(cancellation, archive))
+            {
+                return;
+            }
+
+            if (paletteResolution.Palette is null)
+            {
+                var message = paletteResolution.Diagnostic ?? "No Fallout palette is available.";
+                failures.AddRange(frmEntries.Select(entry => (entry.Path, message)));
+                processed = frmEntries.Length;
+            }
+            else
+            {
+                paletteSource = paletteResolution.Source;
+                var reservedOutputNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var entry in frmEntries)
+                {
+                    if (cancellation.IsCancellationRequested)
+                    {
+                        wasCancelled = true;
+                        break;
+                    }
+
+                    if (!IsCurrentFrmBatchExport(cancellation, archive))
+                    {
+                        return;
+                    }
+
+                    StatusMessage =
+                        $"Exporting FRM spritesheets: {processed + 1:N0}/{frmEntries.Length:N0} — {entry.Path}";
+                    string? temporaryPath = null;
+                    string? outputPath = null;
+                    string? entryFailureMessage = null;
+                    var outputNameReserved = false;
+                    var exportedEntry = false;
+
+                    try
+                    {
+                        if (entry.UncompressedSize is <= 0 or > FrmDecoder.MaximumFileSize)
+                        {
+                            throw new InvalidDataException(
+                                $"FRM size must be between 1 and {FrmDecoder.MaximumFileSize:N0} bytes.");
+                        }
+
+                        using var buffer = new MemoryStream(checked((int)entry.UncompressedSize));
+                        await archive.CopyEntryToAsync(entry, buffer, cancellation.Token);
+                        cancellation.Token.ThrowIfCancellationRequested();
+                        if (!IsCurrentFrmBatchExport(cancellation, archive))
+                        {
+                            return;
+                        }
+
+                        if (buffer.Length != entry.UncompressedSize)
+                        {
+                            throw new InvalidDataException(
+                                $"Entry declares {entry.UncompressedSize:N0} bytes but {buffer.Length:N0} bytes were read.");
+                        }
+
+                        var document = await Task.Run(
+                            () => FrmDecoder.Decode(buffer.GetBuffer().AsMemory(0, checked((int)buffer.Length))),
+                            cancellation.Token);
+                        cancellation.Token.ThrowIfCancellationRequested();
+                        if (!IsCurrentFrmBatchExport(cancellation, archive))
+                        {
+                            return;
+                        }
+
+                        outputPath = ReserveFrmOutputPath(outputRoot, entry.Path, reservedOutputNames);
+                        outputNameReserved = true;
+                        temporaryPath = Path.Combine(outputRoot, $".fae-{Guid.NewGuid():N}.tmp");
+                        var assetName = GetFrmAssetName(entry.Path);
+                        await Task.Run(
+                            () =>
+                            {
+                                using var output = new FileStream(
+                                    temporaryPath,
+                                    FileMode.CreateNew,
+                                    FileAccess.Write,
+                                    FileShare.None,
+                                    64 * 1024,
+                                    FileOptions.SequentialScan);
+                                FrmPreviewViewModel.WriteSpritesheetPng(
+                                    document,
+                                    paletteResolution.Palette,
+                                    output,
+                                    assetName,
+                                    cancellation.Token);
+                            },
+                            cancellation.Token);
+                        cancellation.Token.ThrowIfCancellationRequested();
+                        if (!IsCurrentFrmBatchExport(cancellation, archive))
+                        {
+                            return;
+                        }
+
+                        File.Move(temporaryPath, outputPath);
+                        temporaryPath = null;
+                        exported++;
+                        exportedEntry = true;
+                    }
+                    catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+                    {
+                        wasCancelled = true;
+                    }
+                    catch (OperationCanceledException exception)
+                    {
+                        entryFailureMessage =
+                            $"Entry operation was cancelled unexpectedly: {exception.Message}";
+                    }
+                    catch (Exception exception) when (IsExpectedFrmExportFailure(exception))
+                    {
+                        entryFailureMessage = exception.Message;
+                    }
+                    finally
+                    {
+                        if (temporaryPath is not null)
+                        {
+                            var cleanupError = TryDeleteFrmExportTemporaryFile(temporaryPath);
+                            if (cleanupError is not null)
+                            {
+                                entryFailureMessage = entryFailureMessage is null
+                                    ? cleanupError
+                                    : $"{entryFailureMessage} {cleanupError}";
+                            }
+                        }
+
+                        if (outputNameReserved && !exportedEntry && outputPath is not null)
+                        {
+                            reservedOutputNames.Remove(Path.GetFileName(outputPath));
+                        }
+                    }
+
+                    if (entryFailureMessage is not null)
+                    {
+                        failures.Add((entry.Path, entryFailureMessage));
+                    }
+
+                    if (wasCancelled)
+                    {
+                        break;
+                    }
+
+                    processed++;
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
+        {
+            wasCancelled = true;
+        }
+        catch (Exception exception) when (IsExpectedFrmExportFailure(exception))
+        {
+            startupError = exception.Message;
+            failures.AddRange(
+                frmEntries.Skip(processed)
+                    .Select(entry => (entry.Path, $"Export stopped: {exception.Message}")));
+            processed = frmEntries.Length;
+        }
+        finally
+        {
+            if (ReferenceEquals(_frmBatchExportCancellation, cancellation))
+            {
+                _frmBatchExportCancellation = null;
+                IsExportingFrms = false;
+
+                if (!_isDisposed && ReferenceEquals(_archive, archive))
+                {
+                    var skipped = skippedEntries + frmEntries.Length - processed;
+                    StatusMessage = BuildFrmBatchExportSummary(
+                        exported,
+                        skipped,
+                        failures,
+                        wasCancelled || cancellation.IsCancellationRequested,
+                        paletteSource,
+                        startupError);
+                }
+            }
+
+            cancellation.Dispose();
+        }
+    }
+
+    public void CancelFrmBatchExport()
+    {
+        CancelFrmBatchExport(updateStatus: true);
+    }
+
+    private void CancelFrmBatchExport(bool updateStatus)
+    {
+        if (_frmBatchExportCancellation is not { IsCancellationRequested: false } cancellation)
+        {
+            return;
+        }
+
+        if (updateStatus)
+        {
+            StatusMessage = "Cancelling FRM spritesheet export...";
+        }
+
+        cancellation.Cancel();
+        OnPropertyChanged(nameof(CanCancelFrmExport));
+    }
+
     public async Task ExtractEntriesAsync(
         IReadOnlyList<ArchiveEntry> entries,
         string destinationDirectory,
@@ -796,6 +1098,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
 
         _isDisposed = true;
+        CancelFrmBatchExport(updateStatus: false);
         ClearScriptListNavigationContext();
         FrmPreview.Dispose();
         _previewCancellation?.Cancel();
@@ -812,6 +1115,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
+        CancelFrmBatchExport(updateStatus: false);
         ClearScriptListNavigationContext();
         _previewCancellation?.Cancel();
         ClearPreview();
@@ -2293,6 +2597,22 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         OnPropertyChanged(nameof(CanExtractSelected));
     }
 
+    public void UpdateSelectedFrmCount(int count)
+    {
+        if (count < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(count));
+        }
+
+        if (_selectedFrmCount == count)
+        {
+            return;
+        }
+
+        _selectedFrmCount = count;
+        OnPropertyChanged(nameof(CanExportSelectedFrms));
+    }
+
     public void SetEntries(IEnumerable<ArchiveEntry> entries)
     {
         ArgumentNullException.ThrowIfNull(entries);
@@ -2306,12 +2626,14 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
         SelectedEntry = null;
         _selectedEntryCount = 0;
+        _selectedFrmCount = 0;
         RefreshVisibleEntries();
         OnPropertyChanged(nameof(EntryCountDisplay));
         OnPropertyChanged(nameof(SelectionDisplay));
         OnPropertyChanged(nameof(HasSelection));
         OnPropertyChanged(nameof(CanExtractAll));
         OnPropertyChanged(nameof(CanExtractSelected));
+        OnPropertyChanged(nameof(CanExportSelectedFrms));
     }
 
     private void RefreshVisibleEntries()
@@ -2325,6 +2647,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
         OnPropertyChanged(nameof(CanExtractVisible));
         OnPropertyChanged(nameof(IsFilterResultEmpty));
+        NotifyFrmBatchExportAvailability();
     }
 
     private void NotifyExtractionAvailability()
@@ -2332,6 +2655,160 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         OnPropertyChanged(nameof(CanExtractSelected));
         OnPropertyChanged(nameof(CanExtractVisible));
         OnPropertyChanged(nameof(CanExtractAll));
+        NotifyFrmBatchExportAvailability();
+    }
+
+    private void NotifyFrmBatchExportAvailability()
+    {
+        OnPropertyChanged(nameof(CanExportVisibleFrms));
+        OnPropertyChanged(nameof(CanExportSelectedFrms));
+    }
+
+    private bool IsCurrentFrmBatchExport(
+        CancellationTokenSource cancellation,
+        IGameArchive archive) =>
+        !_isDisposed
+        && ReferenceEquals(_frmBatchExportCancellation, cancellation)
+        && ReferenceEquals(_archive, archive)
+        && !cancellation.IsCancellationRequested;
+
+    private static bool IsFrmEntry(ArchiveEntry entry) =>
+        string.Equals(entry.Extension, ".FRM", StringComparison.OrdinalIgnoreCase);
+
+    private static string ReserveFrmOutputPath(
+        string outputRoot,
+        string entryPath,
+        HashSet<string> reservedNames)
+    {
+        var safeStem = SanitizeFrmFileName(Path.GetFileNameWithoutExtension(GetFrmAssetName(entryPath)));
+        for (var suffix = 1; ; suffix++)
+        {
+            var fileName = suffix == 1 ? $"{safeStem}.png" : $"{safeStem} ({suffix}).png";
+            var outputPath = Path.GetFullPath(Path.Combine(outputRoot, fileName));
+            var relativePath = Path.GetRelativePath(outputRoot, outputPath);
+            if (Path.IsPathRooted(relativePath)
+                || relativePath == ".."
+                || relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+            {
+                throw new IOException("The generated FRM output path escapes the selected folder.");
+            }
+
+            if (reservedNames.Contains(fileName) || File.Exists(outputPath))
+            {
+                continue;
+            }
+
+            reservedNames.Add(fileName);
+            return outputPath;
+        }
+    }
+
+    private static string GetFrmAssetName(string entryPath)
+    {
+        var normalizedPath = entryPath.Replace('\\', '/');
+        return normalizedPath[(normalizedPath.LastIndexOf('/') + 1)..];
+    }
+
+    private static string SanitizeFrmFileName(string value)
+    {
+        const string invalidFileNameCharacters = "<>:\"/\\|?*";
+        var sanitized = new string(value
+            .Select(character =>
+                char.IsControl(character) || invalidFileNameCharacters.Contains(character)
+                    ? '_'
+                    : character)
+            .ToArray())
+            .Trim(' ', '.');
+
+        if (sanitized.Length > 120)
+        {
+            sanitized = sanitized[..120].TrimEnd(' ', '.');
+        }
+
+        if (string.IsNullOrWhiteSpace(sanitized))
+        {
+            sanitized = "FRM";
+        }
+
+        var deviceName = sanitized.Split('.')[0];
+        if (deviceName.Equals("CON", StringComparison.OrdinalIgnoreCase)
+            || deviceName.Equals("PRN", StringComparison.OrdinalIgnoreCase)
+            || deviceName.Equals("AUX", StringComparison.OrdinalIgnoreCase)
+            || deviceName.Equals("NUL", StringComparison.OrdinalIgnoreCase)
+            || (deviceName.Length == 4
+                && (deviceName.StartsWith("COM", StringComparison.OrdinalIgnoreCase)
+                    || deviceName.StartsWith("LPT", StringComparison.OrdinalIgnoreCase))
+                && deviceName[3] is >= '1' and <= '9'))
+        {
+            sanitized = $"_{sanitized}";
+        }
+
+        return sanitized;
+    }
+
+    private static bool IsExpectedFrmExportFailure(Exception exception) =>
+        exception is InvalidDataException
+            or IOException
+            or UnauthorizedAccessException
+            or ArgumentException
+            or NotSupportedException
+            or InvalidOperationException
+            or OverflowException
+            or System.Security.SecurityException
+            or System.Text.Json.JsonException;
+
+    private static string? TryDeleteFrmExportTemporaryFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+
+            return null;
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException)
+        {
+            return $"Could not remove temporary export file: {exception.Message}";
+        }
+    }
+
+    private static string BuildFrmBatchExportSummary(
+        int exported,
+        int skipped,
+        IReadOnlyList<(string EntryPath, string Message)> failures,
+        bool wasCancelled,
+        string? paletteSource,
+        string? startupError)
+    {
+        var summary =
+            $"FRM spritesheet export "
+            + $"{(wasCancelled ? "cancelled" : startupError is not null ? "stopped with an error" : "complete")}: "
+            + $"{exported:N0} exported, {skipped:N0} skipped, {failures.Count:N0} failed.";
+        if (startupError is not null)
+        {
+            summary += $"{Environment.NewLine}Could not continue: {startupError}";
+        }
+
+        if (!string.IsNullOrWhiteSpace(paletteSource))
+        {
+            summary += $"{Environment.NewLine}Palette: {paletteSource}.";
+        }
+
+        foreach (var failure in failures.Take(10))
+        {
+            summary += $"{Environment.NewLine}{failure.EntryPath}: {failure.Message}";
+        }
+
+        if (failures.Count > 10)
+        {
+            summary += $"{Environment.NewLine}{failures.Count - 10:N0} additional failures are not shown.";
+        }
+
+        return summary;
     }
 
     private static Bitmap CreateFrameBitmap(FrmFrame frame, FalloutPalette palette)

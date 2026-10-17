@@ -20,6 +20,15 @@
         <MenuItem Header="Extract _Visible..." Click="ExtractVisible_Click" IsEnabled="{Binding CanExtractVisible}" />
         <MenuItem Header="Extract _All..." Click="ExtractAll_Click" IsEnabled="{Binding CanExtractAll}" />
         <Separator />
+        <MenuItem
+            Header="Export Selected FRM Spritesheets..."
+            Click="ExportSelectedFrms_Click"
+            IsEnabled="{Binding CanExportSelectedFrms}" />
+        <MenuItem
+            Header="Export Visible FRM Spritesheets..."
+            Click="ExportVisibleFrms_Click"
+            IsEnabled="{Binding CanExportVisibleFrms}" />
+        <Separator />
         <MenuItem Header="Export _Selected..." IsEnabled="False" ToolTip.Tip="Available after archive reading and safe extraction are implemented." />
       </MenuItem>
       <MenuItem Header="_Help">
@@ -86,7 +95,14 @@
     </Border>
 
     <Border DockPanel.Dock="Bottom" Margin="12,8" Padding="10,8" Background="#252A33" CornerRadius="4">
-      <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+        <TextBlock Text="{Binding StatusMessage}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
+        <Button
+            Grid.Column="1"
+            Content="Cancel FRM export"
+            IsVisible="{Binding CanCancelFrmExport}"
+            Click="CancelFrmExport_Click" />
+      </Grid>
     </Border>
 
     <Grid Margin="12,0,12,8" ColumnDefinitions="2*,*" ColumnSpacing="12">
@@ -153,10 +169,10 @@
                 AutomationProperties.Name="Export selected FRM frame as PNG" />
             <Button
                 Grid.Column="2"
-                Content="Export spritesheet..."
+                Content="Export current FRM spritesheet..."
                 Click="ExportSpritesheet_Click"
                 IsEnabled="{Binding FrmPreview.CanExportSpritesheet}"
-                AutomationProperties.Name="Export all FRM directions and frames as a spritesheet PNG" />
+                AutomationProperties.Name="Export the current FRM entry's directions and frames as a spritesheet PNG" />
             <Button
                 Grid.Column="3"
                 Content="Export report..."

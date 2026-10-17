@@ -102,7 +102,11 @@ public partial class MainWindow : Window
         if (DataContext is ArchiveBrowserViewModel viewModel)
         {
             ObserveViewModel(viewModel);
-            viewModel.UpdateSelectionCount(EntriesGrid.SelectedItems.Count);
+            var selectedEntries = EntriesGrid.SelectedItems.OfType<ArchiveEntry>().ToArray();
+            viewModel.UpdateSelectionCount(selectedEntries.Length);
+            viewModel.UpdateSelectedFrmCount(
+                selectedEntries.Count(entry =>
+                    string.Equals(entry.Extension, ".FRM", StringComparison.OrdinalIgnoreCase)));
             await viewModel.PreviewSelectedEntryAsync();
         }
     }
@@ -333,6 +337,34 @@ public partial class MainWindow : Window
             "all archive entries");
     }
 
+    private async void ExportSelectedFrms_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ArchiveBrowserViewModel viewModel)
+        {
+            return;
+        }
+
+        await TryExportFrmsAsync(
+            viewModel,
+            EntriesGrid.SelectedItems.OfType<ArchiveEntry>().ToArray(),
+            "selected");
+    }
+
+    private async void ExportVisibleFrms_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ArchiveBrowserViewModel viewModel)
+        {
+            return;
+        }
+
+        await TryExportFrmsAsync(viewModel, viewModel.VisibleEntries.ToArray(), "visible");
+    }
+
+    private void CancelFrmExport_Click(object? sender, RoutedEventArgs e)
+    {
+        (DataContext as ArchiveBrowserViewModel)?.CancelFrmBatchExport();
+    }
+
     private void TogglePlayback_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is ArchiveBrowserViewModel viewModel)
@@ -401,7 +433,7 @@ public partial class MainWindow : Window
             };
             var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
             {
-                Title = "Export FRM spritesheet as PNG",
+                Title = "Export current FRM spritesheet as PNG",
                 SuggestedFileName = viewModel.FrmPreview.SuggestedSpritesheetPngFileName,
                 DefaultExtension = "png",
                 FileTypeChoices = [pngFileType],
@@ -581,6 +613,44 @@ public partial class MainWindow : Window
             or ArgumentException)
         {
             viewModel.ReportError($"Could not extract {scopeLabel}: {exception.Message}");
+        }
+    }
+
+    private async Task TryExportFrmsAsync(
+        ArchiveBrowserViewModel viewModel,
+        IReadOnlyList<ArchiveEntry> entries,
+        string scopeLabel)
+    {
+        if (!entries.Any(entry =>
+                string.Equals(entry.Extension, ".FRM", StringComparison.OrdinalIgnoreCase)))
+        {
+            viewModel.ReportError($"No {scopeLabel} FRM entries are available to export.");
+            return;
+        }
+
+        try
+        {
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = $"Select destination for {scopeLabel} FRM spritesheets",
+                AllowMultiple = false
+            });
+
+            if (folders.Count == 0)
+            {
+                return;
+            }
+
+            await viewModel.ExportFrmSpritesheetsAsync(entries, folders[0].Path.LocalPath);
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or InvalidOperationException
+            or NotSupportedException
+            or ArgumentException)
+        {
+            viewModel.ReportError($"Could not export {scopeLabel} FRM spritesheets: {exception.Message}");
         }
     }
 

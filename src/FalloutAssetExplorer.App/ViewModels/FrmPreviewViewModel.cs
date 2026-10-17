@@ -362,6 +362,21 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    internal static void WriteSpritesheetPng(
+        FrmDocument document,
+        FalloutPalette palette,
+        Stream destination,
+        string? assetName,
+        CancellationToken cancellationToken = default) =>
+        FrmSpritesheetPngExporter.Write(
+            document,
+            palette,
+            destination,
+            SpritesheetExportLimits,
+            DefaultSpritesheetSpacing,
+            assetName,
+            cancellationToken);
+
     public void Dispose()
     {
         if (_isDisposed)
