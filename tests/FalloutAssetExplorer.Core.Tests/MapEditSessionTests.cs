@@ -324,6 +324,236 @@ public sealed class MapEditSessionTests
         Assert.False(otherSession.IsDirty);
     }
 
+    [Fact]
+    public void TrySetHexTileIndexUpdatesCoordinatesAndPreservesStableIdAndSource()
+    {
+        var sourceBytes = new byte[] { 1, 2, 3, 4 };
+        var sourceData = new MapSourceData(sourceBytes);
+        var placement = CreatePlacement(3) with
+        {
+            RawHexIndex = 201,
+            HexX = 198,
+            HexY = 1,
+            RawOffsetX = 7,
+            RawOffsetY = -3,
+            RawScreenX = 45,
+            RawScreenY = 67,
+            StoredElevation = 2
+        };
+        var session = new MapEditSession(sourceData, [placement]);
+        var id = new MapEditObjectId(session.SessionId, placement.RecordIndex);
+        var originalSessionObject = session.GetObject(id);
+
+        Assert.True(session.TrySetHexTileIndex(id, 1234, out var error));
+
+        var updatedSessionObject = session.GetObject(id);
+        Assert.Null(error);
+        Assert.Equal(id, updatedSessionObject!.Id);
+        Assert.Equal(1234, updatedSessionObject.Placement.RawHexIndex);
+        Assert.Equal((165, 6), (updatedSessionObject.Placement.HexX, updatedSessionObject.Placement.HexY));
+        Assert.Equal((7, -3), (updatedSessionObject.Placement.RawOffsetX, updatedSessionObject.Placement.RawOffsetY));
+        Assert.Equal((45, 67), (updatedSessionObject.Placement.RawScreenX, updatedSessionObject.Placement.RawScreenY));
+        Assert.Equal(2, updatedSessionObject.Placement.StoredElevation);
+        Assert.NotSame(originalSessionObject, updatedSessionObject);
+        Assert.Equal((201, 198, 1), (placement.RawHexIndex, placement.HexX, placement.HexY));
+        Assert.Equal(sourceBytes, sourceData.GetRange(0, sourceData.Length).ToArray());
+        Assert.True(session.IsDirty);
+    }
+
+    [Theory]
+    [InlineData(0, 199, 0)]
+    [InlineData(39999, 0, 199)]
+    public void TrySetHexTileIndexAcceptsGridBoundaries(
+        int tileIndex,
+        int expectedX,
+        int expectedY)
+    {
+        var placement = CreatePlacement(3);
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1 }),
+            [placement]);
+        var id = new MapEditObjectId(session.SessionId, placement.RecordIndex);
+
+        Assert.True(session.TrySetHexTileIndex(id, tileIndex, out var error));
+
+        var updatedPlacement = session.GetObject(id)!.Placement;
+        Assert.Null(error);
+        Assert.Equal(tileIndex, updatedPlacement.RawHexIndex);
+        Assert.Equal(expectedX, updatedPlacement.HexX);
+        Assert.Equal(expectedY, updatedPlacement.HexY);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(40000)]
+    public void TrySetHexTileIndexRejectsOutOfRangeTargetsWithoutHistory(int tileIndex)
+    {
+        var placement = CreatePlacement(3);
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1 }),
+            [placement]);
+        var id = new MapEditObjectId(session.SessionId, placement.RecordIndex);
+        var originalSessionObject = session.GetObject(id);
+
+        Assert.False(session.TrySetHexTileIndex(id, tileIndex, out var error));
+
+        Assert.False(string.IsNullOrWhiteSpace(error));
+        Assert.Same(originalSessionObject, session.GetObject(id));
+        Assert.False(session.CanUndo);
+        Assert.False(session.IsDirty);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(40000)]
+    public void TrySetHexTileIndexRejectsInvalidSourceIndexWithoutRepairingIt(int sourceIndex)
+    {
+        var placement = CreatePlacement(3) with
+        {
+            RawHexIndex = sourceIndex,
+            HexX = null,
+            HexY = null
+        };
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1 }),
+            [placement]);
+        var id = new MapEditObjectId(session.SessionId, placement.RecordIndex);
+        var originalSessionObject = session.GetObject(id);
+
+        Assert.False(session.TrySetHexTileIndex(id, 5, out var error));
+
+        Assert.False(string.IsNullOrWhiteSpace(error));
+        Assert.Same(originalSessionObject, session.GetObject(id));
+        Assert.Equal(sourceIndex, session.GetObject(id)!.Placement.RawHexIndex);
+        Assert.False(session.CanUndo);
+        Assert.False(session.IsDirty);
+    }
+
+    [Fact]
+    public void TrySetHexTileIndexRejectsNestedOrInconsistentSourcePlacements()
+    {
+        var parent = CreatePlacement(3);
+        var child = CreatePlacement(7, parentRecordIndex: 3, inventoryQuantity: 1);
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1 }),
+            [parent, child]);
+        var childId = new MapEditObjectId(session.SessionId, child.RecordIndex);
+
+        Assert.False(session.TrySetHexTileIndex(childId, 5, out var nestedError));
+        Assert.False(string.IsNullOrWhiteSpace(nestedError));
+
+        var inconsistentPlacement = parent with { HexX = 0 };
+        var inconsistentSession = new MapEditSession(
+            new MapSourceData(new byte[] { 2 }),
+            [inconsistentPlacement]);
+        var inconsistentId = new MapEditObjectId(
+            inconsistentSession.SessionId,
+            inconsistentPlacement.RecordIndex);
+
+        Assert.False(
+            inconsistentSession.TrySetHexTileIndex(inconsistentId, 5, out var consistencyError));
+        Assert.False(string.IsNullOrWhiteSpace(consistencyError));
+        Assert.False(session.CanUndo);
+        Assert.False(inconsistentSession.CanUndo);
+    }
+
+    [Fact]
+    public void TrySetHexTileIndexRejectsForeignAndStaleIds()
+    {
+        var placement = CreatePlacement(3);
+        var sourceData = new MapSourceData(new byte[] { 1 });
+        var session = new MapEditSession(sourceData, [placement]);
+        var otherSession = new MapEditSession(sourceData, [placement]);
+        var foreignId = new MapEditObjectId(session.SessionId, placement.RecordIndex);
+        var staleId = new MapEditObjectId(session.SessionId, 99);
+
+        Assert.False(
+            otherSession.TrySetHexTileIndex(foreignId, 5, out var foreignError));
+        Assert.False(string.IsNullOrWhiteSpace(foreignError));
+        Assert.False(session.TrySetHexTileIndex(staleId, 5, out var staleError));
+        Assert.False(string.IsNullOrWhiteSpace(staleError));
+        Assert.False(session.CanUndo);
+        Assert.False(session.IsDirty);
+    }
+
+    [Fact]
+    public void SettingHexTileIndexToCurrentValueDoesNotCreateHistory()
+    {
+        var placement = CreatePlacement(3);
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1 }),
+            [placement]);
+        var id = new MapEditObjectId(session.SessionId, placement.RecordIndex);
+        var originalSessionObject = session.GetObject(id);
+
+        Assert.True(session.TrySetHexTileIndex(id, placement.RawHexIndex, out var error));
+
+        Assert.Null(error);
+        Assert.Same(originalSessionObject, session.GetObject(id));
+        Assert.False(session.CanUndo);
+        Assert.False(session.IsDirty);
+    }
+
+    [Fact]
+    public void UndoRedoHistoryCombinesInventoryAndHexTileChanges()
+    {
+        var parent = CreatePlacement(3) with
+        {
+            RawHexIndex = 201,
+            HexX = 198,
+            HexY = 1
+        };
+        var child = CreatePlacement(7, parentRecordIndex: 3, inventoryQuantity: 4);
+        var sourceData = new MapSourceData(new byte[] { 1, 2, 3 });
+        var session = new MapEditSession(sourceData, [parent, child]);
+        var parentId = new MapEditObjectId(session.SessionId, parent.RecordIndex);
+        var childId = new MapEditObjectId(session.SessionId, child.RecordIndex);
+
+        Assert.True(session.TrySetHexTileIndex(parentId, 39999, out _));
+        Assert.True(session.TrySetInventoryQuantity(childId, 8, out _));
+        Assert.True(session.IsDirty);
+
+        Assert.True(session.Undo(out _));
+        Assert.Equal(4, session.GetObject(childId)!.Placement.InventoryQuantity);
+        Assert.Equal(39999, session.GetObject(parentId)!.Placement.RawHexIndex);
+        Assert.True(session.IsDirty);
+        Assert.True(session.Undo(out _));
+        Assert.Equal(201, session.GetObject(parentId)!.Placement.RawHexIndex);
+        Assert.Equal((198, 1), (session.GetObject(parentId)!.Placement.HexX, session.GetObject(parentId)!.Placement.HexY));
+        Assert.False(session.IsDirty);
+
+        Assert.True(session.Redo(out _));
+        Assert.Equal(39999, session.GetObject(parentId)!.Placement.RawHexIndex);
+        Assert.True(session.Redo(out _));
+        Assert.Equal(8, session.GetObject(childId)!.Placement.InventoryQuantity);
+        Assert.True(session.IsDirty);
+        Assert.Equal((201, 198, 1), (parent.RawHexIndex, parent.HexX, parent.HexY));
+        Assert.Equal(4, child.InventoryQuantity);
+        Assert.Equal(new byte[] { 1, 2, 3 }, sourceData.GetRange(0, sourceData.Length).ToArray());
+    }
+
+    [Fact]
+    public void NewHexTileChangeAfterUndoClearsRedoHistory()
+    {
+        var placement = CreatePlacement(3);
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1 }),
+            [placement]);
+        var id = new MapEditObjectId(session.SessionId, placement.RecordIndex);
+
+        Assert.True(session.TrySetHexTileIndex(id, 1234, out _));
+        Assert.True(session.Undo(out _));
+        Assert.True(session.CanRedo);
+
+        Assert.True(session.TrySetHexTileIndex(id, 5678, out var changeError));
+
+        Assert.Null(changeError);
+        Assert.False(session.CanRedo);
+        Assert.False(session.Redo(out var redoError));
+        Assert.Null(redoError);
+        Assert.Equal(5678, session.GetObject(id)!.Placement.RawHexIndex);
+    }
+
     private static MapObjectPlacement CreatePlacement(
         int recordIndex,
         IReadOnlyList<int>? payload = null,
