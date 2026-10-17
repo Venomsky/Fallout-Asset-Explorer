@@ -20,12 +20,14 @@ public sealed class ArchiveBrowserExtractionCommandTests
         var notifiedProperties = new List<string?>();
         viewModel.PropertyChanged += OnPropertyChanged;
 
+        Assert.True(viewModel.CanOpenArchive);
         Assert.False(viewModel.CanExtractSelected);
         Assert.False(viewModel.CanExtractVisible);
         Assert.False(viewModel.CanExtractAll);
 
         await viewModel.LoadArchiveAsync(firstArchive.Path);
 
+        Assert.True(viewModel.CanOpenArchive);
         Assert.True(viewModel.CanExtractAll);
         Assert.True(viewModel.CanExtractVisible);
         Assert.False(viewModel.CanExtractSelected);
@@ -52,9 +54,138 @@ public sealed class ArchiveBrowserExtractionCommandTests
         Assert.False(viewModel.CanExtractSelected);
         Assert.False(viewModel.CanExtractVisible);
         Assert.False(viewModel.CanExtractAll);
+        Assert.True(viewModel.CanOpenArchive);
 
         void OnPropertyChanged(object? sender, PropertyChangedEventArgs args) =>
             notifiedProperties.Add(args.PropertyName);
+    }
+
+    [Fact]
+    public async Task CanOpenArchive_IsDisabledDuringExtractionAndRestoredAfterSuccess()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry("assets/item.bin", [1, 2, 3]);
+        var readGate = archive.BlockEntry(entry.Path);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        var notifiedProperties = new List<string?>();
+        viewModel.PropertyChanged += (_, args) => notifiedProperties.Add(args.PropertyName);
+        var destinationDirectory = Path.Combine(
+            Path.GetTempPath(),
+            $"fae-extraction-state-{Guid.NewGuid():N}");
+        Task? extraction = null;
+
+        try
+        {
+            Assert.True(viewModel.CanOpenArchive);
+
+            extraction = viewModel.ExtractEntriesAsync(
+                [entry],
+                destinationDirectory,
+                "selected entries");
+            await readGate.WaitStartedAsync();
+
+            Assert.True(viewModel.IsExtracting);
+            Assert.False(viewModel.CanOpenArchive);
+            Assert.Contains(nameof(viewModel.CanOpenArchive), notifiedProperties);
+
+            readGate.Release();
+            await extraction;
+
+            Assert.False(viewModel.IsExtracting);
+            Assert.True(viewModel.CanOpenArchive);
+            Assert.True(notifiedProperties.Count(
+                propertyName => propertyName == nameof(viewModel.CanOpenArchive)) >= 2);
+            Assert.StartsWith("Completed: 1 extracted", viewModel.StatusMessage);
+        }
+        finally
+        {
+            readGate.Release();
+            if (extraction is not null)
+            {
+                await extraction;
+            }
+
+            if (Directory.Exists(destinationDirectory))
+            {
+                Directory.Delete(destinationDirectory, recursive: true);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("failure")]
+    [InlineData("cancellation")]
+    [InlineData("exception")]
+    public async Task CanOpenArchive_IsRestoredAfterExtractionFailureCancellationOrException(string outcome)
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry("assets/item.bin", [1, 2, 3]);
+        var readGate = outcome == "exception"
+            ? null
+            : archive.BlockEntry(entry.Path, failWithIo: outcome == "failure");
+        using var viewModel = new ArchiveBrowserViewModel();
+        using var cancellation = new CancellationTokenSource();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        var notifiedProperties = new List<string?>();
+        viewModel.PropertyChanged += (_, args) => notifiedProperties.Add(args.PropertyName);
+        var destinationDirectory = outcome == "exception"
+            ? "invalid\0destination"
+            : Path.Combine(
+                Path.GetTempPath(),
+                $"fae-extraction-state-{Guid.NewGuid():N}");
+        Task? extraction = null;
+
+        try
+        {
+            extraction = viewModel.ExtractEntriesAsync(
+                [entry],
+                destinationDirectory,
+                "selected entries",
+                cancellation.Token);
+
+            if (readGate is not null)
+            {
+                await readGate.WaitStartedAsync();
+                Assert.False(viewModel.CanOpenArchive);
+                if (outcome == "cancellation")
+                {
+                    cancellation.Cancel();
+                }
+
+                readGate.Release();
+            }
+
+            await extraction;
+
+            Assert.False(viewModel.IsExtracting);
+            Assert.True(viewModel.CanOpenArchive);
+            Assert.True(notifiedProperties.Count(
+                propertyName => propertyName == nameof(viewModel.CanOpenArchive)) >= 2);
+            Assert.Contains(
+                outcome switch
+                {
+                    "failure" => "Completed with warnings:",
+                    "cancellation" => "Cancelled:",
+                    _ => "Extraction of selected entries failed:"
+                },
+                viewModel.StatusMessage);
+        }
+        finally
+        {
+            readGate?.Release();
+            if (extraction is not null)
+            {
+                await extraction;
+            }
+
+            if (Directory.Exists(destinationDirectory))
+            {
+                Directory.Delete(destinationDirectory, recursive: true);
+            }
+        }
     }
 
     [Fact]

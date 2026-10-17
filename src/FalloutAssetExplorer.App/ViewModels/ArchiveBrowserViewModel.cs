@@ -349,7 +349,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
     }
 
-    public bool CanOpenArchive => !IsLoading;
+    public bool CanOpenArchive => !IsLoading && !IsExtracting;
 
     public bool IsExtracting
     {
@@ -358,6 +358,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         {
             if (SetProperty(ref _isExtracting, value))
             {
+                OnPropertyChanged(nameof(CanOpenArchive));
                 OnPropertyChanged(nameof(CanExtractSelected));
                 OnPropertyChanged(nameof(CanExtractVisible));
                 OnPropertyChanged(nameof(CanExtractAll));
