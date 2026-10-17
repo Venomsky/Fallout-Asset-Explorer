@@ -145,6 +145,8 @@ The object section starts with a total count and then per-elevation counts. A ba
 
 For a nested inventory record, the MAP stream stores a 32-bit quantity immediately before the child object record. The decoder retains that quantity as `InventoryQuantity` on the child and associates it with `ParentRecordIndex`; Fallout 2 CE's `_obj_load_obj` likewise reads the quantity before recursively loading that child. Its item-add path rejects quantities below 1 (`itemAttemptAdd` in `src/item.cc`), but the map loader itself reads the signed integer without validating a range. The edit-session API therefore permits only positive `Int32` values and does not claim a format-wide upper bound or validate that every value is safe for every game operation. This in-memory change does not update source bytes and does not enable MAP serialization.
 
+The session's undo/redo history and `IsDirty` state currently cover only accepted `InventoryQuantity` edits. `IsDirty` compares those edited values with their initial session values; it is not whole-map dirty-state detection. Undo can restore an original quantity that the edit API would reject, preserving the exact prior in-memory value.
+
 Resource relationships supported by the engine/reference are:
 
 - Square-grid tile art ids resolve through `art/tiles/tiles.lst`; rendering needs the corresponding tile art, not just the packed grid values.

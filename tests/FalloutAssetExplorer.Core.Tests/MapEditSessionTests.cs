@@ -16,6 +16,9 @@ public sealed class MapEditSessionTests
         var sessionObject = Assert.Single(session.Objects);
         Assert.Same(sourceData, session.SourceData);
         Assert.NotEqual(Guid.Empty, session.SessionId);
+        Assert.False(session.IsDirty);
+        Assert.False(session.CanUndo);
+        Assert.False(session.CanRedo);
         Assert.Equal(new MapEditObjectId(session.SessionId, placement.RecordIndex), sessionObject.Id);
         Assert.Same(sessionObject, session.GetObject(sessionObject.Id));
         Assert.Same(sessionObject, session.GetObject(placement.RecordIndex));
@@ -128,6 +131,197 @@ public sealed class MapEditSessionTests
         Assert.False(string.IsNullOrWhiteSpace(foreignObjectError));
         Assert.Same(originalSessionObject, session.GetObject(topLevelId));
         Assert.Null(session.GetObject(topLevelId)!.Placement.InventoryQuantity);
+    }
+
+    [Fact]
+    public void InventoryQuantityChangeSupportsUndoRedoAndRestoresInitialDirtyState()
+    {
+        var sourceBytes = new byte[] { 1, 2, 3, 4 };
+        var sourceData = new MapSourceData(sourceBytes);
+        var child = CreatePlacement(7, parentRecordIndex: 3, inventoryQuantity: 4);
+        var sourceParent = CreatePlacement(3);
+        var session = new MapEditSession(sourceData, [sourceParent, child]);
+        var childId = new MapEditObjectId(session.SessionId, child.RecordIndex);
+
+        Assert.True(session.TrySetInventoryQuantity(childId, 12, out var changeError));
+        Assert.Null(changeError);
+        Assert.True(session.IsDirty);
+        Assert.True(session.CanUndo);
+        Assert.False(session.CanRedo);
+
+        Assert.True(session.Undo(out var undoError));
+        Assert.Null(undoError);
+        Assert.Equal(4, session.GetObject(childId)!.Placement.InventoryQuantity);
+        Assert.False(session.IsDirty);
+        Assert.False(session.CanUndo);
+        Assert.True(session.CanRedo);
+
+        Assert.True(session.Redo(out var redoError));
+        Assert.Null(redoError);
+        Assert.Equal(12, session.GetObject(childId)!.Placement.InventoryQuantity);
+        Assert.True(session.IsDirty);
+        Assert.True(session.CanUndo);
+        Assert.False(session.CanRedo);
+        Assert.Equal(4, child.InventoryQuantity);
+        Assert.Equal(sourceBytes, sourceData.GetRange(0, sourceData.Length).ToArray());
+    }
+
+    [Fact]
+    public void UndoRedoApplyMultipleChangesInStackOrder()
+    {
+        var firstChild = CreatePlacement(7, parentRecordIndex: 3, inventoryQuantity: 4);
+        var secondChild = CreatePlacement(8, parentRecordIndex: 3, inventoryQuantity: 8);
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1 }),
+            [CreatePlacement(3), firstChild, secondChild]);
+        var firstId = new MapEditObjectId(session.SessionId, firstChild.RecordIndex);
+        var secondId = new MapEditObjectId(session.SessionId, secondChild.RecordIndex);
+
+        Assert.True(session.TrySetInventoryQuantity(firstId, 5, out _));
+        Assert.True(session.TrySetInventoryQuantity(secondId, 10, out _));
+        Assert.True(session.TrySetInventoryQuantity(firstId, 6, out _));
+
+        Assert.True(session.Undo(out _));
+        Assert.Equal(5, session.GetObject(firstId)!.Placement.InventoryQuantity);
+        Assert.Equal(10, session.GetObject(secondId)!.Placement.InventoryQuantity);
+        Assert.True(session.Undo(out _));
+        Assert.Equal(8, session.GetObject(secondId)!.Placement.InventoryQuantity);
+        Assert.True(session.Undo(out _));
+        Assert.Equal(4, session.GetObject(firstId)!.Placement.InventoryQuantity);
+        Assert.False(session.IsDirty);
+
+        Assert.True(session.Redo(out _));
+        Assert.Equal(5, session.GetObject(firstId)!.Placement.InventoryQuantity);
+        Assert.True(session.Redo(out _));
+        Assert.Equal(10, session.GetObject(secondId)!.Placement.InventoryQuantity);
+        Assert.True(session.Redo(out _));
+        Assert.Equal(6, session.GetObject(firstId)!.Placement.InventoryQuantity);
+        Assert.True(session.IsDirty);
+    }
+
+    [Fact]
+    public void NewInventoryQuantityChangeAfterUndoClearsRedoHistory()
+    {
+        var child = CreatePlacement(7, parentRecordIndex: 3, inventoryQuantity: 4);
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1 }),
+            [CreatePlacement(3), child]);
+        var childId = new MapEditObjectId(session.SessionId, child.RecordIndex);
+
+        Assert.True(session.TrySetInventoryQuantity(childId, 5, out _));
+        Assert.True(session.Undo(out _));
+        Assert.True(session.CanRedo);
+
+        Assert.True(session.TrySetInventoryQuantity(childId, 6, out var changeError));
+
+        Assert.Null(changeError);
+        Assert.False(session.CanRedo);
+        Assert.False(session.Redo(out var redoError));
+        Assert.Null(redoError);
+        Assert.Equal(6, session.GetObject(childId)!.Placement.InventoryQuantity);
+        Assert.True(session.IsDirty);
+    }
+
+    [Fact]
+    public void EmptyHistoryDoesNotChangeSessionState()
+    {
+        var child = CreatePlacement(7, parentRecordIndex: 3, inventoryQuantity: 4);
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1 }),
+            [CreatePlacement(3), child]);
+        var childId = new MapEditObjectId(session.SessionId, child.RecordIndex);
+        var sessionObject = session.GetObject(childId);
+
+        Assert.False(session.Undo(out var undoError));
+        Assert.Null(undoError);
+        Assert.False(session.Redo(out var redoError));
+        Assert.Null(redoError);
+        Assert.Same(sessionObject, session.GetObject(childId));
+        Assert.False(session.IsDirty);
+    }
+
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(0)]
+    public void RejectedInventoryQuantityChangeDoesNotAffectHistoryOrDirtyState(int quantity)
+    {
+        var child = CreatePlacement(7, parentRecordIndex: 3, inventoryQuantity: 4);
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1 }),
+            [CreatePlacement(3), child]);
+        var childId = new MapEditObjectId(session.SessionId, child.RecordIndex);
+        var sessionObject = session.GetObject(childId);
+
+        Assert.False(session.TrySetInventoryQuantity(childId, quantity, out var error));
+
+        Assert.False(string.IsNullOrWhiteSpace(error));
+        Assert.False(session.IsDirty);
+        Assert.False(session.CanUndo);
+        Assert.False(session.CanRedo);
+        Assert.False(session.Undo(out var undoError));
+        Assert.Null(undoError);
+        Assert.Same(sessionObject, session.GetObject(childId));
+    }
+
+    [Fact]
+    public void SettingInventoryQuantityToCurrentValueDoesNotCreateHistory()
+    {
+        var child = CreatePlacement(7, parentRecordIndex: 3, inventoryQuantity: 4);
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1 }),
+            [CreatePlacement(3), child]);
+        var childId = new MapEditObjectId(session.SessionId, child.RecordIndex);
+        var sessionObject = session.GetObject(childId);
+
+        Assert.True(session.TrySetInventoryQuantity(childId, 4, out var error));
+
+        Assert.Null(error);
+        Assert.False(session.IsDirty);
+        Assert.False(session.CanUndo);
+        Assert.Same(sessionObject, session.GetObject(childId));
+    }
+
+    [Fact]
+    public void UndoRestoresOriginalQuantityEvenWhenItWasNotEditable()
+    {
+        var child = CreatePlacement(7, parentRecordIndex: 3, inventoryQuantity: 0);
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1 }),
+            [CreatePlacement(3), child]);
+        var childId = new MapEditObjectId(session.SessionId, child.RecordIndex);
+
+        Assert.True(session.TrySetInventoryQuantity(childId, 2, out _));
+        Assert.True(session.IsDirty);
+        Assert.True(session.Undo(out var error));
+
+        Assert.Null(error);
+        Assert.Equal(0, session.GetObject(childId)!.Placement.InventoryQuantity);
+        Assert.False(session.IsDirty);
+    }
+
+    [Fact]
+    public void EditHistoryIsIsolatedToItsSessionAndRejectsStaleIds()
+    {
+        var sourceData = new MapSourceData(new byte[] { 1 });
+        var child = CreatePlacement(7, parentRecordIndex: 3, inventoryQuantity: 4);
+        var placements = new[] { CreatePlacement(3), child };
+        var session = new MapEditSession(sourceData, placements);
+        var otherSession = new MapEditSession(sourceData, placements);
+        var childId = new MapEditObjectId(session.SessionId, child.RecordIndex);
+        var staleId = new MapEditObjectId(session.SessionId, 99);
+
+        Assert.True(session.TrySetInventoryQuantity(childId, 5, out _));
+        Assert.False(otherSession.Undo(out var emptyHistoryError));
+        Assert.Null(emptyHistoryError);
+        Assert.False(
+            otherSession.TrySetInventoryQuantity(childId, 6, out var foreignIdError));
+        Assert.False(string.IsNullOrWhiteSpace(foreignIdError));
+        Assert.False(session.TrySetInventoryQuantity(staleId, 6, out var staleIdError));
+        Assert.False(string.IsNullOrWhiteSpace(staleIdError));
+        Assert.Equal(5, session.GetObject(childId)!.Placement.InventoryQuantity);
+        Assert.Equal(4, otherSession.GetObject(child.RecordIndex)!.Placement.InventoryQuantity);
+        Assert.True(session.IsDirty);
+        Assert.False(otherSession.IsDirty);
     }
 
     private static MapObjectPlacement CreatePlacement(
