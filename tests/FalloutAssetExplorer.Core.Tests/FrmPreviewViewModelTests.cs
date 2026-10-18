@@ -445,6 +445,52 @@ internal static class AvaloniaTestEnvironment
         completed.Task.GetAwaiter().GetResult();
     }
 
+    public static Task RunOnUiThreadAsync(Func<Task> action)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        EnsureInitialized();
+        var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Actions.Add(() =>
+        {
+            var previousContext = SynchronizationContext.Current;
+            var context = new QueuedSynchronizationContext();
+            SynchronizationContext.SetSynchronizationContext(context);
+            Task operation;
+            try
+            {
+                operation = action();
+            }
+            catch (Exception exception)
+            {
+                SynchronizationContext.SetSynchronizationContext(previousContext);
+                completed.TrySetException(exception);
+                return;
+            }
+
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+            _ = operation.ContinueWith(
+                task => Actions.Add(() =>
+                {
+                    if (task.IsCanceled)
+                    {
+                        completed.TrySetCanceled();
+                    }
+                    else if (task.IsFaulted)
+                    {
+                        completed.TrySetException(task.Exception!.InnerExceptions);
+                    }
+                    else
+                    {
+                        completed.TrySetResult();
+                    }
+                }),
+                CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously,
+                TaskScheduler.Default);
+        });
+        return completed.Task;
+    }
+
     private static Task StartUiThread()
     {
         var initialized = new TaskCompletionSource(
@@ -478,5 +524,25 @@ internal static class AvaloniaTestEnvironment
 
         uiThread.Start();
         return initialized.Task;
+    }
+
+    private sealed class QueuedSynchronizationContext : SynchronizationContext
+    {
+        public override void Post(SendOrPostCallback callback, object? state)
+        {
+            Actions.Add(() =>
+            {
+                var previousContext = SynchronizationContext.Current;
+                SynchronizationContext.SetSynchronizationContext(this);
+                try
+                {
+                    callback(state);
+                }
+                finally
+                {
+                    SynchronizationContext.SetSynchronizationContext(previousContext);
+                }
+            });
+        }
     }
 }

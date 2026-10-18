@@ -17,7 +17,8 @@ public static class FalloutMsgParser
                     $"The MSG file exceeds the {MaximumFileSizeBytes}-byte size limit."));
         }
 
-        var bytes = data.Span;
+        var sourceSnapshot = new FalloutMsgSourceSnapshot(data.Span);
+        var bytes = sourceSnapshot.Span;
         var entries = new List<FalloutMsgEntry>();
         var offset = 0;
 
@@ -33,7 +34,7 @@ public static class FalloutMsgParser
 
             if (fieldStatus == FieldReadStatus.EndOfInput)
             {
-                return FalloutMsgParseResult.Success(entries);
+                return FalloutMsgParseResult.Success(entries, sourceSnapshot);
             }
 
             if (fieldStatus == FieldReadStatus.Failure)
@@ -103,7 +104,10 @@ public static class FalloutMsgParser
             entries.Add(new FalloutMsgEntry(
                 messageId,
                 CopyField(bytes.Slice(audioFieldStart, audioFieldLength)),
-                CopyField(bytes.Slice(textFieldStart, textFieldLength))));
+                CopyField(bytes.Slice(textFieldStart, textFieldLength)),
+                new FalloutMsgByteRange(idFieldStart, idFieldLength),
+                new FalloutMsgByteRange(audioFieldStart, audioFieldLength),
+                new FalloutMsgByteRange(textFieldStart, textFieldLength)));
         }
     }
 
@@ -242,6 +246,11 @@ public static class FalloutMsgParser
         return true;
     }
 
+    internal static bool MessageIdMatches(ReadOnlySpan<byte> field, int expectedMessageId) =>
+        !field.IsEmpty
+        && TryParseMessageId(field, out var messageId, out _, out _)
+        && messageId == expectedMessageId;
+
     private static ReadOnlyMemory<byte> CopyField(ReadOnlySpan<byte> field) =>
         field.IsEmpty ? ReadOnlyMemory<byte>.Empty : field.ToArray();
 
@@ -256,7 +265,36 @@ public static class FalloutMsgParser
 public sealed record FalloutMsgEntry(
     int Id,
     ReadOnlyMemory<byte> Audio,
-    ReadOnlyMemory<byte> Text);
+    ReadOnlyMemory<byte> Text,
+    FalloutMsgByteRange IdRange,
+    FalloutMsgByteRange AudioRange,
+    FalloutMsgByteRange TextRange);
+
+/// <summary>
+/// A zero-based byte range for field content, excluding its opening and closing braces.
+/// </summary>
+public readonly record struct FalloutMsgByteRange(int StartOffset, int Length);
+
+public sealed class FalloutMsgSourceSnapshot
+{
+    private readonly byte[] _bytes;
+
+    internal FalloutMsgSourceSnapshot(ReadOnlySpan<byte> bytes)
+    {
+        _bytes = bytes.ToArray();
+    }
+
+    public int Length => _bytes.Length;
+
+    public byte this[int index] => _bytes[index];
+
+    /// <summary>
+    /// Returns a copy of the retained source bytes.
+    /// </summary>
+    public byte[] ToArray() => _bytes.ToArray();
+
+    internal ReadOnlySpan<byte> Span => _bytes;
+}
 
 public enum FalloutMsgDiagnosticCode
 {
@@ -278,13 +316,15 @@ public sealed record FalloutMsgDiagnostic(
 
 public sealed class FalloutMsgParseResult
 {
-    private FalloutMsgParseResult(
+    internal FalloutMsgParseResult(
         bool isSuccess,
         IReadOnlyList<FalloutMsgEntry> entries,
+        FalloutMsgSourceSnapshot? sourceSnapshot,
         FalloutMsgDiagnostic? diagnostic)
     {
         IsSuccess = isSuccess;
         Entries = entries;
+        SourceSnapshot = sourceSnapshot;
         Diagnostic = diagnostic;
     }
 
@@ -292,11 +332,15 @@ public sealed class FalloutMsgParseResult
 
     public IReadOnlyList<FalloutMsgEntry> Entries { get; }
 
+    public FalloutMsgSourceSnapshot? SourceSnapshot { get; }
+
     public FalloutMsgDiagnostic? Diagnostic { get; }
 
-    internal static FalloutMsgParseResult Success(List<FalloutMsgEntry> entries) =>
-        new(true, Array.AsReadOnly(entries.ToArray()), null);
+    internal static FalloutMsgParseResult Success(
+        List<FalloutMsgEntry> entries,
+        FalloutMsgSourceSnapshot sourceSnapshot) =>
+        new(true, Array.AsReadOnly(entries.ToArray()), sourceSnapshot, null);
 
     internal static FalloutMsgParseResult Failure(FalloutMsgDiagnostic diagnostic) =>
-        new(false, Array.Empty<FalloutMsgEntry>(), diagnostic);
+        new(false, Array.Empty<FalloutMsgEntry>(), null, diagnostic);
 }

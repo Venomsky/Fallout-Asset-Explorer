@@ -3,7 +3,9 @@ using System.ComponentModel;
 using System.Reflection;
 using System.Text;
 using Avalonia;
+using Avalonia.Controls;
 using FalloutAssetExplorer.App.ViewModels;
+using FalloutAssetExplorer.App.Views;
 using FalloutAssetExplorer.Core;
 using Xunit;
 
@@ -288,7 +290,8 @@ public sealed class ArchiveBrowserExtractionCommandTests
         Assert.Equal(1, archive.CopyCount);
         Assert.Contains(".MSG", viewModel.ExtensionOptions);
         Assert.Single(viewModel.VisibleEntries);
-        Assert.Equal("MSG Inspector", viewModel.PreviewTitle);
+        Assert.Equal("MSG Editor", viewModel.PreviewTitle);
+        Assert.Equal(ArchiveBrowserViewModel.MsgEditorWorkspaceIndex, viewModel.SelectedWorkspaceIndex);
         Assert.True(viewModel.IsMsgInspector);
         Assert.False(viewModel.IsProInspector);
         Assert.False(viewModel.IsMapInspector);
@@ -298,7 +301,626 @@ public sealed class ArchiveBrowserExtractionCommandTests
         Assert.Equal("first"u8.ToArray(), result.Entries[0].Text.ToArray());
         Assert.Equal("voice"u8.ToArray(), result.Entries[1].Audio.ToArray());
         Assert.Contains("2 entries", viewModel.MsgStatus);
-        Assert.Contains("are not decoded", viewModel.MsgDetails);
+        Assert.Contains("Text preview uses the selected encoding", viewModel.MsgDetails);
+    }
+
+    [Fact]
+    public void MsgFileExplorer_ListsAndFiltersArchiveRelativePathsWithoutMergingSameNames()
+    {
+        using var archive = new ControlledArchive();
+        archive.AddEntry("dialog/english/greeting.msg", "{5}{}{english}"u8.ToArray());
+        archive.AddEntry("dialog/spanish/greeting.MSG", "{6}{}{spanish}"u8.ToArray());
+        archive.AddEntry("dialog/spanish/readme.txt", "not a message"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        SetPrivateField(viewModel, "_archivePath", archive.Path);
+
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        Assert.Equal(2, viewModel.MsgArchiveFiles.Count);
+        Assert.Equal(
+            new[] { "dialog/english/greeting.msg", "dialog/spanish/greeting.MSG" },
+            viewModel.MsgArchiveFiles.Select(file => file.ArchiveRelativePath));
+        Assert.Equal(new[] { "greeting.msg", "greeting.MSG" }, viewModel.MsgArchiveFiles.Select(file => file.FileName));
+        Assert.Equal(2, viewModel.VisibleMsgFiles.Count);
+
+        viewModel.MsgFileSearchText = "spanish";
+
+        var filtered = Assert.Single(viewModel.VisibleMsgFiles);
+        Assert.Equal("dialog/spanish/greeting.MSG", filtered.ArchiveRelativePath);
+        Assert.Contains("1 of 2", viewModel.MsgFileBrowserStatus);
+
+        viewModel.MsgFileSearchText = "missing";
+
+        Assert.Empty(viewModel.VisibleMsgFiles);
+        Assert.Contains("No MSG files match", viewModel.MsgFileBrowserStatus);
+    }
+
+    [Fact]
+    public void MsgFileExplorer_ReportsUnavailableAndEmptyArchiveStates()
+    {
+        using var unavailableViewModel = new ArchiveBrowserViewModel();
+        Assert.Contains("Open a supported Fallout DAT archive", unavailableViewModel.MsgFileBrowserStatus);
+
+        using var archive = new ControlledArchive();
+        using var emptyViewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(emptyViewModel, "_archive", archive);
+        emptyViewModel.SetEntries([]);
+
+        Assert.Contains("no entries with a .MSG extension", emptyViewModel.MsgFileBrowserStatus);
+    }
+
+    [Fact]
+    public async Task MsgFileExplorer_SwitchingFilesRefreshesOccurrencesSnippetsAndPreviewWithoutChangingArchiveBytes()
+    {
+        using var archive = new ControlledArchive();
+        var firstBytes = "{5}{}{first text}{5}{}{second text}"u8.ToArray();
+        var secondBytes = "{8}{}{replacement file text}"u8.ToArray();
+        var firstEntry = archive.AddEntry("dialog/english/first.msg", firstBytes);
+        var secondEntry = archive.AddEntry("dialog/english/second.msg", secondBytes);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        SetPrivateField(viewModel, "_archivePath", archive.Path);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = firstEntry;
+
+        await viewModel.PreviewSelectedEntryAsync();
+
+        Assert.Equal(new[] { 5, 5 }, viewModel.MsgInspector.VisibleMessages.Select(message => message.Id));
+        Assert.Equal(
+            new[] { "first text", "second text" },
+            viewModel.MsgInspector.VisibleMessages.Select(message => message.TextSnippet));
+        var firstReadCount = archive.CopyCount;
+        await viewModel.PreviewSelectedEntryAsync();
+        Assert.Equal(firstReadCount, archive.CopyCount);
+        viewModel.MsgInspector.SelectedMessage = viewModel.MsgInspector.VisibleMessages[1];
+        Assert.Equal("second text", viewModel.MsgInspector.TextPreview);
+
+        var nextFile = viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, secondEntry));
+        await viewModel.SelectMsgFileAsync(nextFile);
+
+        Assert.Same(secondEntry, viewModel.SelectedEntry);
+        Assert.Same(nextFile, viewModel.SelectedMsgFile);
+        Assert.True(viewModel.MsgParseResult?.IsSuccess);
+        Assert.Equal(archive.Path, viewModel.MsgInspector.OriginalSourcePath);
+        Assert.Contains(secondEntry.Path, viewModel.MsgDetails);
+        Assert.Equal(new[] { 8 }, viewModel.MsgInspector.VisibleMessages.Select(message => message.Id));
+        Assert.Equal("replacement file text", viewModel.MsgInspector.VisibleMessages[0].TextSnippet);
+        viewModel.MsgInspector.SelectedMessage = viewModel.MsgInspector.VisibleMessages[0];
+        Assert.Equal("replacement file text", viewModel.MsgInspector.TextPreview);
+
+        viewModel.MsgInspector.BeginEdit();
+        viewModel.MsgInspector.DraftText = "edited in memory";
+        viewModel.MsgInspector.ApplyEdit();
+        Assert.True(viewModel.MsgInspector.HasUnsavedOutput);
+
+        using var storedBytes = new MemoryStream();
+        await archive.CopyEntryToAsync(secondEntry, storedBytes);
+        Assert.Equal(secondBytes, storedBytes.ToArray());
+        Assert.Equal(secondBytes, viewModel.MsgInspector.ParseResult!.SourceSnapshot!.ToArray());
+    }
+
+    [Fact]
+    public async Task MsgFileExplorer_MalformedCandidateDoesNotPreventOpeningAnotherFile()
+    {
+        using var archive = new ControlledArchive();
+        var malformed = archive.AddEntry("dialog/broken.msg", "{1}{}{truncated"u8.ToArray());
+        var valid = archive.AddEntry("dialog/valid.msg", "{2}{}{valid}"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        await viewModel.SelectMsgFileAsync(
+            viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, malformed)));
+
+        Assert.False(viewModel.MsgParseResult!.IsSuccess);
+        Assert.Contains("Parsing failed", viewModel.MsgStatus);
+        Assert.Equal(2, viewModel.MsgArchiveFiles.Count);
+
+        await viewModel.SelectMsgFileAsync(
+            viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, valid)));
+
+        Assert.True(viewModel.MsgParseResult!.IsSuccess);
+        Assert.Equal(2, Assert.Single(viewModel.MsgInspector.VisibleMessages).Id);
+    }
+
+    [Fact]
+    public async Task MsgFileExplorer_LoadsCandidateAlreadySelectedWithoutAParsedResult()
+    {
+        using var archive = new ControlledArchive();
+        var entry = archive.AddEntry("dialog/preselected.msg", "{3}{}{loaded}"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = entry;
+        var file = Assert.Single(viewModel.MsgArchiveFiles);
+
+        Assert.Null(viewModel.MsgParseResult);
+
+        await viewModel.SelectMsgFileAsync(file);
+
+        Assert.True(viewModel.MsgParseResult?.IsSuccess);
+        Assert.Equal(3, Assert.Single(viewModel.MsgInspector.VisibleMessages).Id);
+
+        var readCount = archive.CopyCount;
+        var parsedResult = viewModel.MsgParseResult;
+        await viewModel.SelectMsgFileAsync(file);
+        Assert.Same(parsedResult, viewModel.MsgParseResult);
+        Assert.Equal(readCount, archive.CopyCount);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task MsgFileExplorer_ListBoxSelectionRefreshesTheEditor(
+        bool openFirstFileThroughArchiveBrowser)
+    {
+        AvaloniaTestEnvironment.EnsureInitialized();
+        using var archive = new ControlledArchive();
+        var firstEntry = archive.AddEntry("dialog/first.msg", "{1}{}{first}"u8.ToArray());
+        var secondEntry = archive.AddEntry("dialog/second.msg", "{2}{}{second}"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        SetPrivateField(viewModel, "_archivePath", archive.Path);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        if (openFirstFileThroughArchiveBrowser)
+        {
+            viewModel.SelectedEntry = firstEntry;
+            await viewModel.PreviewSelectedEntryAsync();
+        }
+
+        var targetEntry = openFirstFileThroughArchiveBrowser ? secondEntry : firstEntry;
+        var targetFile = viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, targetEntry));
+        var expectedId = openFirstFileThroughArchiveBrowser ? 2 : 1;
+        var loaded = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ArchiveBrowserViewModel.MsgParseResult)
+                && viewModel.MsgParseResult?.Entries.SingleOrDefault()?.Id == expectedId)
+            {
+                loaded.TrySetResult(true);
+            }
+        };
+
+        await AvaloniaTestEnvironment.RunOnUiThreadAsync(async () =>
+        {
+            viewModel.SelectedWorkspaceIndex = ArchiveBrowserViewModel.MsgEditorWorkspaceIndex;
+            var window = new MainWindow { DataContext = viewModel };
+            try
+            {
+                window.Show();
+                var files = Assert.IsType<ListBox>(window.FindControl<ListBox>("MsgFilesList"));
+                files.SelectedItem = targetFile;
+
+                await loaded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                Assert.Same(targetEntry, viewModel.SelectedEntry);
+                Assert.Same(targetFile, viewModel.SelectedMsgFile);
+                Assert.Equal(expectedId, Assert.Single(viewModel.MsgInspector.VisibleMessages).Id);
+                Assert.Equal(
+                    expectedId == 1 ? "first" : "second",
+                    Assert.Single(viewModel.MsgInspector.VisibleMessages).TextSnippet);
+                var selectedMessage = Assert.Single(viewModel.MsgInspector.VisibleMessages);
+                Assert.Same(selectedMessage, viewModel.MsgInspector.SelectedMessage);
+                Assert.Equal(
+                    expectedId == 1 ? "first" : "second",
+                    viewModel.MsgInspector.TextPreview);
+
+                var entries = Assert.IsType<ListBox>(window.FindControl<ListBox>("MsgEntryList"));
+                Assert.Same(selectedMessage, entries.SelectedItem);
+                Assert.Equal(
+                    expectedId == 1 ? "first" : "second",
+                    viewModel.MsgInspector.TextPreview);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task MsgFileExplorer_RapidUiSelectionsKeepTheLastFileAfterOlderReadsFinish()
+    {
+        AvaloniaTestEnvironment.EnsureInitialized();
+        using var archive = new ControlledArchive();
+        var firstEntry = archive.AddEntry("dialog/first.msg", "{1}{}{first}"u8.ToArray());
+        var secondEntry = archive.AddEntry("dialog/second.msg", "{2}{}{second}"u8.ToArray());
+        var thirdEntry = archive.AddEntry("dialog/third.msg", "{3}{}{third}"u8.ToArray());
+        var firstRead = archive.BlockEntry(firstEntry.Path);
+        var secondRead = archive.BlockEntry(secondEntry.Path);
+        var thirdRead = archive.BlockEntry(thirdEntry.Path);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        var thirdLoaded = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ArchiveBrowserViewModel.MsgParseResult)
+                && viewModel.MsgParseResult?.Entries.SingleOrDefault()?.Id == 3)
+            {
+                thirdLoaded.TrySetResult(true);
+            }
+        };
+
+        await AvaloniaTestEnvironment.RunOnUiThreadAsync(async () =>
+        {
+            viewModel.SelectedWorkspaceIndex = ArchiveBrowserViewModel.MsgEditorWorkspaceIndex;
+            var window = new MainWindow { DataContext = viewModel };
+            try
+            {
+                window.Show();
+                var files = Assert.IsType<ListBox>(window.FindControl<ListBox>("MsgFilesList"));
+                files.SelectedItem = viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, firstEntry));
+                await firstRead.WaitStartedAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                files.SelectedItem = viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, secondEntry));
+                Assert.Same(secondEntry, viewModel.SelectedEntry);
+                Assert.Same(secondEntry, viewModel.SelectedMsgFile?.Entry);
+                await secondRead.WaitStartedAsync().WaitAsync(TimeSpan.FromSeconds(10));
+                files.SelectedItem = viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, thirdEntry));
+                await thirdRead.WaitStartedAsync().WaitAsync(TimeSpan.FromSeconds(10));
+
+                thirdRead.Release();
+                await thirdLoaded.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                firstRead.Release();
+                secondRead.Release();
+                await Task.WhenAll(
+                        firstRead.CopyCompleted.Task,
+                        secondRead.CopyCompleted.Task)
+                    .WaitAsync(TimeSpan.FromSeconds(10));
+                await Task.Yield();
+
+                Assert.Same(thirdEntry, viewModel.SelectedEntry);
+                Assert.Equal(3, Assert.Single(viewModel.MsgParseResult!.Entries).Id);
+                Assert.Equal("third", Assert.Single(viewModel.MsgInspector.VisibleMessages).TextSnippet);
+                var entries = Assert.IsType<ListBox>(window.FindControl<ListBox>("MsgEntryList"));
+                var selectedMessage = Assert.Single(viewModel.MsgInspector.VisibleMessages);
+                Assert.Same(selectedMessage, viewModel.MsgInspector.SelectedMessage);
+                Assert.Same(selectedMessage, entries.SelectedItem);
+                Assert.Equal("third", viewModel.MsgInspector.TextPreview);
+            }
+            finally
+            {
+                firstRead.Release();
+                secondRead.Release();
+                thirdRead.Release();
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task MsgFileExplorer_ListBoxSelectionAtoBtoCtoARefreshesOnEachFirstSelection()
+    {
+        AvaloniaTestEnvironment.EnsureInitialized();
+        using var archive = new ControlledArchive();
+        var entryA = archive.AddEntry("dialog/a.msg", "{7}{}{A first}{7}{}{A duplicate}"u8.ToArray());
+        var entryB = archive.AddEntry("dialog/b.msg", "{8}{}{B first}{8}{}{B duplicate}"u8.ToArray());
+        var entryC = archive.AddEntry("dialog/c.msg", "{9}{}{C first}{9}{}{C duplicate}"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        SetPrivateField(viewModel, "_archivePath", archive.Path);
+        viewModel.SetEntries(archive.BrowserEntries);
+
+        await AvaloniaTestEnvironment.RunOnUiThreadAsync(async () =>
+        {
+            viewModel.SelectedWorkspaceIndex = ArchiveBrowserViewModel.MsgEditorWorkspaceIndex;
+            var window = new MainWindow { DataContext = viewModel };
+            try
+            {
+                window.Show();
+                var files = Assert.IsType<ListBox>(window.FindControl<ListBox>("MsgFilesList"));
+                var entries = Assert.IsType<ListBox>(window.FindControl<ListBox>("MsgEntryList"));
+                var selectionEventCount = 0;
+                files.SelectionChanged += (_, _) => selectionEventCount++;
+
+                async Task SelectAndAssertAsync(
+                    ArchiveEntry entry,
+                    int id,
+                    string messageText,
+                    int expectedReadCount)
+                {
+                    var parsed = new TaskCompletionSource<bool>(
+                        TaskCreationOptions.RunContinuationsAsynchronously);
+                    void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs args)
+                    {
+                        if (args.PropertyName == nameof(ArchiveBrowserViewModel.MsgParseResult)
+                            && viewModel.SelectedEntry == entry
+                            && viewModel.MsgParseResult?.Entries.FirstOrDefault()?.Id == id)
+                        {
+                            parsed.TrySetResult(true);
+                        }
+                    }
+
+                    viewModel.PropertyChanged += OnViewModelPropertyChanged;
+                    try
+                    {
+                        var priorSelectionEventCount = selectionEventCount;
+                        files.SelectedItem = viewModel.MsgArchiveFiles
+                            .Single(file => ReferenceEquals(file.Entry, entry));
+
+                        Assert.Equal(priorSelectionEventCount + 1, selectionEventCount);
+                        await parsed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                        await Task.Yield();
+
+                        var occurrences = viewModel.MsgInspector.VisibleMessages;
+                        Assert.Same(entry, viewModel.SelectedEntry);
+                        Assert.Same(entry, viewModel.SelectedMsgFile?.Entry);
+                        Assert.Equal(new[] { id, id }, occurrences.Select(message => message.Id));
+                        Assert.Equal(new[] { $"{messageText} first", $"{messageText} duplicate" },
+                            occurrences.Select(message => message.TextSnippet));
+                        Assert.Equal(new[] { 0, 1 }, occurrences.Select(message => message.SourceIndex));
+                        Assert.Same(occurrences[0], viewModel.MsgInspector.SelectedMessage);
+                        Assert.Equal($"{messageText} first", viewModel.MsgInspector.TextPreview);
+                        Assert.Same(viewModel.SelectedMsgFile, files.SelectedItem);
+                        Assert.Same(occurrences[0], entries.SelectedItem);
+                        Assert.Equal(expectedReadCount, archive.CopyCount);
+                    }
+                    finally
+                    {
+                        viewModel.PropertyChanged -= OnViewModelPropertyChanged;
+                    }
+                }
+
+                await SelectAndAssertAsync(entryA, 7, "A", 1);
+                await SelectAndAssertAsync(entryB, 8, "B", 2);
+                await SelectAndAssertAsync(entryC, 9, "C", 3);
+                await SelectAndAssertAsync(entryA, 7, "A", 4);
+            }
+            finally
+            {
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task MsgFileExplorer_InFlightAtoBtoCtoASelectionKeepsTheLatestAResult()
+    {
+        AvaloniaTestEnvironment.EnsureInitialized();
+        using var archive = new ControlledArchive();
+        var entryA = archive.AddEntry("dialog/a.msg", "{7}{}{A latest}"u8.ToArray());
+        var entryB = archive.AddEntry("dialog/b.msg", "{8}{}{B stale}"u8.ToArray());
+        var entryC = archive.AddEntry("dialog/c.msg", "{9}{}{C stale}"u8.ToArray());
+        var readA = archive.BlockEntry(entryA.Path);
+        var readB = archive.BlockEntry(entryB.Path);
+        var readC = archive.BlockEntry(entryC.Path);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        var latestAParsed = new TaskCompletionSource<bool>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        viewModel.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(ArchiveBrowserViewModel.MsgParseResult)
+                && ReferenceEquals(viewModel.SelectedEntry, entryA)
+                && viewModel.MsgParseResult?.Entries.FirstOrDefault()?.Id == 7)
+            {
+                latestAParsed.TrySetResult(true);
+            }
+        };
+
+        await AvaloniaTestEnvironment.RunOnUiThreadAsync(async () =>
+        {
+            viewModel.SelectedWorkspaceIndex = ArchiveBrowserViewModel.MsgEditorWorkspaceIndex;
+            var window = new MainWindow { DataContext = viewModel };
+            try
+            {
+                window.Show();
+                var files = Assert.IsType<ListBox>(window.FindControl<ListBox>("MsgFilesList"));
+                files.SelectedItem = viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, entryA));
+                await readA.WaitStartedAsync();
+                files.SelectedItem = viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, entryB));
+                await readB.WaitStartedAsync();
+                files.SelectedItem = viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, entryC));
+                await readC.WaitStartedAsync();
+                files.SelectedItem = viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, entryA));
+
+                Assert.Same(entryA, viewModel.SelectedEntry);
+                Assert.Equal(4, archive.CopyCount);
+                readA.Release();
+                await latestAParsed.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                readB.Release();
+                readC.Release();
+                await Task.WhenAll(readB.CopyCompleted.Task, readC.CopyCompleted.Task)
+                    .WaitAsync(TimeSpan.FromSeconds(10));
+                await Task.Yield();
+
+                Assert.Same(entryA, viewModel.SelectedEntry);
+                Assert.Same(entryA, viewModel.SelectedMsgFile?.Entry);
+                Assert.Equal(7, Assert.Single(viewModel.MsgParseResult!.Entries).Id);
+                Assert.Equal("A latest", Assert.Single(viewModel.MsgInspector.VisibleMessages).TextSnippet);
+                Assert.Same(
+                    Assert.Single(viewModel.MsgInspector.VisibleMessages),
+                    viewModel.MsgInspector.SelectedMessage);
+                Assert.Equal("A latest", viewModel.MsgInspector.TextPreview);
+                Assert.Same(viewModel.SelectedMsgFile, files.SelectedItem);
+            }
+            finally
+            {
+                readA.Release();
+                readB.Release();
+                readC.Release();
+                window.Close();
+            }
+        });
+    }
+
+    [Fact]
+    public async Task MsgFileExplorer_FailedCanceledReadCannotOverrideANewerFile()
+    {
+        using var archive = new ControlledArchive();
+        var failedEntry = archive.AddEntry("dialog/failing.msg", "{1}{}{old}"u8.ToArray());
+        var currentEntry = archive.AddEntry("dialog/current.msg", "{2}{}{current}"u8.ToArray());
+        var failedRead = archive.BlockEntry(failedEntry.Path, failWithIo: true);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        Task? staleLoad = null;
+
+        try
+        {
+            staleLoad = viewModel.SelectMsgFileAsync(
+                viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, failedEntry)));
+            await failedRead.WaitStartedAsync();
+            await viewModel.SelectMsgFileAsync(
+                viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, currentEntry)));
+
+            Assert.True(viewModel.MsgParseResult?.IsSuccess);
+            Assert.Equal("current", viewModel.MsgInspector.TextPreview);
+            Assert.Contains("Parsed 1 entries", viewModel.MsgStatus);
+
+            failedRead.Release();
+            await staleLoad.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Same(currentEntry, viewModel.SelectedEntry);
+            Assert.Equal("current", viewModel.MsgInspector.TextPreview);
+            Assert.Contains("Parsed 1 entries", viewModel.MsgStatus);
+        }
+        finally
+        {
+            failedRead.Release();
+            if (staleLoad is not null)
+            {
+                await staleLoad.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task MsgFileExplorer_ReplacedArchiveCannotPublishTheOldFileResult()
+    {
+        using var oldArchive = new ControlledArchive();
+        using var newArchive = new ControlledArchive();
+        var oldEntry = oldArchive.AddEntry("dialog/shared.msg", "{1}{}{old archive}"u8.ToArray());
+        var newEntry = newArchive.AddEntry("dialog/shared.msg", "{2}{}{new archive}"u8.ToArray());
+        var oldRead = oldArchive.BlockEntry(oldEntry.Path);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", oldArchive);
+        SetPrivateField(viewModel, "_archivePath", oldArchive.Path);
+        viewModel.SetEntries(oldArchive.BrowserEntries);
+        Task? staleLoad = null;
+
+        try
+        {
+            staleLoad = viewModel.SelectMsgFileAsync(
+                viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, oldEntry)));
+            await oldRead.WaitStartedAsync();
+
+            SetPrivateField(viewModel, "_archive", newArchive);
+            SetPrivateField(viewModel, "_archivePath", newArchive.Path);
+            viewModel.SetEntries(newArchive.BrowserEntries);
+            await viewModel.SelectMsgFileAsync(
+                viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, newEntry)));
+
+            oldRead.Release();
+            await staleLoad.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Same(newEntry, viewModel.SelectedEntry);
+            Assert.True(viewModel.MsgParseResult?.IsSuccess);
+            Assert.Equal(2, Assert.Single(viewModel.MsgParseResult!.Entries).Id);
+            Assert.Equal("new archive", viewModel.MsgInspector.TextPreview);
+            Assert.Equal(newArchive.Path, viewModel.MsgInspector.OriginalSourcePath);
+        }
+        finally
+        {
+            oldRead.Release();
+            if (staleLoad is not null)
+            {
+                await staleLoad.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task MsgFileExplorer_RejectsSwitchesUntilDraftIsCancelledOrOutputIsSaved()
+    {
+        using var archive = new ControlledArchive();
+        var firstEntry = archive.AddEntry("dialog/first.msg", "{1}{}{original}"u8.ToArray());
+        var secondEntry = archive.AddEntry("dialog/second.msg", "{2}{}{next}"u8.ToArray());
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        viewModel.SelectedEntry = firstEntry;
+        viewModel.MsgInspector.SetParseResult(FalloutMsgParser.Parse("{1}{}{original}"u8.ToArray()));
+        viewModel.MsgInspector.SelectedMessage =
+            Assert.Single(viewModel.MsgInspector.VisibleMessages);
+        var secondFile = viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, secondEntry));
+
+        viewModel.MsgInspector.BeginEdit();
+        viewModel.MsgInspector.DraftText = "draft";
+        await viewModel.SelectMsgFileAsync(secondFile);
+
+        Assert.Same(firstEntry, viewModel.SelectedEntry);
+        Assert.Equal("draft", viewModel.MsgInspector.DraftText);
+        Assert.True(viewModel.MsgInspector.IsEditing);
+        Assert.False(viewModel.CanChangeArchiveSource);
+        await viewModel.LoadArchiveAsync("replacement.dat");
+        Assert.Same(firstEntry, viewModel.SelectedEntry);
+        Assert.Equal("draft", viewModel.MsgInspector.DraftText);
+
+        viewModel.MsgInspector.CancelEdit();
+        viewModel.MsgInspector.BeginEdit();
+        viewModel.MsgInspector.DraftText = "applied but not saved";
+        viewModel.MsgInspector.ApplyEdit();
+        var output = viewModel.MsgInspector.PatchedOutputBytes;
+        Assert.True(viewModel.MsgInspector.HasUnsavedOutput);
+
+        await viewModel.SelectMsgFileAsync(secondFile);
+
+        Assert.Same(firstEntry, viewModel.SelectedEntry);
+        Assert.Equal(output, viewModel.MsgInspector.PatchedOutputBytes);
+        Assert.True(viewModel.MsgInspector.HasUnsavedOutput);
+        Assert.False(viewModel.CanChangeArchiveSource);
+        Assert.False(viewModel.CanOpenArchive);
+        Assert.Contains("Save the applied MSG output", viewModel.StatusMessage);
+        await viewModel.LoadArchiveAsync("replacement.dat");
+        Assert.Same(firstEntry, viewModel.SelectedEntry);
+        Assert.Equal(output, viewModel.MsgInspector.PatchedOutputBytes);
+
+        viewModel.MsgInspector.MarkOutputSaved("synthetic-output.msg");
+        Assert.False(viewModel.MsgInspector.HasUnsavedOutput);
+        await viewModel.SelectMsgFileAsync(secondFile);
+
+        Assert.Same(secondEntry, viewModel.SelectedEntry);
+        Assert.True(viewModel.MsgParseResult?.IsSuccess);
+    }
+
+    [Fact]
+    public async Task MsgFileExplorer_RapidSelectionDoesNotPublishStaleFileResult()
+    {
+        using var archive = new ControlledArchive();
+        var slowEntry = archive.AddEntry("dialog/slow.msg", "{1}{}{stale}"u8.ToArray());
+        var latestEntry = archive.AddEntry("dialog/latest.msg", "{2}{}{latest}"u8.ToArray());
+        var slowRead = archive.BlockEntry(slowEntry.Path);
+        using var viewModel = new ArchiveBrowserViewModel();
+        SetPrivateField(viewModel, "_archive", archive);
+        viewModel.SetEntries(archive.BrowserEntries);
+        var slowFile = viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, slowEntry));
+        var latestFile = viewModel.MsgArchiveFiles.Single(file => ReferenceEquals(file.Entry, latestEntry));
+
+        Task? staleSelection = null;
+        try
+        {
+            staleSelection = viewModel.SelectMsgFileAsync(slowFile);
+            await slowRead.WaitStartedAsync();
+            await viewModel.SelectMsgFileAsync(latestFile);
+            slowRead.Release();
+            await staleSelection.WaitAsync(TimeSpan.FromSeconds(10));
+
+            Assert.Same(latestEntry, viewModel.SelectedEntry);
+            Assert.Same(latestFile, viewModel.SelectedMsgFile);
+            Assert.Equal(2, Assert.Single(viewModel.MsgParseResult!.Entries).Id);
+            Assert.Equal("latest", Assert.Single(viewModel.MsgInspector.VisibleMessages).TextSnippet);
+        }
+        finally
+        {
+            slowRead.Release();
+            if (staleSelection is not null)
+            {
+                await staleSelection.WaitAsync(TimeSpan.FromSeconds(10));
+            }
+        }
     }
 
     [Fact]
@@ -311,6 +933,8 @@ public sealed class ArchiveBrowserExtractionCommandTests
 
         await viewModel.LoadArchiveAsync(archiveFile.Path);
         var entry = Assert.Single(viewModel.Entries);
+        Assert.Single(viewModel.MsgArchiveFiles);
+        Assert.Equal(path, Assert.Single(viewModel.MsgArchiveFiles).ArchiveRelativePath);
         viewModel.SelectedEntry = entry;
         await viewModel.PreviewSelectedEntryAsync();
 
@@ -369,9 +993,10 @@ public sealed class ArchiveBrowserExtractionCommandTests
         Assert.Empty(viewModel.MsgInspector.IdFilterText);
         Assert.Single(viewModel.MsgInspector.VisibleMessages);
         Assert.Equal(9, viewModel.MsgInspector.VisibleMessages[0].Id);
-        Assert.Null(viewModel.MsgInspector.SelectedMessage);
+        Assert.Same(viewModel.MsgInspector.VisibleMessages[0], viewModel.MsgInspector.SelectedMessage);
+        Assert.Equal("new file", viewModel.MsgInspector.TextPreview);
         Assert.Equal(MsgPayloadField.Text, viewModel.MsgInspector.SelectedPayloadField);
-        Assert.Empty(viewModel.MsgInspector.SelectedPayloadHex);
+        Assert.Contains("6E 65 77 20 66 69 6C 65", viewModel.MsgInspector.SelectedPayloadHex);
     }
 
     [Fact]
@@ -2135,17 +2760,26 @@ public sealed class ArchiveBrowserExtractionCommandTests
                 throw new IOException($"Unexpected synthetic archive entry: {entry.Path}");
             }
 
-            if (_readGates.TryGetValue(entry.Path, out var gate))
+            _readGates.TryGetValue(entry.Path, out var gate);
+            try
             {
-                gate.Started.TrySetResult(true);
-                await gate.Released.Task.ConfigureAwait(false);
-                if (gate.FailWithIo)
+                if (gate is not null)
                 {
-                    gate.FailedWithIo = true;
-                    throw new IOException($"Synthetic I/O failure for {entry.Path}.");
+                    gate.Started.TrySetResult(true);
+                    await gate.Released.Task.ConfigureAwait(false);
+                    if (gate.FailWithIo)
+                    {
+                        gate.FailedWithIo = true;
+                        throw new IOException($"Synthetic I/O failure for {entry.Path}.");
+                    }
                 }
+
+                await destination.WriteAsync(bytes, CancellationToken.None);
             }
-            await destination.WriteAsync(bytes, CancellationToken.None);
+            finally
+            {
+                gate?.CopyCompleted.TrySetResult(true);
+            }
         }
 
         public void Dispose() => File.Delete(Path);
@@ -2156,6 +2790,9 @@ public sealed class ArchiveBrowserExtractionCommandTests
                 new(TaskCreationOptions.RunContinuationsAsynchronously);
 
             public TaskCompletionSource<bool> Released { get; } =
+                new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            public TaskCompletionSource<bool> CopyCompleted { get; } =
                 new(TaskCreationOptions.RunContinuationsAsynchronously);
 
             public bool FailWithIo { get; } = failWithIo;

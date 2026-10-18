@@ -111,6 +111,132 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void MsgFilesList_SelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        if (DataContext is not ArchiveBrowserViewModel viewModel)
+        {
+            return;
+        }
+
+        if (MsgFilesList.SelectedItem is MsgArchiveFileItem selectedFile)
+        {
+            await viewModel.SelectMsgFileAsync(selectedFile);
+        }
+
+        MsgFilesList.SelectedItem = viewModel.SelectedMsgFile;
+    }
+
+    private void BeginMsgTextEdit_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is ArchiveBrowserViewModel viewModel)
+        {
+            viewModel.MsgInspector.BeginEdit();
+        }
+    }
+
+    private void ApplyMsgTextEdit_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is ArchiveBrowserViewModel viewModel)
+        {
+            viewModel.MsgInspector.ApplyEdit();
+        }
+    }
+
+    private void CancelMsgTextEdit_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is ArchiveBrowserViewModel viewModel)
+        {
+            viewModel.MsgInspector.CancelEdit();
+        }
+    }
+
+    private async void SaveMsgAs_Click(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ArchiveBrowserViewModel viewModel
+            || !viewModel.MsgInspector.CanSaveAs
+            || viewModel.MsgInspector.PatchedOutputBytes is not { } outputBytes)
+        {
+            return;
+        }
+
+        var msgInspector = viewModel.MsgInspector;
+        var outputVersion = msgInspector.PatchedOutputVersion;
+        var originalSourcePath = msgInspector.OriginalSourcePath;
+
+        try
+        {
+            var msgFileType = new FilePickerFileType("Fallout MSG file")
+            {
+                Patterns = ["*.msg", "*.MSG"]
+            };
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Save patched MSG as",
+                SuggestedFileName = "edited.msg",
+                DefaultExtension = "msg",
+                FileTypeChoices = [msgFileType],
+                SuggestedFileType = msgFileType,
+                ShowOverwritePrompt = true
+            });
+
+            if (file is null)
+            {
+                return;
+            }
+
+            if (!msgInspector.IsCurrentPatchedOutput(outputVersion))
+            {
+                msgInspector.ReportSaveAsFailure(
+                    "The MSG output changed while choosing a destination. Start Save As again.");
+                return;
+            }
+
+            var destinationPath = file.Path.LocalPath;
+            var savedPath = await MsgSaveAsService.SaveAsync(
+                outputBytes,
+                destinationPath,
+                originalSourcePath,
+                overwriteConfirmed: File.Exists(destinationPath));
+            if (savedPath is null)
+            {
+                return;
+            }
+
+            if (msgInspector.IsCurrentPatchedOutput(outputVersion))
+            {
+                msgInspector.MarkOutputSaved(savedPath);
+            }
+            else
+            {
+                viewModel.ReportError(
+                    $"Saved the previously selected MSG output to {savedPath}; "
+                    + "the current MSG source changed while saving.");
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or InvalidOperationException
+            or NotSupportedException
+            or ArgumentException
+            or System.Security.SecurityException)
+        {
+            if (msgInspector.IsCurrentPatchedOutput(outputVersion))
+            {
+                msgInspector.ReportSaveAsFailure(exception.Message);
+            }
+            else
+            {
+                viewModel.ReportError(
+                    $"Could not save the previously selected MSG output: {exception.Message} "
+                    + "The current MSG source changed while saving.");
+            }
+        }
+    }
+
     private void NavigateToScriptInt_Click(object? sender, RoutedEventArgs e)
     {
         if (DataContext is ArchiveBrowserViewModel viewModel)

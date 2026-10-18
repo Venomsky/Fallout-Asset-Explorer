@@ -13,15 +13,36 @@ using FalloutAssetExplorer.Core;
 
 namespace FalloutAssetExplorer.App.ViewModels;
 
+public sealed class MsgArchiveFileItem
+{
+    public MsgArchiveFileItem(ArchiveEntry entry)
+    {
+        ArgumentNullException.ThrowIfNull(entry);
+        Entry = entry;
+        ArchiveRelativePath = entry.Path;
+        var separator = entry.Path.LastIndexOfAny(['/', '\\']);
+        FileName = entry.Path[(separator + 1)..];
+    }
+
+    public ArchiveEntry Entry { get; }
+
+    public string FileName { get; }
+
+    public string ArchiveRelativePath { get; }
+}
+
 public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposable
 {
     // App preview budget, not a MAP-format limit; keeps UI reads well below the archive reader's 512 MiB entry cap.
     public const long MaximumMapPreviewSizeBytes = 64L * 1024 * 1024;
+    public const int SpriteExplorerWorkspaceIndex = 1;
+    public const int MsgEditorWorkspaceIndex = 2;
 
     private const int MaximumIntIdentifierBytesDisplayed = 4096;
     private static readonly string[] SupportedExtensions = [".FRM", ".MAP", ".PRO", ".MSG", ".LST", ".INT"];
 
     private string _searchText = string.Empty;
+    private string _msgFileSearchText = string.Empty;
     private bool _isReplacingMapObjectPlacements;
     private string _selectedExtension = ArchiveEntryFilter.AllExtensions;
     private string? _archivePath;
@@ -29,6 +50,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private int _selectedEntryCount;
     private int _selectedFrmCount;
     private ArchiveEntry? _selectedEntry;
+    private MsgArchiveFileItem? _selectedMsgFile;
+    private IReadOnlyList<MsgArchiveFileItem> _visibleMsgFiles = [];
     private bool _isLoading;
     private bool _isExtracting;
     private bool _isExportingFrms;
@@ -80,6 +103,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private bool _isStandaloneProExporting;
     private bool _isMsgInspector;
     private FalloutMsgParseResult? _msgParseResult;
+    private ArchiveEntry? _msgSourceEntry;
+    private ArchiveEntry? _msgLoadingEntry;
     private string _msgStatus = "Select a .MSG entry to inspect.";
     private string _msgDetails = string.Empty;
     private bool _isScriptListInspector;
@@ -114,14 +139,35 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MapObjectPlacements.CollectionChanged += MapObjectPlacements_CollectionChanged;
         MapInspector.PropertyChanged += MapInspector_PropertyChanged;
         MapInspector.SelectedMapObjectChanged += MapInspector_SelectedMapObjectChanged;
+        MsgInspector.PropertyChanged += MsgInspector_PropertyChanged;
         SpriteExplorer = new SpriteExplorerViewModel();
+    }
+
+    public string MsgFileSearchText
+    {
+        get => _msgFileSearchText;
+        set
+        {
+            if (SetProperty(ref _msgFileSearchText, value))
+            {
+                RefreshVisibleMsgFiles();
+            }
+        }
     }
 
     public bool IsMsgInspector
     {
         get => _isMsgInspector;
-        private set => SetProperty(ref _isMsgInspector, value);
+        private set
+        {
+            if (SetProperty(ref _isMsgInspector, value))
+            {
+                OnPropertyChanged(nameof(IsMsgEditorEmpty));
+            }
+        }
     }
+
+    public bool IsMsgEditorEmpty => !IsMsgInspector;
 
     public FalloutMsgParseResult? MsgParseResult
     {
@@ -130,7 +176,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         {
             if (SetProperty(ref _msgParseResult, value))
             {
-                MsgInspector.SetParseResult(value);
+                MsgInspector.SetParseResult(value, _archivePath);
             }
         }
     }
@@ -224,6 +270,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     public bool CanReturnToScriptList =>
         _scriptListReturnContext is { } context
         && !_isDisposed
+        && !HasPendingMsgWork
         && ReferenceEquals(_archive, context.Archive)
         && ReferenceEquals(SelectedEntry, context.IntEntry)
         && Entries.Any(entry => ReferenceEquals(entry, context.ScriptListEntry))
@@ -279,6 +326,14 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     public ObservableCollection<ArchiveEntry> VisibleEntries { get; } = [];
 
+    public ObservableCollection<MsgArchiveFileItem> MsgArchiveFiles { get; } = [];
+
+    public IReadOnlyList<MsgArchiveFileItem> VisibleMsgFiles
+    {
+        get => _visibleMsgFiles;
+        private set => SetProperty(ref _visibleMsgFiles, value);
+    }
+
     public ObservableCollection<string> ExtensionOptions { get; }
 
     public ObservableCollection<string> OverwritePolicyOptions { get; } =
@@ -305,6 +360,13 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         get => _searchText;
         set
         {
+            if (HasPendingMsgWork && !string.Equals(value, _searchText, StringComparison.Ordinal))
+            {
+                OnPropertyChanged(nameof(SearchText));
+                ReportMsgSourceChangeBlocked();
+                return;
+            }
+
             if (SetProperty(ref _searchText, value))
             {
                 RefreshVisibleEntries();
@@ -318,6 +380,13 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         get => _selectedExtension;
         set
         {
+            if (HasPendingMsgWork && !string.Equals(value, _selectedExtension, StringComparison.Ordinal))
+            {
+                OnPropertyChanged(nameof(SelectedExtension));
+                ReportMsgSourceChangeBlocked();
+                return;
+            }
+
             if (SetProperty(ref _selectedExtension, value))
             {
                 RefreshVisibleEntries();
@@ -326,6 +395,29 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     }
 
     public string ArchivePathDisplay => _archivePath ?? "No archive selected";
+
+    public string MsgFileBrowserStatus
+    {
+        get
+        {
+            if (MsgArchiveFiles.Count == 0)
+            {
+                return _archive is null
+                    ? "Open a supported Fallout DAT archive in Archive Browser to browse MSG files."
+                    : "The active archive has no entries with a .MSG extension.";
+            }
+
+            return VisibleMsgFiles.Count == 0
+                ? "No MSG files match the filename or path filter."
+                : $"Showing {VisibleMsgFiles.Count:N0} of {MsgArchiveFiles.Count:N0} .MSG file candidates.";
+        }
+    }
+
+    public MsgArchiveFileItem? SelectedMsgFile
+    {
+        get => _selectedMsgFile;
+        private set => SetProperty(ref _selectedMsgFile, value);
+    }
 
     public string ArchiveFormatDisplay => _archive is null ? "Not detected" : GetArchiveFormatDisplay(_archive);
 
@@ -370,7 +462,13 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
     }
 
-    public bool CanOpenArchive => !IsLoading && !IsExtracting && !IsExportingFrms;
+    public bool CanOpenArchive =>
+        !IsLoading
+        && !IsExtracting
+        && !IsExportingFrms
+        && !HasPendingMsgWork;
+
+    public bool CanChangeArchiveSource => !HasPendingMsgWork;
 
     public bool IsExtracting
     {
@@ -474,6 +572,13 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         get => _selectedEntry;
         set
         {
+            if (HasPendingMsgWork && !ReferenceEquals(value, _selectedEntry))
+            {
+                OnPropertyChanged(nameof(SelectedEntry));
+                ReportMsgSourceChangeBlocked();
+                return;
+            }
+
             if (SetProperty(ref _selectedEntry, value))
             {
                 if (_scriptListReturnContext is { } returnContext
@@ -492,6 +597,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 OnPropertyChanged(nameof(SelectedEntryPathToCopy));
                 OnPropertyChanged(nameof(CanReturnToScriptList));
                 OnPropertyChanged(nameof(CanOpenSelectedFrmInSpriteExplorer));
+                UpdateSelectedMsgFile(value);
             }
         }
     }
@@ -1127,6 +1233,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         CancelMapObjectSpritesLoad();
         MapInspector.PropertyChanged -= MapInspector_PropertyChanged;
         MapInspector.SelectedMapObjectChanged -= MapInspector_SelectedMapObjectChanged;
+        MsgInspector.PropertyChanged -= MsgInspector_PropertyChanged;
         MapObjectPlacements.CollectionChanged -= MapObjectPlacements_CollectionChanged;
         ClearPreview();
     }
@@ -1134,6 +1241,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     public async Task LoadArchiveAsync(string path, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
+
+        if (HasPendingMsgWork)
+        {
+            ReportMsgSourceChangeBlocked();
+            return;
+        }
 
         CancelFrmBatchExport(updateStatus: false);
         ClearScriptListNavigationContext();
@@ -1176,8 +1289,63 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         }
     }
 
+    public async Task SelectMsgFileAsync(MsgArchiveFileItem? file)
+    {
+        if (file is null)
+        {
+            OnPropertyChanged(nameof(SelectedMsgFile));
+            return;
+        }
+
+        if (!MsgArchiveFiles.Any(candidate => ReferenceEquals(candidate, file)))
+        {
+            throw new ArgumentException("The selected MSG file is not part of the active archive.", nameof(file));
+        }
+
+        if (ReferenceEquals(SelectedEntry, file.Entry))
+        {
+            UpdateSelectedMsgFile(file.Entry);
+            if (ReferenceEquals(_msgSourceEntry, file.Entry)
+                || ReferenceEquals(_msgLoadingEntry, file.Entry))
+            {
+                return;
+            }
+
+            await PreviewSelectedEntryAsync();
+            return;
+        }
+
+        if (HasPendingMsgWork)
+        {
+            ReportMsgSourceChangeBlocked();
+            OnPropertyChanged(nameof(SelectedMsgFile));
+            return;
+        }
+
+        SelectedEntry = file.Entry;
+        if (!ReferenceEquals(SelectedEntry, file.Entry))
+        {
+            OnPropertyChanged(nameof(SelectedMsgFile));
+            return;
+        }
+
+        await PreviewSelectedEntryAsync();
+    }
+
     public async Task PreviewSelectedEntryAsync()
     {
+        if (IsCurrentMsgEntrySelection())
+        {
+            SelectedWorkspaceIndex = MsgEditorWorkspaceIndex;
+            return;
+        }
+
+        if (HasPendingMsgWork)
+        {
+            ReportMsgSourceChangeBlocked();
+            return;
+        }
+
         if (_scriptListReturnContext is { } returnContext
             && (!ReferenceEquals(_archive, returnContext.Archive)
                 || !ReferenceEquals(SelectedEntry, returnContext.IntEntry)))
@@ -1462,12 +1630,15 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
             if (previewRoute == PreviewRoute.Msg)
             {
+                _msgLoadingEntry = selectedEntry;
                 IsMsgInspector = true;
-                PreviewTitle = "MSG Inspector";
+                SelectedWorkspaceIndex = MsgEditorWorkspaceIndex;
+                PreviewTitle = "MSG Editor";
                 MsgStatus = "Reading MSG entry...";
                 MsgDetails =
-                    $"Entry: {selectedEntry.Path}{Environment.NewLine}"
-                    + $"Declared size: {selectedEntry.UncompressedSize:N0} bytes. Text and audio are not decoded.";
+                    $"Archive: {_archivePath ?? "unavailable"}{Environment.NewLine}"
+                    + $"Entry: {selectedEntry.Path}{Environment.NewLine}"
+                    + $"Declared size: {selectedEntry.UncompressedSize:N0} bytes. Text preview uses the selected encoding; audio is not decoded.";
 
                 if (selectedEntry.UncompressedSize < 0)
                 {
@@ -1509,6 +1680,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 }
 
                 MsgParseResult = parseResult;
+                _msgSourceEntry = selectedEntry;
+                _msgLoadingEntry = null;
                 if (!parseResult.IsSuccess)
                 {
                     var diagnostic = parseResult.Diagnostic!;
@@ -1658,6 +1831,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             if (ReferenceEquals(_previewCancellation, cancellation))
             {
                 _previewCancellation = null;
+                _msgLoadingEntry = null;
             }
 
             cancellation.Dispose();
@@ -2660,6 +2834,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     {
         ArgumentNullException.ThrowIfNull(entries);
 
+        if (HasPendingMsgWork)
+        {
+            ReportMsgSourceChangeBlocked();
+            return;
+        }
+
         ClearScriptListNavigationContext();
         Entries.Clear();
         foreach (var entry in entries)
@@ -2667,6 +2847,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             Entries.Add(entry);
         }
 
+        RefreshMsgArchiveFiles();
         SelectedEntry = null;
         _selectedEntryCount = 0;
         _selectedFrmCount = 0;
@@ -2692,6 +2873,51 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         OnPropertyChanged(nameof(IsFilterResultEmpty));
         NotifyFrmBatchExportAvailability();
     }
+
+    private void RefreshMsgArchiveFiles()
+    {
+        MsgArchiveFiles.Clear();
+        foreach (var entry in Entries)
+        {
+            if (string.Equals(entry.Extension, ".MSG", StringComparison.OrdinalIgnoreCase))
+            {
+                MsgArchiveFiles.Add(new MsgArchiveFileItem(entry));
+            }
+        }
+
+        RefreshVisibleMsgFiles();
+        OnPropertyChanged(nameof(MsgFileBrowserStatus));
+    }
+
+    private void RefreshVisibleMsgFiles()
+    {
+        var search = MsgFileSearchText.Trim();
+        VisibleMsgFiles = MsgArchiveFiles
+            .Where(file =>
+                search.Length == 0
+                || file.FileName.Contains(search, StringComparison.OrdinalIgnoreCase)
+                || file.ArchiveRelativePath.Contains(search, StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        UpdateSelectedMsgFile(SelectedEntry);
+        OnPropertyChanged(nameof(MsgFileBrowserStatus));
+    }
+
+    private void UpdateSelectedMsgFile(ArchiveEntry? entry)
+    {
+        var selectedFile = entry is null
+            ? null
+            : VisibleMsgFiles.FirstOrDefault(file => ReferenceEquals(file.Entry, entry));
+        SelectedMsgFile = selectedFile;
+    }
+
+    private bool IsCurrentMsgEntrySelection() =>
+        SelectedEntry is { } entry
+        && PreviewRouteSelector.Select(entry.Extension) == PreviewRoute.Msg
+        && ((ReferenceEquals(entry, _msgSourceEntry) && MsgParseResult is not null)
+            || (ReferenceEquals(entry, _msgLoadingEntry)
+                && _previewCancellation is { IsCancellationRequested: false }));
+
+    private bool HasPendingMsgWork => MsgInspector.IsEditing || MsgInspector.HasUnsavedOutput;
 
     private void NotifyExtractionAvailability()
     {
@@ -3115,6 +3341,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MapInspector.SetMapInspectorActive(false);
         IsProInspector = false;
         IsMsgInspector = false;
+        _msgSourceEntry = null;
+        _msgLoadingEntry = null;
         MsgParseResult = null;
         MsgStatus = "Select a .MSG entry to inspect.";
         MsgDetails = string.Empty;
@@ -3469,6 +3697,26 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         {
             MapInspector.SetMapObjectPlacements(MapObjectPlacements);
         }
+    }
+
+    private void MsgInspector_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(MsgInspectorViewModel.IsEditing)
+            && e.PropertyName != nameof(MsgInspectorViewModel.HasUnsavedOutput))
+        {
+            return;
+        }
+
+        OnPropertyChanged(nameof(CanOpenArchive));
+        OnPropertyChanged(nameof(CanChangeArchiveSource));
+        OnPropertyChanged(nameof(CanReturnToScriptList));
+    }
+
+    private void ReportMsgSourceChangeBlocked()
+    {
+        StatusMessage = MsgInspector.IsEditing
+            ? "Apply or cancel the active MSG edit before changing files or archive sources."
+            : "Save the applied MSG output with Save As before changing files or archive sources.";
     }
 
     private void MapInspector_PropertyChanged(object? sender, PropertyChangedEventArgs e)

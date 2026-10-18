@@ -310,6 +310,68 @@ public sealed class FalloutMsgParserTests
         Assert.Equal("text"u8.ToArray(), entry.Text.ToArray());
     }
 
+    [Fact]
+    public void Parse_SourceSnapshotIsIsolatedFromInputArrayMutation()
+    {
+        byte[] original = "{1}{}{text}"u8.ToArray();
+        byte[] input = original.ToArray();
+
+        var result = FalloutMsgParser.Parse(input);
+        input[0] = (byte)'X';
+
+        Assert.Equal(original, result.SourceSnapshot!.ToArray());
+    }
+
+    [Fact]
+    public void Parse_SourceSnapshotDoesNotExposeMutableBackingBytes()
+    {
+        var result = FalloutMsgParser.Parse("{1}{}{text}"u8.ToArray());
+        var snapshot = result.SourceSnapshot!;
+        var exposedCopy = snapshot.ToArray();
+        exposedCopy[0] = (byte)'X';
+
+        Assert.Equal((byte)'{', snapshot[0]);
+        Assert.Equal("{1}{}{text}"u8.ToArray(), snapshot.ToArray());
+    }
+
+    [Fact]
+    public void Parse_RecordsFieldContentRangesForOrderedDuplicateOccurrences()
+    {
+        byte[] source = " {5}{}{first} \r\n{5}{voice}{}"u8.ToArray();
+
+        var result = FalloutMsgParser.Parse(source);
+
+        Assert.True(result.IsSuccess);
+        Assert.Equal(source, result.SourceSnapshot!.ToArray());
+        Assert.Equal(new[] { 5, 5 }, result.Entries.Select(entry => entry.Id));
+        Assert.Equal(new FalloutMsgByteRange(2, 1), result.Entries[0].IdRange);
+        Assert.Equal(new FalloutMsgByteRange(5, 0), result.Entries[0].AudioRange);
+        Assert.Equal(new FalloutMsgByteRange(7, 5), result.Entries[0].TextRange);
+        Assert.Equal(new FalloutMsgByteRange(17, 1), result.Entries[1].IdRange);
+        Assert.Equal(new FalloutMsgByteRange(20, 5), result.Entries[1].AudioRange);
+        Assert.Equal(new FalloutMsgByteRange(27, 0), result.Entries[1].TextRange);
+
+        foreach (var entry in result.Entries)
+        {
+            Assert.Equal(
+                entry.Id.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                System.Text.Encoding.ASCII.GetString(
+                    source,
+                    entry.IdRange.StartOffset,
+                    entry.IdRange.Length));
+            Assert.Equal(
+                entry.Audio.ToArray(),
+                source.AsSpan(entry.AudioRange.StartOffset, entry.AudioRange.Length).ToArray());
+            Assert.Equal(
+                entry.Text.ToArray(),
+                source.AsSpan(entry.TextRange.StartOffset, entry.TextRange.Length).ToArray());
+
+            AssertRangeWithinSource(entry.IdRange, source.Length);
+            AssertRangeWithinSource(entry.AudioRange, source.Length);
+            AssertRangeWithinSource(entry.TextRange, source.Length);
+        }
+    }
+
     private static void AssertFailure(
         FalloutMsgParseResult result,
         FalloutMsgDiagnosticCode expectedCode,
@@ -317,9 +379,16 @@ public sealed class FalloutMsgParserTests
     {
         Assert.False(result.IsSuccess);
         Assert.Empty(result.Entries);
+        Assert.Null(result.SourceSnapshot);
         Assert.NotNull(result.Diagnostic);
         Assert.Equal(expectedCode, result.Diagnostic.Code);
         Assert.Equal(expectedOffset, result.Diagnostic.ByteOffset);
+    }
+
+    private static void AssertRangeWithinSource(FalloutMsgByteRange range, int sourceLength)
+    {
+        Assert.InRange(range.StartOffset, 0, sourceLength);
+        Assert.InRange(range.Length, 0, sourceLength - range.StartOffset);
     }
 
     private static byte[] CreateEntry(int id, byte[] audio, byte[] text)
