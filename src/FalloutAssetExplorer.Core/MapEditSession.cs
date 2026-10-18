@@ -8,6 +8,12 @@ public sealed record MapEditSessionObject(
 
 public sealed class MapEditSession
 {
+    private sealed record SourceBoundData(
+        MapSourceData SourceData,
+        IReadOnlyList<MapObjectPlacement> Placements,
+        MapDecodeProvenance Provenance,
+        MapObjectPlacementData DecodedPlacements);
+
     private enum MapEditProperty
     {
         InventoryQuantity,
@@ -34,11 +40,38 @@ public sealed class MapEditSession
     public MapEditSession(
         MapSourceData sourceData,
         IReadOnlyList<MapObjectPlacement> sourcePlacements)
+        : this(sourceData, sourcePlacements, null, null)
+    {
+    }
+
+    public MapEditSession(
+        MapHeaderMetadata header,
+        MapObjectPlacementData decodedPlacements)
+        : this(GetSourceBoundData(header, decodedPlacements))
+    {
+    }
+
+    private MapEditSession(SourceBoundData sourceBoundData)
+        : this(
+            sourceBoundData.SourceData,
+            sourceBoundData.Placements,
+            sourceBoundData.Provenance,
+            sourceBoundData.DecodedPlacements)
+    {
+    }
+
+    private MapEditSession(
+        MapSourceData sourceData,
+        IReadOnlyList<MapObjectPlacement> sourcePlacements,
+        MapDecodeProvenance? provenance,
+        MapObjectPlacementData? decodedPlacements)
     {
         ArgumentNullException.ThrowIfNull(sourceData);
         ArgumentNullException.ThrowIfNull(sourcePlacements);
 
         SourceData = sourceData;
+        Provenance = provenance;
+        DecodedObjectPlacements = decodedPlacements;
         SessionId = Guid.NewGuid();
         _objectsByRecordIndex = new Dictionary<int, MapEditSessionObject>(sourcePlacements.Count);
         _objectIndexesByRecordIndex = new Dictionary<int, int>(sourcePlacements.Count);
@@ -81,6 +114,12 @@ public sealed class MapEditSession
     public Guid SessionId { get; }
 
     public MapSourceData SourceData { get; }
+
+    public MapDecodeProvenance? Provenance { get; }
+
+    internal MapObjectPlacementData? DecodedObjectPlacements { get; }
+
+    public event EventHandler? ObjectsChanged;
 
     public IReadOnlyList<MapEditSessionObject> Objects => _readOnlyObjects;
 
@@ -138,6 +177,7 @@ public sealed class MapEditSession
         ApplyInventoryQuantity(id, sessionObject, quantity);
         _undoHistory.Push(change);
         _redoHistory.Clear();
+        ObjectsChanged?.Invoke(this, EventArgs.Empty);
         error = null;
         return true;
     }
@@ -182,6 +222,7 @@ public sealed class MapEditSession
         ApplyHexTileIndex(id, sessionObject, hexTileIndex);
         _undoHistory.Push(change);
         _redoHistory.Clear();
+        ObjectsChanged?.Invoke(this, EventArgs.Empty);
         error = null;
         return true;
     }
@@ -201,6 +242,7 @@ public sealed class MapEditSession
 
         _undoHistory.Pop();
         _redoHistory.Push(change);
+        ObjectsChanged?.Invoke(this, EventArgs.Empty);
         return true;
     }
 
@@ -219,6 +261,7 @@ public sealed class MapEditSession
 
         _redoHistory.Pop();
         _undoHistory.Push(change);
+        ObjectsChanged?.Invoke(this, EventArgs.Empty);
         return true;
     }
 
@@ -341,5 +384,32 @@ public sealed class MapEditSession
         };
         _objectsByRecordIndex[id.RecordIndex] = updatedObject;
         _objects[_objectIndexesByRecordIndex[id.RecordIndex]] = updatedObject;
+    }
+
+    private static SourceBoundData GetSourceBoundData(
+        MapHeaderMetadata header,
+        MapObjectPlacementData decodedPlacements)
+    {
+        ArgumentNullException.ThrowIfNull(header);
+        ArgumentNullException.ThrowIfNull(decodedPlacements);
+
+        if (header.SourceData is not { } sourceData
+            || !ReferenceEquals(decodedPlacements.SourceData, sourceData)
+            || header.Provenance is not { } provenance
+            || !ReferenceEquals(decodedPlacements.Provenance, provenance)
+            || provenance.SourceSnapshotId != sourceData.SnapshotId
+            || provenance.Game != header.Game
+            || provenance.Version != header.Version)
+        {
+            throw new ArgumentException(
+                "The MAP header and object placements must share source-bound decode provenance.",
+                nameof(decodedPlacements));
+        }
+
+        return new SourceBoundData(
+            sourceData,
+            decodedPlacements.Objects,
+            provenance,
+            decodedPlacements);
     }
 }

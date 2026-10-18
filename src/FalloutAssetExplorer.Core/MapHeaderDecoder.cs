@@ -13,7 +13,12 @@ public static class MapHeaderDecoder
     public static MapHeaderMetadata Decode(MapSourceData source, FalloutGame game)
     {
         ArgumentNullException.ThrowIfNull(source);
-        return Decode(source.Memory, game) with { SourceData = source };
+        var metadata = Decode(source.Memory, game);
+        return metadata with
+        {
+            SourceData = source,
+            Provenance = new MapDecodeProvenance(source, metadata.Game, metadata.Version)
+        };
     }
 
     public static MapHeaderMetadata Decode(ReadOnlyMemory<byte> data, FalloutGame game)
@@ -145,4 +150,6 @@ public sealed record MapHeaderMetadata(
     int PresentElevationCount)
 {
     public MapSourceData? SourceData { get; init; }
+
+    public MapDecodeProvenance? Provenance { get; internal init; }
 }

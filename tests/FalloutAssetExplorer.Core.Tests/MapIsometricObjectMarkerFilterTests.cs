@@ -1,5 +1,6 @@
 using Avalonia;
 using FalloutAssetExplorer.App.Views;
+using FalloutAssetExplorer.App.ViewModels;
 using FalloutAssetExplorer.Core;
 using Xunit;
 
@@ -62,6 +63,126 @@ public sealed class MapIsometricObjectMarkerFilterTests
         Assert.Empty(MapIsometricObjectMarkerFilter.GetMarkers(null, 0, projection));
         Assert.Empty(MapIsometricObjectMarkerFilter.GetMarkers([placement], null, projection));
         Assert.Empty(MapIsometricObjectMarkerFilter.GetMarkers([], 0, projection));
+    }
+
+    [Fact]
+    public void EditSessionPlacementsRefreshMarkersAndRetainSelectionAcrossUndoRedo()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var inspector = viewModel.MapInspector;
+        var sourcePlacement = CreatePlacement(7, 20_099, 100, 100, elevation: 0) with
+        {
+            PrototypeFileName = "scenery/tree.pro"
+        };
+        var otherPlacement = CreatePlacement(8, 20_200, 199, 101, elevation: 0) with
+        {
+            PrototypeFileName = "scenery/rock.pro"
+        };
+        var otherElevationPlacement = CreatePlacement(9, 20_100, 99, 100, elevation: 1) with
+        {
+            PrototypeFileName = "scenery/other.pro"
+        };
+        var sourceBytes = new byte[] { 1, 2, 3 };
+        var sourceData = new MapSourceData(sourceBytes);
+        viewModel.MapObjectPlacements.Add(sourcePlacement);
+        viewModel.MapObjectPlacements.Add(otherPlacement);
+        viewModel.MapObjectPlacements.Add(otherElevationPlacement);
+        inspector.SetAvailableElevations([0, 1], preferredElevationIndex: 0);
+        var session = new MapEditSession(
+            sourceData,
+            [sourcePlacement, otherPlacement, otherElevationPlacement]);
+        inspector.SetMapEditSession(session);
+        inspector.SelectedMapObjectListSort = Assert.Single(
+            inspector.MapObjectListSortOptions,
+            option => option.SortMode == MapInspectorViewModel.MapObjectListSortMode.HexCoordinatesAscending);
+        inspector.MapObjectSearchText = "scenery";
+
+        var selectedPlacement = Assert.Single(
+            inspector.MapObjectPlacements,
+            placement => placement.RecordIndex == sourcePlacement.RecordIndex);
+        inspector.SelectedMapObject = selectedPlacement;
+        var selectedId = inspector.SelectedEditObject!.Id;
+        var selectionEvents = 0;
+        var placementRefreshes = 0;
+        inspector.SelectedMapObjectChanged += (_, _) => selectionEvents++;
+        inspector.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MapInspectorViewModel.MapObjectPlacements))
+            {
+                placementRefreshes++;
+            }
+        };
+        var projection = CreateProjection();
+        var originalMarker = Assert.Single(
+            MapIsometricObjectMarkerFilter.GetMarkers(
+                inspector.FilteredMapObjectPlacements,
+                elevation: 0,
+                projection),
+            marker => marker.Placement.RecordIndex == sourcePlacement.RecordIndex);
+        Assert.Equal(2, MapIsometricObjectMarkerFilter.GetMarkers(
+            inspector.FilteredMapObjectPlacements,
+            elevation: 0,
+            projection).Count);
+
+        Assert.True(session.TrySetHexTileIndex(selectedId, 20_400, out var editError), editError);
+
+        var movedPlacement = Assert.Single(
+            inspector.MapObjectPlacements,
+            placement => placement.RecordIndex == sourcePlacement.RecordIndex);
+        var movedMarker = Assert.Single(
+            MapIsometricObjectMarkerFilter.GetMarkers(
+                inspector.FilteredMapObjectPlacements,
+                elevation: 0,
+                projection),
+            marker => marker.Placement.RecordIndex == sourcePlacement.RecordIndex);
+        Assert.NotEqual(originalMarker.WorldPosition, movedMarker.WorldPosition);
+        Assert.Same(movedPlacement, movedMarker.Placement);
+        Assert.Same(movedPlacement, inspector.SelectedMapObject);
+        Assert.Equal(selectedId, inspector.SelectedEditObject?.Id);
+        Assert.Equal(0, selectionEvents);
+        Assert.Equal(1, placementRefreshes);
+        Assert.True(Array.IndexOf(
+                inspector.SortedMapObjectPlacements.Select(placement => placement.RecordIndex).ToArray(),
+                otherPlacement.RecordIndex)
+            < Array.IndexOf(
+                inspector.SortedMapObjectPlacements.Select(placement => placement.RecordIndex).ToArray(),
+                sourcePlacement.RecordIndex));
+
+        Assert.True(session.TrySetHexTileIndex(selectedId, 20_400, out var noOpError), noOpError);
+        Assert.False(session.TrySetHexTileIndex(selectedId, 40_000, out var invalidError));
+        Assert.NotNull(invalidError);
+        Assert.Equal(1, placementRefreshes);
+
+        Assert.True(session.Undo(out var undoError), undoError);
+        var undoneMarker = Assert.Single(
+            MapIsometricObjectMarkerFilter.GetMarkers(
+                inspector.FilteredMapObjectPlacements,
+                elevation: 0,
+                projection),
+            marker => marker.Placement.RecordIndex == sourcePlacement.RecordIndex);
+        Assert.Equal(originalMarker.WorldPosition, undoneMarker.WorldPosition);
+        Assert.Equal(selectedId, inspector.SelectedEditObject?.Id);
+        Assert.Equal(2, placementRefreshes);
+
+        Assert.True(session.Redo(out var redoError), redoError);
+        var redoneMarker = Assert.Single(
+            MapIsometricObjectMarkerFilter.GetMarkers(
+                inspector.FilteredMapObjectPlacements,
+                elevation: 0,
+                projection),
+            marker => marker.Placement.RecordIndex == sourcePlacement.RecordIndex);
+        Assert.Equal(movedMarker.WorldPosition, redoneMarker.WorldPosition);
+        Assert.Equal(selectedId, inspector.SelectedEditObject?.Id);
+        Assert.Equal(3, placementRefreshes);
+        Assert.Equal(20_099, sourcePlacement.RawHexIndex);
+        Assert.Equal(100, sourcePlacement.HexX);
+        Assert.Equal(100, sourcePlacement.HexY);
+        Assert.Same(sourcePlacement, Assert.Single(
+            viewModel.MapObjectPlacements,
+            placement => placement.RecordIndex == sourcePlacement.RecordIndex));
+        Assert.Equal([7, 8, 9], inspector.FilteredMapObjectPlacements
+            .Select(placement => placement.RecordIndex));
+        Assert.Equal(sourceBytes, sourceData.GetRange(0, sourceData.Length).ToArray());
     }
 
     [Fact]

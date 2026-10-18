@@ -30,7 +30,7 @@
                 Values="{Binding SelectedMapGridValues}"
                 TileBitmaps="{Binding MapFloorTileBitmaps}"
                 UnavailableFloorIds="{Binding UnavailableMapFloorIds}"
-                Placements="{Binding MapObjectPlacements}"
+                Placements="{Binding MapInspector.MapObjectPlacements}"
                 Elevation="{Binding MapInspector.SelectedMapElevationIndex}"
                 SelectedObject="{Binding MapInspector.SelectedMapObject, Mode=OneWay}"
                 SelectedIndex="{Binding SelectedMapGridIndex, Mode=TwoWay}"
@@ -60,7 +60,7 @@
                 AutomationProperties.Name="Isometric MAP floor tiles and object markers" />
             <local:MapHexGridDiagnosticView
                 x:Name="MapHexGridView"
-                Placements="{Binding MapObjectPlacements}"
+                Placements="{Binding MapInspector.MapObjectPlacements}"
                 Elevation="{Binding MapInspector.SelectedMapElevationIndex}"
                 SelectedObject="{Binding MapInspector.SelectedMapObject, Mode=TwoWay}"
                 IsHitTestVisible="True"
@@ -148,11 +148,6 @@
               Content="Hide workspace"
               Click="ToggleMapWorkspace_Click"
               AutomationProperties.Name="Hide MAP details and records" />
-          <Button
-              x:Name="MapMaximizeButton"
-              Content="Maximize map"
-              Click="ToggleMapMaximized_Click"
-              AutomationProperties.Name="Maximize MAP view" />
         </StackPanel>
       </Grid>
       <GridSplitter
@@ -201,6 +196,57 @@
                     FontSize="11"
                     Text="{Binding MapInspector.MapObjectDetailsDisplay}"
                     TextWrapping="Wrap" />
+                <StackPanel
+                    IsVisible="{Binding MapInspector.HasEditSession}"
+                    Spacing="4">
+                  <TextBlock
+                      Foreground="#AAB2BF"
+                      FontSize="10"
+                      Text="{Binding MapInspector.EditSessionDirtyDisplay}"
+                      AutomationProperties.Name="MAP edit session save state" />
+                  <StackPanel
+                      Orientation="Horizontal"
+                      Spacing="4">
+                    <Button
+                        Content="Undo"
+                        Click="UndoMapEdit_Click"
+                        IsEnabled="{Binding MapInspector.CanUndoMapEdit}"
+                        AutomationProperties.Name="Undo MAP edit" />
+                    <Button
+                        Content="Redo"
+                        Click="RedoMapEdit_Click"
+                        IsEnabled="{Binding MapInspector.CanRedoMapEdit}"
+                        AutomationProperties.Name="Redo MAP edit" />
+                  </StackPanel>
+                  <StackPanel
+                      IsVisible="{Binding MapInspector.CanEditSelectedInventoryQuantity}"
+                      Spacing="4">
+                    <TextBlock
+                        Foreground="#AAB2BF"
+                        FontSize="10"
+                        Text="Inventory quantity (in memory only)" />
+                    <StackPanel
+                        Orientation="Horizontal"
+                        Spacing="4">
+                      <TextBox
+                          Width="100"
+                          Text="{Binding MapInspector.InventoryQuantityInput, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                          Watermark="Whole number"
+                          AutomationProperties.Name="Inventory quantity input" />
+                      <Button
+                          Content="Apply"
+                          Click="ApplyInventoryQuantity_Click"
+                          AutomationProperties.Name="Apply inventory quantity" />
+                    </StackPanel>
+                    <TextBlock
+                        Foreground="#F28B82"
+                        FontSize="10"
+                        Text="{Binding MapInspector.InventoryQuantityValidationError}"
+                        IsVisible="{Binding MapInspector.HasInventoryQuantityValidationError}"
+                        TextWrapping="Wrap"
+                        AutomationProperties.Name="Inventory quantity validation error" />
+                  </StackPanel>
+                </StackPanel>
               </StackPanel>
             </Border>
             <TextBlock

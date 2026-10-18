@@ -1666,6 +1666,17 @@ public sealed class ArchiveBrowserExtractionCommandTests
 
         Assert.Equal(1, archive.CopyCount);
         Assert.True(viewModel.IsMapInspector);
+        Assert.False(viewModel.IsMapEditorEmpty);
+        Assert.Equal(ArchiveBrowserViewModel.MapEditorWorkspaceIndex, viewModel.SelectedWorkspaceIndex);
+        var editSession = viewModel.MapInspector.EditSession;
+        Assert.NotNull(editSession);
+
+        viewModel.SelectedWorkspaceIndex = 0;
+        Assert.Same(editSession, viewModel.MapInspector.EditSession);
+        Assert.True(viewModel.IsMapInspector);
+        viewModel.SelectedWorkspaceIndex = ArchiveBrowserViewModel.MapEditorWorkspaceIndex;
+        Assert.Same(editSession, viewModel.MapInspector.EditSession);
+
         Assert.Equal(entry.Path, viewModel.PreviewMessage);
         Assert.Equal(
             "Decoded 0 records, including 0 top-level objects.",

@@ -289,6 +289,150 @@ public sealed class MapObjectSpritePrototypeTests
     }
 
     [Fact]
+    public async Task PrepareSelectedSprite_PreparesPlacementClonedByActiveEditSession()
+    {
+        EnsureAvaloniaInitialized();
+        using var viewModel = CreateViewModel(out var archive);
+        var sourcePlacement = CreatePlacement(1, rotation: 2, frame: 1);
+        viewModel.MapObjectPlacements.Add(sourcePlacement);
+        var session = new MapEditSession(
+            new MapSourceData(new byte[] { 1, 2, 3 }),
+            [sourcePlacement]);
+        viewModel.MapInspector.SetMapEditSession(session);
+
+        var sessionPlacement = Assert.Single(viewModel.MapInspector.MapObjectPlacements);
+        Assert.NotSame(sourcePlacement, sessionPlacement);
+        Assert.NotSame(sourcePlacement.RawPayloadWords, sessionPlacement.RawPayloadWords);
+        Assert.NotEqual(sourcePlacement, sessionPlacement);
+        Assert.DoesNotContain(sessionPlacement, viewModel.MapObjectPlacements);
+
+        viewModel.MapInspector.SelectMapObjectFromIsometricMarker(
+            sessionPlacement.RecordIndex,
+            sessionPlacement.ElevationGroup);
+        Assert.Same(sessionPlacement, viewModel.MapInspector.SelectedMapObject);
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        var sprite = Assert.IsType<MapIsometricObjectSprite>(viewModel.SelectedMapObjectSprite);
+        Assert.Equal(sessionPlacement.RecordIndex, sprite.RecordIndex);
+        Assert.Equal("art/items/item.frm", sprite.ResourcePath);
+        Assert.Equal(2, sprite.DirectionIndex);
+        Assert.Equal(1, sprite.FrameIndex);
+        Assert.Equal(1, archive.AssetReadCount);
+    }
+
+    [Fact]
+    public async Task PrepareSelectedSprite_RejectsStructurallyEqualPlacementOutsideMapCollection()
+    {
+        EnsureAvaloniaInitialized();
+        using var viewModel = CreateViewModel(out var archive);
+        var mapPlacement = CreatePlacement(1, rotation: 0, frame: 0);
+        var foreignPlacement = mapPlacement with { };
+        viewModel.MapObjectPlacements.Add(mapPlacement);
+
+        Assert.NotSame(mapPlacement, foreignPlacement);
+        Assert.Equal(mapPlacement, foreignPlacement);
+        viewModel.MapInspector.SelectMapObjectFromFloorMarker(foreignPlacement);
+        Assert.Same(foreignPlacement, viewModel.MapInspector.SelectedMapObject);
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        Assert.Null(viewModel.SelectedMapObjectSprite);
+        Assert.Equal(0, archive.AssetReadCount);
+        Assert.Contains("Select a top-level", viewModel.MapObjectSpriteStatusDisplay);
+    }
+
+    [Fact]
+    public async Task PrepareSelectedSprite_RejectsPlacementFromAnotherEditSession()
+    {
+        EnsureAvaloniaInitialized();
+        using var viewModel = CreateViewModel(out var archive);
+        var activeSourcePlacement = CreatePlacement(1, rotation: 0, frame: 0);
+        viewModel.MapObjectPlacements.Add(activeSourcePlacement);
+        var activeSession = new MapEditSession(
+            new MapSourceData(new byte[] { 1, 2, 3 }),
+            [activeSourcePlacement]);
+        var foreignSession = new MapEditSession(
+            new MapSourceData(new byte[] { 4, 5, 6 }),
+            [CreatePlacement(1, rotation: 2, frame: 1)]);
+        viewModel.MapInspector.SetMapEditSession(activeSession);
+        var foreignPlacement = Assert.Single(foreignSession.Objects).Placement;
+
+        Assert.NotEqual(activeSession.SessionId, foreignSession.SessionId);
+        viewModel.MapInspector.SelectMapObjectFromFloorMarker(foreignPlacement);
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        Assert.Null(viewModel.SelectedMapObjectSprite);
+        Assert.Equal(0, archive.AssetReadCount);
+        Assert.Contains("Select a top-level", viewModel.MapObjectSpriteStatusDisplay);
+    }
+
+    [Fact]
+    public async Task PrepareSelectedSprite_RejectsPlacementMissingFromActiveEditSession()
+    {
+        EnsureAvaloniaInitialized();
+        using var viewModel = CreateViewModel(out var archive);
+        var sourcePlacement = CreatePlacement(1, rotation: 0, frame: 0);
+        viewModel.MapObjectPlacements.Add(sourcePlacement);
+        var previousSession = new MapEditSession(
+            new MapSourceData(new byte[] { 1, 2, 3 }),
+            [sourcePlacement]);
+        viewModel.MapInspector.SetMapEditSession(previousSession);
+        var stalePlacement = Assert.Single(viewModel.MapInspector.MapObjectPlacements);
+
+        viewModel.MapInspector.SetMapEditSession(
+            new MapEditSession(new MapSourceData(new byte[] { 4, 5, 6 }), []));
+        viewModel.MapInspector.SelectMapObjectFromFloorMarker(stalePlacement);
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        Assert.Null(viewModel.SelectedMapObjectSprite);
+        Assert.Equal(0, archive.AssetReadCount);
+        Assert.Contains("Select a top-level", viewModel.MapObjectSpriteStatusDisplay);
+    }
+
+    [Fact]
+    public async Task PrepareSelectedSprite_DiscardsReadAfterEditSessionChanges()
+    {
+        EnsureAvaloniaInitialized();
+        using var viewModel = CreateViewModel(out var archive, blockAssetRead: true);
+        var oldSourcePlacement = CreatePlacement(1, rotation: 2, frame: 1);
+        viewModel.MapObjectPlacements.Add(oldSourcePlacement);
+        var oldSession = new MapEditSession(
+            new MapSourceData(new byte[] { 1, 2, 3 }),
+            [oldSourcePlacement]);
+        viewModel.MapInspector.SetMapEditSession(oldSession);
+        viewModel.MapInspector.SelectMapObjectFromIsometricMarker(1, 0);
+
+        var oldLoad = viewModel.PrepareSelectedMapObjectSpriteAsync();
+        await archive.AssetReadStarted.WaitAsync(TimeSpan.FromSeconds(10));
+
+        var newSourcePlacement = CreatePlacement(1, rotation: 0, frame: 0);
+        viewModel.MapObjectPlacements.Clear();
+        viewModel.MapObjectPlacements.Add(newSourcePlacement);
+        var newSession = new MapEditSession(
+            new MapSourceData(new byte[] { 4, 5, 6 }),
+            [newSourcePlacement]);
+        viewModel.MapInspector.SetMapEditSession(newSession);
+        var newSessionPlacement = Assert.Single(viewModel.MapInspector.MapObjectPlacements);
+        viewModel.MapInspector.SelectMapObjectFromIsometricMarker(1, 0);
+
+        archive.ReleaseAssetRead();
+        await oldLoad.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Null(viewModel.SelectedMapObjectSprite);
+
+        await viewModel.PrepareSelectedMapObjectSpriteAsync();
+
+        var sprite = Assert.IsType<MapIsometricObjectSprite>(viewModel.SelectedMapObjectSprite);
+        Assert.Same(newSessionPlacement, viewModel.MapInspector.SelectedMapObject);
+        Assert.Equal(newSession.SessionId, viewModel.MapInspector.SelectedEditObject?.Id.SessionId);
+        Assert.Equal(newSessionPlacement.RecordIndex, sprite.RecordIndex);
+        Assert.Equal(0, sprite.DirectionIndex);
+        Assert.Equal(2, archive.AssetReadCount);
+    }
+
+    [Fact]
     public async Task PrepareSelectedSprite_ResolvesAndPreparesRequestedSceneryDirectionAndFrame()
     {
         EnsureAvaloniaInitialized();

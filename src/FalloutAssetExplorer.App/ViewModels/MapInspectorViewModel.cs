@@ -21,6 +21,7 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
     private static readonly MapObjectListSortOption DefaultMapObjectListSort =
         new("Record index (asc)", MapObjectListSortMode.RecordIndexAscending);
 
+    private IReadOnlyList<MapObjectPlacement> _sourceMapObjectPlacements = [];
     private IReadOnlyList<MapObjectPlacement> _mapObjectPlacements = [];
     private bool _isMapInspector;
     private int? _selectedMapElevationIndex;
@@ -32,7 +33,10 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
     private bool _isReorderingSortedMapObjectPlacements;
     private bool _sortedListReportedTransientSelectionClear;
     private MapObjectPlacement? _selectedMapObject;
+    private MapEditObjectId? _selectedMapEditObjectId;
     private MapEditSession? _mapEditSession;
+    private string _inventoryQuantityInput = string.Empty;
+    private string? _inventoryQuantityValidationError;
     private string _mapObjectDetailsDisplay = "Select a parsed object to inspect its raw fields.";
     private string _mapObjectPrototypeDiagnosticStatus = DefaultMapObjectPrototypeDiagnosticStatus;
     private string _mapObjectPrototypeDiagnosticDetails = string.Empty;
@@ -164,6 +168,8 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
             ? _mapObjectPlacements
             : _filteredMapObjectPlacements;
 
+    public IReadOnlyList<MapObjectPlacement> MapObjectPlacements => _mapObjectPlacements;
+
     public ObservableCollection<MapObjectPlacement> SortedMapObjectPlacements { get; } = [];
 
     public string MapObjectSearchResultCountDisplay =>
@@ -255,19 +261,114 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
 
     public bool HasEditSession => _mapEditSession is not null;
 
+    public string InventoryQuantityInput
+    {
+        get => _inventoryQuantityInput;
+        set
+        {
+            if (SetProperty(ref _inventoryQuantityInput, value ?? string.Empty))
+            {
+                SetInventoryQuantityValidationError(null);
+            }
+        }
+    }
+
+    public string? InventoryQuantityValidationError => _inventoryQuantityValidationError;
+
+    public bool HasInventoryQuantityValidationError =>
+        !string.IsNullOrWhiteSpace(_inventoryQuantityValidationError);
+
+    public bool CanEditSelectedInventoryQuantity =>
+        SelectedEditObject?.Placement is
+        {
+            ParentRecordIndex: not null,
+            InventoryQuantity: not null
+        };
+
+    public bool IsMapEditSessionDirty => _mapEditSession?.IsDirty ?? false;
+
+    public bool CanUndoMapEdit => _mapEditSession?.CanUndo ?? false;
+
+    public bool CanRedoMapEdit => _mapEditSession?.CanRedo ?? false;
+
+    public string EditSessionDirtyDisplay =>
+        IsMapEditSessionDirty
+            ? "Unsaved in-memory MAP changes"
+            : "No unsaved in-memory MAP changes";
+
     public MapEditSessionObject? SelectedEditObject =>
-        _mapEditSession is { } session && _selectedMapObject is { } placement
-            ? session.GetObject(new MapEditObjectId(session.SessionId, placement.RecordIndex))
+        _mapEditSession is { } session && _selectedMapEditObjectId is { } id
+            ? session.GetObject(id)
             : null;
 
     public string EditSessionStatusDisplay =>
         _mapEditSession is { } session
             ? string.Format(
                 CultureInfo.CurrentCulture,
-                "In-memory MAP session: {0:N0} parsed objects; {1:N0} source bytes retained. MAP editing and saving are not implemented.",
+                "In-memory MAP session: {0:N0} parsed objects; {1:N0} source bytes retained. {2}. Changes are not saved to a MAP file.",
                 session.Objects.Count,
-                session.SourceData.Length)
+                session.SourceData.Length,
+                IsMapEditSessionDirty
+                    ? "There are unsaved changes"
+                    : "There are no unsaved changes")
             : string.Empty;
+
+    public bool ApplyInventoryQuantity()
+    {
+        if (_mapEditSession is not { } session
+            || SelectedEditObject is not { } selectedObject
+            || selectedObject.Id.SessionId != session.SessionId
+            || selectedObject.Placement.ParentRecordIndex is null
+            || selectedObject.Placement.InventoryQuantity is null)
+        {
+            SetInventoryQuantityValidationError(
+                "Select a nested object with a decoded inventory quantity in the active MAP session.");
+            return false;
+        }
+
+        if (!int.TryParse(
+                _inventoryQuantityInput,
+                NumberStyles.Integer,
+                CultureInfo.CurrentCulture,
+                out var quantity))
+        {
+            SetInventoryQuantityValidationError("Enter a whole-number inventory quantity.");
+            return false;
+        }
+
+        if (!session.TrySetInventoryQuantity(selectedObject.Id, quantity, out var error))
+        {
+            SetInventoryQuantityValidationError(error);
+            return false;
+        }
+
+        SetInventoryQuantityValidationError(null);
+        return true;
+    }
+
+    public bool UndoMapEdit()
+    {
+        if (_mapEditSession is not { } session)
+        {
+            return false;
+        }
+
+        var succeeded = session.Undo(out var error);
+        SetInventoryQuantityValidationError(error);
+        return succeeded;
+    }
+
+    public bool RedoMapEdit()
+    {
+        if (_mapEditSession is not { } session)
+        {
+            return false;
+        }
+
+        var succeeded = session.Redo(out var error);
+        SetInventoryQuantityValidationError(error);
+        return succeeded;
+    }
 
     public string MapObjectDetailsDisplay
     {
@@ -393,20 +494,30 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
             return;
         }
 
-        _mapEditSession = session;
-        OnPropertyChanged(nameof(EditSession));
-        OnPropertyChanged(nameof(HasEditSession));
-        OnPropertyChanged(nameof(SelectedEditObject));
-        OnPropertyChanged(nameof(EditSessionStatusDisplay));
-
         if (_selectedMapObject is not null)
         {
             ClearSelectedMapObject();
         }
-        else
+
+        if (_mapEditSession is { } oldSession)
         {
-            MapObjectDetailsDisplay = FormatMapObjectDetailsDisplay(null);
+            oldSession.ObjectsChanged -= MapEditSession_ObjectsChanged;
         }
+
+        _mapEditSession = session;
+        if (_mapEditSession is { } newSession)
+        {
+            newSession.ObjectsChanged += MapEditSession_ObjectsChanged;
+        }
+
+        OnPropertyChanged(nameof(EditSession));
+        OnPropertyChanged(nameof(HasEditSession));
+        OnPropertyChanged(nameof(SelectedEditObject));
+        OnPropertyChanged(nameof(EditSessionStatusDisplay));
+        NotifyEditSessionStateChanged();
+        RefreshInventoryQuantityEditor();
+        MapObjectDetailsDisplay = FormatMapObjectDetailsDisplay(null);
+        RefreshDisplayedMapObjectPlacements();
     }
 
     public void SetMapInspectorActive(bool isActive)
@@ -420,22 +531,51 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
     public void SetMapObjectPlacements(IReadOnlyList<MapObjectPlacement> placements)
     {
         ArgumentNullException.ThrowIfNull(placements);
+        _sourceMapObjectPlacements = placements;
+        RefreshDisplayedMapObjectPlacements();
+    }
+
+    private void RefreshDisplayedMapObjectPlacements()
+    {
+        var placements = _mapEditSession is { } session
+            ? session.Objects.Select(sessionObject => sessionObject.Placement).ToArray()
+            : _sourceMapObjectPlacements;
+        SetDisplayedMapObjectPlacements(placements);
+    }
+
+    private void SetDisplayedMapObjectPlacements(IReadOnlyList<MapObjectPlacement> placements)
+    {
         _mapObjectPlacements = placements;
+        OnPropertyChanged(nameof(MapObjectPlacements));
         OnPropertyChanged(nameof(IsMapHexGridEmpty));
 
-        if (_selectedMapObject is not null
-            && !_mapObjectPlacements.Any(
-                placement => placement.RecordIndex == _selectedMapObject.RecordIndex))
+        if (_selectedMapObject is { } selectedPlacement)
         {
-            SetSelectedMapObject(null, MapObjectSelectionSource.Programmatic);
-        }
-        else if (_selectedMapObject is not null
-                 && !MatchesMapObjectFilters(_selectedMapObject))
-        {
-            SetSelectedMapObject(null, MapObjectSelectionSource.Programmatic);
+            var selectionIsCurrent = _mapEditSession is { } session
+                ? _selectedMapEditObjectId is { } selectedId
+                    && selectedId.SessionId == session.SessionId
+                    && selectedId.RecordIndex == selectedPlacement.RecordIndex
+                    && session.GetObject(selectedId) is not null
+                    && placements.Any(placement => placement.RecordIndex == selectedId.RecordIndex)
+                : placements.Any(placement => placement.RecordIndex == selectedPlacement.RecordIndex);
+
+            if (!selectionIsCurrent || !MatchesMapObjectFilters(selectedPlacement))
+            {
+                SetSelectedMapObject(null, MapObjectSelectionSource.Programmatic);
+            }
         }
 
         RefreshFilteredMapObjectPlacements();
+    }
+
+    private void MapEditSession_ObjectsChanged(object? sender, EventArgs e)
+    {
+        if (sender is MapEditSession session && ReferenceEquals(_mapEditSession, session))
+        {
+            RefreshDisplayedMapObjectPlacements();
+            NotifyEditSessionStateChanged();
+            RefreshInventoryQuantityEditor();
+        }
     }
 
     public void SelectMapObjectFromFloorMarker(MapObjectPlacement placement)
@@ -578,7 +718,17 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
             {
                 if (!ReferenceEquals(_selectedMapObject, retainedSelection))
                 {
-                    SetSelectedMapObject(retainedSelection, MapObjectSelectionSource.Programmatic);
+                    if (_mapEditSession is { } session
+                        && _selectedMapEditObjectId is { } selectedId
+                        && selectedId == new MapEditObjectId(session.SessionId, recordIndex)
+                        && session.GetObject(selectedId) is not null)
+                    {
+                        RebindSelectedMapObject(retainedSelection);
+                    }
+                    else
+                    {
+                        SetSelectedMapObject(retainedSelection, MapObjectSelectionSource.Programmatic);
+                    }
                 }
                 else if (_sortedListReportedTransientSelectionClear)
                 {
@@ -590,20 +740,35 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
         _sortedListReportedTransientSelectionClear = false;
     }
 
+    private void RebindSelectedMapObject(MapObjectPlacement placement)
+    {
+        if (SetProperty(ref _selectedMapObject, placement, nameof(SelectedMapObject)))
+        {
+            OnPropertyChanged(nameof(SelectedMapObjectRecordIndex));
+            OnPropertyChanged(nameof(SelectedEditObject));
+            MapObjectDetailsDisplay = FormatMapObjectDetailsDisplay(placement);
+            RefreshInventoryQuantityEditor();
+        }
+    }
+
     private void SetSelectedMapObject(
         MapObjectPlacement? placement,
         MapObjectSelectionSource source)
     {
+        MapEditObjectId? selectedId = null;
         if (placement is not null && _mapEditSession is { } session)
         {
+            var id = new MapEditObjectId(session.SessionId, placement.RecordIndex);
             var belongsToCurrentMap = _mapObjectPlacements.Any(candidate =>
                 candidate.RecordIndex == placement.RecordIndex
                 && ReferenceEquals(candidate, placement));
             if (!belongsToCurrentMap
-                || session.GetObject(new MapEditObjectId(session.SessionId, placement.RecordIndex)) is null)
+                || session.GetObject(id) is null)
             {
-                placement = null;
+                return;
             }
+
+            selectedId = id;
         }
 
         if (placement is not null && !MatchesMapObjectFilters(placement))
@@ -621,11 +786,13 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
             return;
         }
 
+        _selectedMapEditObjectId = placement is null ? null : selectedId;
         if (SetProperty(ref _selectedMapObject, placement, nameof(SelectedMapObject)))
         {
             OnPropertyChanged(nameof(SelectedMapObjectRecordIndex));
             OnPropertyChanged(nameof(SelectedEditObject));
             MapObjectDetailsDisplay = FormatMapObjectDetailsDisplay(placement);
+            RefreshInventoryQuantityEditor();
             SelectedMapObjectChanged?.Invoke(
                 this,
                 new MapObjectSelectionChangedEventArgs(placement, source));
@@ -644,8 +811,11 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
             return "Select a parsed object to inspect its confirmed placement fields.";
         }
 
-        var sessionObject = session.GetObject(
-            new MapEditObjectId(session.SessionId, placement.RecordIndex));
+        var sessionObject = _selectedMapEditObjectId is { } selectedId
+            && selectedId.SessionId == session.SessionId
+            && selectedId.RecordIndex == placement.RecordIndex
+                ? session.GetObject(selectedId)
+                : null;
         if (sessionObject is null)
         {
             return "The selected object is not available in the current MAP edit session.";
@@ -659,7 +829,50 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
             + Environment.NewLine
             + $"Elevation group: {workingPlacement.ElevationGroup}"
             + Environment.NewLine
-            + $"Hex-grid coordinates: {coordinates}";
+            + $"Hex-grid coordinates: {coordinates}"
+            + (workingPlacement.ParentRecordIndex is not null
+                && workingPlacement.InventoryQuantity is int quantity
+                    ? Environment.NewLine + $"Inventory quantity: {quantity}"
+                    : string.Empty);
+    }
+
+    private void RefreshInventoryQuantityEditor()
+    {
+        var selectedPlacement = SelectedEditObject?.Placement;
+        var quantityText = selectedPlacement is
+        {
+            ParentRecordIndex: not null,
+            InventoryQuantity: int quantity
+        }
+            ? quantity.ToString(CultureInfo.CurrentCulture)
+            : string.Empty;
+
+        SetProperty(
+            ref _inventoryQuantityInput,
+            quantityText,
+            nameof(InventoryQuantityInput));
+        OnPropertyChanged(nameof(CanEditSelectedInventoryQuantity));
+        SetInventoryQuantityValidationError(null);
+    }
+
+    private void NotifyEditSessionStateChanged()
+    {
+        OnPropertyChanged(nameof(IsMapEditSessionDirty));
+        OnPropertyChanged(nameof(EditSessionDirtyDisplay));
+        OnPropertyChanged(nameof(CanUndoMapEdit));
+        OnPropertyChanged(nameof(CanRedoMapEdit));
+        OnPropertyChanged(nameof(EditSessionStatusDisplay));
+    }
+
+    private void SetInventoryQuantityValidationError(string? error)
+    {
+        if (SetProperty(
+                ref _inventoryQuantityValidationError,
+                error,
+                nameof(InventoryQuantityValidationError)))
+        {
+            OnPropertyChanged(nameof(HasInventoryQuantityValidationError));
+        }
     }
 
     private void NotifyMapObjectSearchFeedbackChanged()

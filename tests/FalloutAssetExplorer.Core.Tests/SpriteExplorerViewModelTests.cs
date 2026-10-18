@@ -28,7 +28,7 @@ public sealed class SpriteExplorerViewModelTests
     }
 
     [Fact]
-    public void MainWindow_ExposesArchiveBrowserAndSpriteExplorerTabs()
+    public void MainWindow_ExposesTopLevelWorkspacesInStableOrder()
     {
         AvaloniaTestEnvironment.RunOnUiThread(() =>
         {
@@ -41,12 +41,14 @@ public sealed class SpriteExplorerViewModelTests
             try
             {
                 var tabs = Assert.IsType<TabControl>(window.FindControl<TabControl>("WorkspaceTabs"));
-                Assert.Equal(2, tabs.Items.Count);
+                Assert.Equal(4, tabs.Items.Count);
                 Assert.Equal("Archive Browser", Assert.IsType<TabItem>(tabs.Items[0]).Header);
                 Assert.Equal("Sprite Explorer", Assert.IsType<TabItem>(tabs.Items[1]).Header);
+                Assert.Equal("Map Editor", Assert.IsType<TabItem>(tabs.Items[2]).Header);
+                Assert.Equal("MSG Editor", Assert.IsType<TabItem>(tabs.Items[3]).Header);
 
-                tabs.SelectedIndex = 1;
-                Assert.Equal(1, viewModel.SelectedWorkspaceIndex);
+                tabs.SelectedIndex = ArchiveBrowserViewModel.MsgEditorWorkspaceIndex;
+                Assert.Equal(ArchiveBrowserViewModel.MsgEditorWorkspaceIndex, viewModel.SelectedWorkspaceIndex);
             }
             finally
             {

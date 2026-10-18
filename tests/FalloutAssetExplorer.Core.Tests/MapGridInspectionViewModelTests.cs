@@ -96,10 +96,12 @@ public sealed class MapGridInspectionViewModelTests
             inspector.MapObjectDetailsDisplay);
         Assert.True(inspector.HasEditSession);
 
-        inspector.SelectedMapObject = placement;
+        var workingPlacement = Assert.Single(inspector.MapObjectPlacements);
+        inspector.SelectedMapObject = workingPlacement;
 
-        Assert.Same(placement, inspector.SelectedMapObject);
-        Assert.NotSame(placement, inspector.SelectedEditObject!.Placement);
+        Assert.Same(workingPlacement, inspector.SelectedMapObject);
+        Assert.Same(workingPlacement, inspector.SelectedEditObject!.Placement);
+        Assert.NotSame(placement, workingPlacement);
         Assert.Equal(
             new MapEditObjectId(inspector.EditSession!.SessionId, placement.RecordIndex),
             inspector.SelectedEditObject.Id);
@@ -114,7 +116,7 @@ public sealed class MapGridInspectionViewModelTests
         Assert.DoesNotContain("Raw", inspector.MapObjectDetailsDisplay);
 
         inspector.ClearSelectedMapObject();
-        inspector.SelectMapObjectFromFloorMarker(placement);
+        inspector.SelectMapObjectFromFloorMarker(workingPlacement);
         Assert.Equal(placement.RecordIndex, inspector.SelectedEditObject?.Id.RecordIndex);
 
         inspector.ClearSelectedMapObject();
@@ -133,7 +135,8 @@ public sealed class MapGridInspectionViewModelTests
         var newSource = new MapSourceData(new byte[] { 4, 5, 6 });
         inspector.SetMapObjectPlacements([oldPlacement]);
         inspector.SetMapEditSession(new MapEditSession(oldSource, [oldPlacement]));
-        inspector.SelectedMapObject = oldPlacement;
+        var oldWorkingPlacement = Assert.Single(inspector.MapObjectPlacements);
+        inspector.SelectedMapObject = oldWorkingPlacement;
 
         var staleId = inspector.SelectedEditObject!.Id;
         inspector.SetMapObjectPlacements([newPlacement]);
@@ -144,6 +147,187 @@ public sealed class MapGridInspectionViewModelTests
         Assert.Null(inspector.SelectedEditObject);
         Assert.Null(newSession.GetObject(staleId));
         Assert.NotSame(newSession.SourceData, oldSource);
+        Assert.Equal(
+            "Select a parsed object to inspect its confirmed placement fields.",
+            inspector.MapObjectDetailsDisplay);
+
+        inspector.SelectedMapObject = oldWorkingPlacement;
+        Assert.Null(inspector.SelectedMapObject);
+        Assert.Null(inspector.SelectedEditObject);
+
+        inspector.SetMapEditSession(null);
+        Assert.Equal(
+            "Select a parsed object to inspect its raw fields.",
+            inspector.MapObjectDetailsDisplay);
+    }
+
+    [Fact]
+    public void InventoryQuantityChangesRefreshSessionBackedListAndHistoryWithoutChangingSources()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var inspector = viewModel.MapInspector;
+        var parent = CreateMarkerPlacement(7, elevation: 0);
+        var sourceChild = CreateMarkerPlacement(8, elevation: 0) with
+        {
+            ParentRecordIndex = parent.RecordIndex,
+            InventoryQuantity = 2
+        };
+        var sourceBytes = new byte[] { 1, 2, 3 };
+        var sourceData = new MapSourceData(sourceBytes);
+        inspector.SetMapObjectPlacements([parent, sourceChild]);
+        var session = new MapEditSession(sourceData, [parent, sourceChild]);
+        inspector.SetMapEditSession(session);
+
+        var workingChild = Assert.Single(
+            inspector.MapObjectPlacements,
+            placement => placement.RecordIndex == sourceChild.RecordIndex);
+        var id = new MapEditObjectId(session.SessionId, sourceChild.RecordIndex);
+        inspector.SelectedMapObject = workingChild;
+        var refreshCount = 0;
+        inspector.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MapInspectorViewModel.MapObjectPlacements))
+            {
+                refreshCount++;
+            }
+        };
+
+        Assert.Contains("Quantity 2", workingChild.DisplayText);
+        Assert.True(session.TrySetInventoryQuantity(id, 2, out var noOpError), noOpError);
+        Assert.False(session.TrySetInventoryQuantity(id, 0, out var invalidError));
+        Assert.NotNull(invalidError);
+        Assert.Equal(0, refreshCount);
+
+        Assert.True(session.TrySetInventoryQuantity(id, 5, out var editError), editError);
+        var editedChild = Assert.Single(
+            inspector.MapObjectPlacements,
+            placement => placement.RecordIndex == sourceChild.RecordIndex);
+        Assert.Equal(5, editedChild.InventoryQuantity);
+        Assert.Contains("Quantity 5", editedChild.DisplayText);
+        Assert.Same(editedChild, inspector.SelectedMapObject);
+        Assert.Equal(5, inspector.SelectedEditObject?.Placement.InventoryQuantity);
+        Assert.Equal(1, refreshCount);
+
+        Assert.True(session.Undo(out var undoError), undoError);
+        Assert.Equal(2, inspector.SelectedEditObject?.Placement.InventoryQuantity);
+        Assert.Contains("Quantity 2", Assert.Single(
+            inspector.MapObjectPlacements,
+            placement => placement.RecordIndex == sourceChild.RecordIndex).DisplayText);
+        Assert.Equal(2, refreshCount);
+
+        Assert.True(session.Redo(out var redoError), redoError);
+        Assert.Equal(5, inspector.SelectedEditObject?.Placement.InventoryQuantity);
+        Assert.Equal(3, refreshCount);
+        Assert.Equal(2, sourceChild.InventoryQuantity);
+        Assert.Equal(sourceBytes, sourceData.GetRange(0, sourceData.Length).ToArray());
+    }
+
+    [Fact]
+    public void InventoryQuantityEditorValidatesAndSynchronizesSessionBackedViewsAndHistory()
+    {
+        using var viewModel = new ArchiveBrowserViewModel();
+        var inspector = viewModel.MapInspector;
+        var parent = CreateMarkerPlacement(7, elevation: 0);
+        var sourceChild = CreateMarkerPlacement(8, elevation: 0) with
+        {
+            ParentRecordIndex = parent.RecordIndex,
+            InventoryQuantity = 2
+        };
+        var unsupportedChild = CreateMarkerPlacement(9, elevation: 0) with
+        {
+            ParentRecordIndex = parent.RecordIndex
+        };
+        var sourceBytes = new byte[] { 7, 8, 9 };
+        var sourceData = new MapSourceData(sourceBytes);
+        inspector.SetMapObjectPlacements([parent, sourceChild, unsupportedChild]);
+        inspector.SelectedMapObject = sourceChild;
+        Assert.False(inspector.CanEditSelectedInventoryQuantity);
+
+        var session = new MapEditSession(sourceData, [parent, sourceChild, unsupportedChild]);
+        inspector.SetMapEditSession(session);
+        var changedPlacementCount = 0;
+        inspector.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MapInspectorViewModel.MapObjectPlacements))
+            {
+                changedPlacementCount++;
+            }
+        };
+
+        inspector.SelectedMapObject = Assert.Single(
+            inspector.MapObjectPlacements,
+            placement => placement.RecordIndex == parent.RecordIndex);
+        Assert.False(inspector.CanEditSelectedInventoryQuantity);
+
+        inspector.SelectedMapObject = Assert.Single(
+            inspector.MapObjectPlacements,
+            placement => placement.RecordIndex == unsupportedChild.RecordIndex);
+        Assert.False(inspector.CanEditSelectedInventoryQuantity);
+
+        inspector.SelectedMapObject = Assert.Single(
+            inspector.MapObjectPlacements,
+            placement => placement.RecordIndex == sourceChild.RecordIndex);
+        var selectedId = inspector.SelectedEditObject!.Id;
+        Assert.True(inspector.CanEditSelectedInventoryQuantity);
+        Assert.Equal("2", inspector.InventoryQuantityInput);
+        Assert.Contains("Inventory quantity: 2", inspector.MapObjectDetailsDisplay);
+
+        inspector.InventoryQuantityInput = "not a number";
+        Assert.False(inspector.ApplyInventoryQuantity());
+        Assert.Contains("whole-number", inspector.InventoryQuantityValidationError);
+        Assert.False(session.CanUndo);
+        Assert.Equal(0, changedPlacementCount);
+
+        inspector.InventoryQuantityInput = "0";
+        Assert.False(inspector.ApplyInventoryQuantity());
+        Assert.Equal("Inventory quantity must be at least 1.", inspector.InventoryQuantityValidationError);
+        Assert.False(session.CanUndo);
+        Assert.Equal(0, changedPlacementCount);
+
+        inspector.InventoryQuantityInput = "2";
+        Assert.True(inspector.ApplyInventoryQuantity());
+        Assert.False(session.CanUndo);
+        Assert.False(inspector.IsMapEditSessionDirty);
+        Assert.Equal(0, changedPlacementCount);
+
+        inspector.InventoryQuantityInput = "5";
+        Assert.True(inspector.ApplyInventoryQuantity());
+        Assert.Equal(1, changedPlacementCount);
+        Assert.True(inspector.IsMapEditSessionDirty);
+        Assert.True(inspector.CanUndoMapEdit);
+        Assert.False(inspector.CanRedoMapEdit);
+        Assert.Contains("Unsaved in-memory", inspector.EditSessionDirtyDisplay);
+        Assert.Contains("not saved to a MAP file", inspector.EditSessionStatusDisplay);
+        Assert.Equal("5", inspector.InventoryQuantityInput);
+        Assert.Contains("Inventory quantity: 5", inspector.MapObjectDetailsDisplay);
+        Assert.Contains(
+            "Quantity 5",
+            Assert.Single(
+                inspector.MapObjectPlacements,
+                placement => placement.RecordIndex == sourceChild.RecordIndex).DisplayText);
+        Assert.Equal(selectedId, inspector.SelectedEditObject!.Id);
+        Assert.Equal(5, inspector.SelectedEditObject.Placement.InventoryQuantity);
+        Assert.Equal(2, sourceChild.InventoryQuantity);
+
+        Assert.True(inspector.UndoMapEdit());
+        Assert.Equal(2, inspector.SelectedEditObject!.Placement.InventoryQuantity);
+        Assert.Equal("2", inspector.InventoryQuantityInput);
+        Assert.Contains("Quantity 2", inspector.SelectedMapObject!.DisplayText);
+        Assert.Equal(selectedId, inspector.SelectedEditObject.Id);
+        Assert.False(inspector.IsMapEditSessionDirty);
+        Assert.False(inspector.CanUndoMapEdit);
+        Assert.True(inspector.CanRedoMapEdit);
+        Assert.Equal(2, changedPlacementCount);
+
+        Assert.True(inspector.RedoMapEdit());
+        Assert.Equal(5, inspector.SelectedEditObject!.Placement.InventoryQuantity);
+        Assert.Equal("5", inspector.InventoryQuantityInput);
+        Assert.Contains("Quantity 5", inspector.SelectedMapObject!.DisplayText);
+        Assert.Equal(selectedId, inspector.SelectedEditObject.Id);
+        Assert.True(inspector.IsMapEditSessionDirty);
+        Assert.Equal(3, changedPlacementCount);
+        Assert.Equal(2, sourceChild.InventoryQuantity);
+        Assert.Equal(sourceBytes, sourceData.GetRange(0, sourceData.Length).ToArray());
     }
 
     [Fact]

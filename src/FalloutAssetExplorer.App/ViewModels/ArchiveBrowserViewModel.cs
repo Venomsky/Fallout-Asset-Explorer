@@ -36,7 +36,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     // App preview budget, not a MAP-format limit; keeps UI reads well below the archive reader's 512 MiB entry cap.
     public const long MaximumMapPreviewSizeBytes = 64L * 1024 * 1024;
     public const int SpriteExplorerWorkspaceIndex = 1;
-    public const int MsgEditorWorkspaceIndex = 2;
+    public const int MapEditorWorkspaceIndex = 2;
+    public const int MsgEditorWorkspaceIndex = 3;
 
     private const int MaximumIntIdentifierBytesDisplayed = 4096;
     private static readonly string[] SupportedExtensions = [".FRM", ".MAP", ".PRO", ".MSG", ".LST", ".INT"];
@@ -716,6 +717,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     public bool IsMapInspector => MapInspector.IsMapInspector;
 
+    public bool IsMapEditorEmpty => !IsMapInspector;
+
     public int? SelectedMapGridIndex
     {
         get => _selectedMapGridIndex;
@@ -1389,6 +1392,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             if (previewRoute == PreviewRoute.Map)
             {
                 MapInspector.SetMapInspectorActive(true);
+                SelectedWorkspaceIndex = MapEditorWorkspaceIndex;
                 PreviewTitle = "MAP Inspector";
                 if (selectedEntry.UncompressedSize < 0)
                 {
@@ -1490,8 +1494,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 }
 
                 MapInspector.SetMapEditSession(
-                    objectPlacements?.SourceData is { } sourceData
-                        ? new MapEditSession(sourceData, MapObjectPlacements)
+                    objectPlacements is not null
+                        ? new MapEditSession(metadata, objectPlacements)
                         : null);
                 MapInspector.SetMapObjectPlacements(MapObjectPlacements);
                 MapInspector.ClearSelectedMapObject();
@@ -2225,6 +2229,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     public async Task PrepareSelectedMapObjectSpriteAsync()
     {
+        var editSession = MapInspector.EditSession;
         var placement = MapInspector.SelectedMapObject;
         var archive = _archive;
 
@@ -2234,7 +2239,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 != MapInspectorViewModel.IsometricObjectMarkersLayerIndex
             || placement is null
             || archive is null
-            || !MapObjectPlacements.Contains(placement))
+            || !IsCurrentMapObjectPlacement(placement, editSession))
         {
             CancelMapObjectSpriteLoad();
             SelectedMapObjectSprite = null;
@@ -2336,6 +2341,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             }
 
             if (!ReferenceEquals(MapInspector.SelectedMapObject, placement)
+                || !IsCurrentMapObjectPlacement(placement, editSession)
                 || !IsMapInspector
                 || MapInspector.SelectedMapDiagnosticLayerIndex
                     != MapInspectorViewModel.IsometricObjectMarkersLayerIndex
@@ -2371,9 +2377,13 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 archive,
                 spriteTypeLower,
                 cancellationToken,
-                () => IsCurrentMapObjectSpriteLoad(cancellation, archive, placement));
+                () => IsCurrentMapObjectSpriteLoad(
+                    cancellation,
+                    archive,
+                    placement,
+                    editSession));
             cancellationToken.ThrowIfCancellationRequested();
-            if (!IsCurrentMapObjectSpriteLoad(cancellation, archive, placement))
+            if (!IsCurrentMapObjectSpriteLoad(cancellation, archive, placement, editSession))
             {
                 return;
             }
@@ -2405,7 +2415,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             or InvalidOperationException
             or OverflowException)
         {
-            if (IsCurrentMapObjectSpriteLoad(cancellation, archive, placement))
+            if (IsCurrentMapObjectSpriteLoad(cancellation, archive, placement, editSession))
             {
                 SelectedMapObjectSprite = null;
                 MapObjectSpriteStatusDisplay =
@@ -2741,7 +2751,8 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private bool IsCurrentMapObjectSpriteLoad(
         CancellationTokenSource cancellation,
         IGameArchive archive,
-        MapObjectPlacement placement) =>
+        MapObjectPlacement placement,
+        MapEditSession? editSession) =>
         !_isDisposed
         && IsMapInspector
         && MapInspector.SelectedMapDiagnosticLayerIndex
@@ -2749,8 +2760,25 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         && ReferenceEquals(_mapObjectSpriteCancellation, cancellation)
         && ReferenceEquals(_archive, archive)
         && ReferenceEquals(MapInspector.SelectedMapObject, placement)
-        && MapObjectPlacements.Contains(placement)
+        && IsCurrentMapObjectPlacement(placement, editSession)
         && MapInspector.SelectedMapElevationIndex == placement.ElevationGroup;
+
+    private bool IsCurrentMapObjectPlacement(
+        MapObjectPlacement placement,
+        MapEditSession? expectedSession)
+    {
+        if (expectedSession is not null)
+        {
+            return ReferenceEquals(MapInspector.EditSession, expectedSession)
+                && expectedSession.GetObject(
+                    new MapEditObjectId(expectedSession.SessionId, placement.RecordIndex))
+                    is { } sessionObject
+                && ReferenceEquals(sessionObject.Placement, placement);
+        }
+
+        return MapInspector.EditSession is null
+            && MapObjectPlacements.Any(candidate => ReferenceEquals(candidate, placement));
+    }
 
     private bool IsCurrentMapObjectSpritesLoad(
         CancellationTokenSource cancellation,
@@ -3725,6 +3753,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         if (e.PropertyName == nameof(MapInspectorViewModel.IsMapInspector))
         {
             OnPropertyChanged(nameof(IsMapInspector));
+            OnPropertyChanged(nameof(IsMapEditorEmpty));
         }
         else if (e.PropertyName == nameof(MapInspectorViewModel.SelectedMapElevationIndex))
         {

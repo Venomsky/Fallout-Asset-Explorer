@@ -45,7 +45,9 @@ public static class MapObjectPlacementDecoder
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(header);
-        if (!ReferenceEquals(header.SourceData, source))
+        if (!ReferenceEquals(header.SourceData, source)
+            || header.Provenance is not { } provenance
+            || provenance.SourceSnapshotId != source.SnapshotId)
         {
             throw new InvalidDataException("The MAP header metadata is not bound to this source data.");
         }
@@ -66,7 +68,11 @@ public static class MapObjectPlacementDecoder
             archive,
             cancellationToken,
             prototypeResolver);
-        return decoded with { SourceData = source };
+        return decoded with
+        {
+            SourceData = source,
+            Provenance = header.Provenance
+        };
     }
 
     public static Task<MapObjectPlacementData> DecodeAsync(
@@ -88,6 +94,12 @@ public static class MapObjectPlacementDecoder
         CancellationToken cancellationToken,
         Fallout2PrototypeResolver? prototypeResolver)
     {
+        if (header.Provenance is { } provenance
+            && (provenance.Game != header.Game || provenance.Version != header.Version))
+        {
+            throw new InvalidDataException("The MAP header provenance does not match its game and version.");
+        }
+
         var validatedHeader = MapHeaderDecoder.Decode(data, header.Game);
         if (header.Version != validatedHeader.Version
             || header.EntryLength != validatedHeader.EntryLength
@@ -661,7 +673,8 @@ public sealed record MapObjectPlacement(
     };
 
     public string DisplayText =>
-        $"#{RecordIndex} | Elev {ElevationGroup} | {ObjectTypeDisplay} | PID 0x{RawPid:X8} | Hex {FormatHexPosition()}";
+        $"#{RecordIndex} | Elev {ElevationGroup} | {ObjectTypeDisplay} | PID 0x{RawPid:X8} | Hex {FormatHexPosition()}"
+        + (InventoryQuantity is int quantity ? $" | Quantity {quantity}" : string.Empty);
 
     public string FormatHexPosition() =>
         HexX is int x && HexY is int y
@@ -703,6 +716,8 @@ public sealed record MapObjectPlacementData(
     int UnparsedByteCount)
 {
     public MapSourceData? SourceData { get; init; }
+
+    public MapDecodeProvenance? Provenance { get; internal init; }
 
     public int DecodedTopLevelObjectCount => Objects.Count(placement => placement.ParentRecordIndex is null);
 

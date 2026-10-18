@@ -549,11 +549,6 @@
               </ScrollViewer>
             </Grid>
           </Border>
-          <local:MapInspectorView
-              x:Name="MapInspectorControl"
-              Grid.Row="2"
-              Grid.RowSpan="3"
-              IsVisible="{Binding IsMapInspector}" />
         </Grid>
       </Border>
     </Grid>
@@ -561,6 +556,20 @@
     </TabItem>
     <TabItem Header="Sprite Explorer">
       <local:SpriteExplorerView DataContext="{Binding SpriteExplorer}" />
+    </TabItem>
+    <TabItem Header="Map Editor">
+      <Grid>
+        <local:MapInspectorView
+            x:Name="MapInspectorControl"
+            IsVisible="{Binding IsMapInspector}" />
+        <TextBlock
+            Margin="24"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Center"
+            Text="Select a .MAP entry in Archive Browser to open it here."
+            TextWrapping="Wrap"
+            IsVisible="{Binding IsMapEditorEmpty}" />
+      </Grid>
     </TabItem>
     <TabItem Header="MSG Editor">
       <Grid Margin="12" ColumnDefinitions="250,6,*">

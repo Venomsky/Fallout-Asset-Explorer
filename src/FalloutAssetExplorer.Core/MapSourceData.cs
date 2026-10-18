@@ -7,7 +7,10 @@ public sealed class MapSourceData
     public MapSourceData(ReadOnlyMemory<byte> source)
     {
         _bytes = source.ToArray();
+        SnapshotId = Guid.NewGuid();
     }
+
+    public Guid SnapshotId { get; }
 
     public int Length => _bytes.Length;
 
@@ -30,6 +33,22 @@ public sealed class MapSourceData
 
     internal byte[] CopyRange(int offset, int length) =>
         _bytes.AsSpan(offset, length).ToArray();
+}
+
+public sealed class MapDecodeProvenance
+{
+    internal MapDecodeProvenance(MapSourceData source, FalloutGame game, int version)
+    {
+        SourceSnapshotId = source.SnapshotId;
+        Game = game;
+        Version = version;
+    }
+
+    public Guid SourceSnapshotId { get; }
+
+    public FalloutGame Game { get; }
+
+    public int Version { get; }
 }
 
 public sealed class MapSourceRange

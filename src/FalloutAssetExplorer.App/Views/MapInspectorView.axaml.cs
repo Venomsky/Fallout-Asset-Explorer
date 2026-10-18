@@ -19,21 +19,6 @@ public partial class MapInspectorView : UserControl
 
     public event EventHandler<RoutedEventArgs>? RecordsToggleRequested;
 
-    public event EventHandler<RoutedEventArgs>? MaximizeToggleRequested;
-
-    public (GridLength Viewport, GridLength Splitter, GridLength Workspace) GetPreviewSplitRows() =>
-        (
-            MapInspectorLayoutGrid.RowDefinitions[0].Height,
-            MapInspectorLayoutGrid.RowDefinitions[1].Height,
-            MapInspectorLayoutGrid.RowDefinitions[2].Height);
-
-    public void SetPreviewSplitRows(GridLength viewport, GridLength splitter, GridLength workspace)
-    {
-        MapInspectorLayoutGrid.RowDefinitions[0].Height = viewport;
-        MapInspectorLayoutGrid.RowDefinitions[1].Height = splitter;
-        MapInspectorLayoutGrid.RowDefinitions[2].Height = workspace;
-    }
-
     public (GridLength Workspace, GridLength Splitter) GetMapWorkspaceRows() =>
         (
             MapInspectorLayoutGrid.RowDefinitions[2].Height,
@@ -45,13 +30,8 @@ public partial class MapInspectorView : UserControl
         MapInspectorLayoutGrid.RowDefinitions[1].Height = splitter;
     }
 
-    public void UpdateShellControls(bool isWorkspaceCollapsed, bool isMaximized)
-    {
+    public void UpdateShellControls(bool isWorkspaceCollapsed) =>
         MapWorkspaceToggleButton.Content = isWorkspaceCollapsed ? "Show workspace" : "Hide workspace";
-        MapWorkspaceToggleButton.IsEnabled = !isMaximized;
-        MapRecordsToggleButton.IsEnabled = !isMaximized;
-        MapMaximizeButton.Content = isMaximized ? "Restore workspace" : "Maximize map";
-    }
 
     public void ToggleRecords()
     {
@@ -112,6 +92,15 @@ public partial class MapInspectorView : UserControl
         }
     }
 
+    private void ApplyInventoryQuantity_Click(object? sender, RoutedEventArgs e) =>
+        ViewModel?.MapInspector.ApplyInventoryQuantity();
+
+    private void UndoMapEdit_Click(object? sender, RoutedEventArgs e) =>
+        ViewModel?.MapInspector.UndoMapEdit();
+
+    private void RedoMapEdit_Click(object? sender, RoutedEventArgs e) =>
+        ViewModel?.MapInspector.RedoMapEdit();
+
     private async void MapDiagnosticLayer_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (sender is ComboBox combo
@@ -138,7 +127,4 @@ public partial class MapInspectorView : UserControl
 
     private void ToggleMapRecords_Click(object? sender, RoutedEventArgs e) =>
         RecordsToggleRequested?.Invoke(this, e);
-
-    private void ToggleMapMaximized_Click(object? sender, RoutedEventArgs e) =>
-        MaximizeToggleRequested?.Invoke(this, e);
 }

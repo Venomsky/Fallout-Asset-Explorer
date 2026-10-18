@@ -31,7 +31,7 @@ Color previews use a Fallout palette when one can be found in the archive or a c
 
 ### Explore maps and prototypes
 
-The MAP inspector exposes supported header data, raw tile-grid values, object placements, and several diagnostic views. You can choose a layer and elevation, and search, filter, sort, and select decoded object records. Fallout 2 floor-art lookup is available from a Fallout 2 DAT2 archive. Some map-record layouts cannot yet be decoded; the inspector reports partial or unsupported data rather than treating every map as fully understood.
+The Map Editor tab hosts the MAP inspection and editing workspace. It exposes supported header data, raw tile-grid values, object placements, and several diagnostic views. You can choose a layer and elevation, and search, filter, sort, and select decoded object records. Fallout 2 floor-art lookup is available from a Fallout 2 DAT2 archive. Some map-record layouts cannot yet be decoded; the editor reports partial or unsupported data rather than treating every map as fully understood.
 
 Select a Fallout 2 `.PRO` entry to inspect supported Item and Scenery records directly, view parsed fields and raw bytes, export a report, or save the original bytes as BIN. This standalone view does not verify the record through a MAP PID or prototype list. Other PID types and unsupported subtypes may show raw data without decoded fields.
 
