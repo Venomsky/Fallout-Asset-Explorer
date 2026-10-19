@@ -856,5 +856,8 @@
         </Grid>
       </Grid>
     </TabItem>
+    <TabItem Header="Format Coverage">
+      <local:FormatCoverageDashboardView />
+    </TabItem>
   </TabControl>
 </Window>

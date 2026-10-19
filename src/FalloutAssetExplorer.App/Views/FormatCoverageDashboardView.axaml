@@ -1,0 +1,224 @@
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Class="FalloutAssetExplorer.App.Views.FormatCoverageDashboardView">
+  <Grid Margin="16" RowDefinitions="Auto,*" RowSpacing="12">
+    <StackPanel Grid.Row="0" Spacing="10">
+      <TextBlock
+          FontSize="24"
+          FontWeight="SemiBold"
+          Text="Format coverage" />
+      <TextBlock
+          Text="{Binding AuditNotice}"
+          TextWrapping="Wrap" />
+      <Grid ColumnDefinitions="*,*,*,*" ColumnSpacing="10">
+        <Border
+            Grid.Column="0"
+            Padding="12"
+            Background="#20242B"
+            CornerRadius="4">
+          <StackPanel Spacing="4">
+            <TextBlock Text="Formats in catalog" />
+            <TextBlock
+                FontSize="22"
+                FontWeight="SemiBold"
+                Text="{Binding FormatCount}" />
+          </StackPanel>
+        </Border>
+        <Border
+            Grid.Column="1"
+            Padding="12"
+            Background="#20242B"
+            CornerRadius="4">
+          <StackPanel Spacing="4">
+            <TextBlock Text="Mean coverage" />
+            <TextBlock
+                FontSize="22"
+                FontWeight="SemiBold"
+                Text="{Binding AverageCoverageDisplay}" />
+            <TextBlock
+                FontSize="11"
+                Text="Arithmetic mean of calculable formats; not project completion."
+                TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+        <Border
+            Grid.Column="2"
+            Padding="12"
+            Background="#20242B"
+            CornerRadius="4">
+          <StackPanel Spacing="4">
+            <TextBlock Text="Not calculable" />
+            <TextBlock
+                FontSize="22"
+                FontWeight="SemiBold"
+                Text="{Binding UncalculableFormatCount}" />
+          </StackPanel>
+        </Border>
+        <Border
+            Grid.Column="3"
+            Padding="12"
+            Background="#20242B"
+            CornerRadius="4">
+          <StackPanel Spacing="4">
+            <TextBlock Text="Audit baseline" />
+            <TextBlock
+                FontFamily="Consolas"
+                FontSize="11"
+                Text="{Binding AuditBaselineCommit}"
+                TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+      </Grid>
+    </StackPanel>
+
+    <Grid Grid.Row="1" ColumnDefinitions="320,*" ColumnSpacing="12">
+      <Border
+          Grid.Column="0"
+          Padding="10"
+          Background="#20242B"
+          CornerRadius="4">
+        <Grid RowDefinitions="Auto,*" RowSpacing="8">
+          <TextBlock
+              FontWeight="SemiBold"
+              Text="Formats" />
+          <TextBlock
+              Grid.Row="1"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Center"
+              IsVisible="{Binding HasNoFormats}"
+              Text="No format assessments are available."
+              TextWrapping="Wrap" />
+          <ListBox
+              Grid.Row="1"
+              ItemsSource="{Binding Formats}"
+              IsVisible="{Binding HasFormats}"
+              SelectedItem="{Binding SelectedFormat, Mode=TwoWay}">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <StackPanel Margin="8" Spacing="5">
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <TextBlock
+                        FontWeight="SemiBold"
+                        Text="{Binding Name}" />
+                    <TextBlock
+                        Grid.Column="1"
+                        FontWeight="SemiBold"
+                        Text="{Binding PercentageDisplay}" />
+                  </Grid>
+                  <ProgressBar
+                      Height="7"
+                      IsVisible="{Binding IsCalculable}"
+                      Maximum="100"
+                      Minimum="0"
+                      Value="{Binding ProgressValue}" />
+                  <TextBlock
+                      FontSize="11"
+                      Text="{Binding ConfidenceSummary}"
+                      TextWrapping="Wrap" />
+                  <TextBlock
+                      FontSize="11"
+                      Text="{Binding EvidenceSummary}"
+                      TextWrapping="Wrap" />
+                </StackPanel>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </Grid>
+      </Border>
+
+      <Border
+          Grid.Column="1"
+          Padding="14"
+          Background="#20242B"
+          CornerRadius="4">
+        <ScrollViewer>
+          <StackPanel Spacing="12">
+            <TextBlock
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                IsVisible="{Binding HasNoSelectedFormat}"
+                Text="Select a format to inspect its coverage details."
+                TextWrapping="Wrap" />
+            <StackPanel
+                IsVisible="{Binding HasSelectedFormat}"
+                Spacing="12">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <StackPanel Spacing="4">
+                  <TextBlock
+                      FontSize="20"
+                      FontWeight="SemiBold"
+                      Text="{Binding SelectedFormat.Name}" />
+                  <TextBlock
+                      Text="{Binding SelectedFormat.ConfidenceSummary}"
+                      TextWrapping="Wrap" />
+                  <TextBlock
+                      Text="{Binding SelectedFormat.EvidenceSummary}"
+                      TextWrapping="Wrap" />
+                </StackPanel>
+                <TextBlock
+                    Grid.Column="1"
+                    FontSize="20"
+                    FontWeight="SemiBold"
+                    Text="{Binding SelectedFormat.PercentageDisplay}" />
+              </Grid>
+              <ItemsControl ItemsSource="{Binding SelectedFormat.Categories}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border
+                        Margin="0,0,0,8"
+                        Padding="10"
+                        Background="#292E36"
+                        CornerRadius="4">
+                      <StackPanel Spacing="7">
+                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+                          <TextBlock
+                              FontWeight="SemiBold"
+                              Text="{Binding CategoryName}" />
+                          <TextBlock
+                              Grid.Column="1"
+                              Text="{Binding WeightDisplay}" />
+                          <TextBlock
+                              Grid.Column="2"
+                              FontWeight="SemiBold"
+                              Text="{Binding StatusText}" />
+                        </Grid>
+                        <TextBlock
+                            Text="{Binding Rationale}"
+                            TextWrapping="Wrap" />
+                        <TextBlock
+                            FontSize="11"
+                            Text="{Binding ConfidenceDisplay, StringFormat='Confidence: {0}'}" />
+                        <ItemsControl ItemsSource="{Binding Evidence}">
+                          <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                              <StackPanel Margin="0,4,0,0" Spacing="2">
+                                <TextBlock
+                                    FontFamily="Consolas"
+                                    FontSize="11"
+                                    Text="{Binding RepositoryPath}"
+                                    TextWrapping="Wrap" />
+                                <TextBlock
+                                    FontSize="11"
+                                    Text="{Binding SourceAndVerificationDisplay}"
+                                    TextWrapping="Wrap" />
+                                <TextBlock
+                                    FontSize="11"
+                                    Text="{Binding Note}"
+                                    TextWrapping="Wrap" />
+                              </StackPanel>
+                            </DataTemplate>
+                          </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+  </Grid>
+</UserControl>
