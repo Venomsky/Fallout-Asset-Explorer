@@ -38,18 +38,33 @@ public static class MapTileGridDecoder
     {
         ArgumentNullException.ThrowIfNull(source);
         ArgumentNullException.ThrowIfNull(header);
-        if (!ReferenceEquals(header.SourceData, source))
+        if (!ReferenceEquals(header.SourceData, source)
+            || header.Provenance is not { } provenance
+            || provenance.SourceSnapshotId != source.SnapshotId)
         {
             throw new InvalidDataException("The MAP header metadata is not bound to this source data.");
         }
 
         var decoded = Decode(source.Memory, header);
-        return decoded with { Header = decoded.Header with { SourceData = source } };
+        return decoded with
+        {
+            Header = decoded.Header with
+            {
+                SourceData = source,
+                Provenance = provenance
+            },
+            Provenance = provenance
+        };
     }
 
     public static MapTileGridData Decode(ReadOnlyMemory<byte> data, MapHeaderMetadata header)
     {
         ArgumentNullException.ThrowIfNull(header);
+        if (header.Provenance is { } provenance
+            && (provenance.Game != header.Game || provenance.Version != header.Version))
+        {
+            throw new InvalidDataException("The MAP header provenance does not match its game and version.");
+        }
 
         var validatedHeader = MapHeaderDecoder.Decode(data, header.Game);
         if (header.Version != validatedHeader.Version
@@ -111,6 +126,8 @@ public sealed record MapTileGridData(
     MapHeaderMetadata Header,
     IReadOnlyList<MapTileGrid> Grids)
 {
+    public MapDecodeProvenance? Provenance { get; internal init; }
+
     public MapTileGrid? GetElevation(int elevationIndex) =>
         Grids.FirstOrDefault(grid => grid.ElevationIndex == elevationIndex);
 }

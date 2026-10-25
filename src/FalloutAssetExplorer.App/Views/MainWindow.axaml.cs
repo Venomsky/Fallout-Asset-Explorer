@@ -18,6 +18,7 @@ public partial class MainWindow : Window
         InitializeComponent();
         MapInspectorControl.WorkspaceToggleRequested += MapWorkspaceToggleRequested;
         MapInspectorControl.RecordsToggleRequested += MapRecordsToggleRequested;
+        MapInspectorControl.MapSaveAsRequested += MapSaveAsRequested;
         Closed += MainWindow_Closed;
     }
 
@@ -223,6 +224,56 @@ public partial class MainWindow : Window
                     $"Could not save the previously selected MSG output: {exception.Message} "
                     + "The current MSG source changed while saving.");
             }
+        }
+    }
+
+    private async void MapSaveAsRequested(object? sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ArchiveBrowserViewModel viewModel
+            || viewModel.CreateMapSaveCandidate() is not { } candidate)
+        {
+            return;
+        }
+
+        try
+        {
+            var mapFileType = new FilePickerFileType("Fallout MAP file")
+            {
+                Patterns = ["*.map", "*.MAP"]
+            };
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Save edited MAP as",
+                SuggestedFileName = candidate.SuggestedFileName,
+                DefaultExtension = "map",
+                FileTypeChoices = [mapFileType],
+                SuggestedFileType = mapFileType,
+                ShowOverwritePrompt = true
+            });
+
+            if (file is null)
+            {
+                return;
+            }
+
+            var destinationPath = file.Path.LocalPath;
+            await viewModel.SaveMapAsAsync(
+                candidate,
+                destinationPath,
+                overwriteConfirmed: File.Exists(destinationPath));
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or InvalidOperationException
+            or NotSupportedException
+            or ArgumentException
+            or System.Security.SecurityException)
+        {
+            viewModel.ReportMapSaveAsFailure(candidate, exception.Message);
         }
     }
 

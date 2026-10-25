@@ -284,6 +284,12 @@ public sealed class MapGridInspectionViewModelTests
         Assert.False(session.CanUndo);
         Assert.Equal(0, changedPlacementCount);
 
+        inspector.InventoryQuantityInput = "2147483648";
+        Assert.False(inspector.ApplyInventoryQuantity());
+        Assert.Contains("whole-number", inspector.InventoryQuantityValidationError);
+        Assert.False(session.CanUndo);
+        Assert.Equal(0, changedPlacementCount);
+
         inspector.InventoryQuantityInput = "2";
         Assert.True(inspector.ApplyInventoryQuantity());
         Assert.False(session.CanUndo);
@@ -297,7 +303,7 @@ public sealed class MapGridInspectionViewModelTests
         Assert.True(inspector.CanUndoMapEdit);
         Assert.False(inspector.CanRedoMapEdit);
         Assert.Contains("Unsaved in-memory", inspector.EditSessionDirtyDisplay);
-        Assert.Contains("not saved to a MAP file", inspector.EditSessionStatusDisplay);
+        Assert.Contains("There are unsaved changes", inspector.EditSessionStatusDisplay);
         Assert.Equal("5", inspector.InventoryQuantityInput);
         Assert.Contains("Inventory quantity: 5", inspector.MapObjectDetailsDisplay);
         Assert.Contains(

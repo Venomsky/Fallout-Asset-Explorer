@@ -40,11 +40,14 @@ public sealed class MapDecodeProvenance
     internal MapDecodeProvenance(MapSourceData source, FalloutGame game, int version)
     {
         SourceSnapshotId = source.SnapshotId;
+        DecodeId = Guid.NewGuid();
         Game = game;
         Version = version;
     }
 
     public Guid SourceSnapshotId { get; }
+
+    public Guid DecodeId { get; }
 
     public FalloutGame Game { get; }
 

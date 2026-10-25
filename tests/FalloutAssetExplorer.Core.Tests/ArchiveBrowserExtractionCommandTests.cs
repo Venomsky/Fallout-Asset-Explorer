@@ -2426,7 +2426,7 @@ public sealed class ArchiveBrowserExtractionCommandTests
             secondRead.Release();
             await secondDiagnosticReady.WaitAsync(TimeSpan.FromSeconds(10));
 
-            Assert.Contains("Verified file: second.pro", viewModel.MapInspector.MapObjectPrototypeDiagnosticDetails);
+            Assert.Contains("PID/file match: second.pro", viewModel.MapInspector.MapObjectPrototypeDiagnosticDetails);
             Assert.Contains("Prototype PID: 0x00000002", viewModel.MapInspector.MapObjectPrototypeDiagnosticDetails);
             Assert.NotEmpty(viewModel.MapInspector.MapObjectPrototypeItemFieldsDisplay);
             Assert.NotEmpty(viewModel.MapInspector.MapObjectPrototypeRawByteLines);
@@ -2509,7 +2509,7 @@ public sealed class ArchiveBrowserExtractionCommandTests
         void OnPropertyChanged(object? sender, PropertyChangedEventArgs args)
         {
             if (inspector.MapObjectPrototypeDiagnosticDetails.Contains(
-                    $"Verified file: {fileName}",
+                    $"PID/file match: {fileName}",
                     StringComparison.OrdinalIgnoreCase))
             {
                 completion.TrySetResult(true);

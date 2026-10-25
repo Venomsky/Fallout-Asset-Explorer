@@ -110,10 +110,9 @@ public sealed class MapObjectSpritePrototypeTests
     [Fact]
     public void SpriteGeometry_UsesCeBaseProjectionOnceWithZeroOffsetsAndShifts()
     {
-        // CE square origin is (16,2) above/left of the tile origin, then object rendering adds (16,8).
-        // Thus the projected FAE marker needs one net (+32,+10) delta before frame alignment.
+        // The marker is the CE object anchor (tile origin + (16, 8)); frame alignment follows directly.
         var success = MapIsometricObjectSpriteGeometry.TryGetImageBounds(
-            new Avalonia.Point(100, 200),
+            new Avalonia.Point(116, 208),
             new MapIsometricFloorCameraTransform(1, 0, 0),
             pixelWidth: 8,
             pixelHeight: 6,
@@ -124,12 +123,12 @@ public sealed class MapObjectSpritePrototypeTests
             out var bounds);
 
         Assert.True(success);
-        Assert.Equal(new Avalonia.Rect(128, 205, 8, 6), bounds);
+        Assert.Equal(new Avalonia.Rect(112, 203, 8, 6), bounds);
     }
 
     [Theory]
-    [InlineData(5, -3, 90, 50)]
-    [InlineData(-7, 4, 66, 64)]
+    [InlineData(5, -3, 58, 46)]
+    [InlineData(-7, 4, 34, 60)]
     public void SpriteGeometry_AddsPositiveAndNegativeMapOffsetsOnce(
         int mapOffsetX,
         int mapOffsetY,
@@ -137,7 +136,7 @@ public sealed class MapObjectSpritePrototypeTests
         int expectedTop)
     {
         var success = MapIsometricObjectSpriteGeometry.TryGetImageBounds(
-            new Avalonia.Point(10, 20),
+            new Avalonia.Point(26, 28),
             new MapIsometricFloorCameraTransform(2, 0, 0),
             pixelWidth: 4,
             pixelHeight: 3,
@@ -152,8 +151,8 @@ public sealed class MapObjectSpritePrototypeTests
     }
 
     [Theory]
-    [InlineData(7, -4, 35, 1)]
-    [InlineData(-5, 3, 23, 8)]
+    [InlineData(7, -4, 19, -1)]
+    [InlineData(-5, 3, 7, 6)]
     public void SpriteGeometry_AddsPositiveAndNegativeFrmArtShiftsOnce(
         short artShiftX,
         short artShiftY,
@@ -161,7 +160,7 @@ public sealed class MapObjectSpritePrototypeTests
         int expectedTop)
     {
         var success = MapIsometricObjectSpriteGeometry.TryGetImageBounds(
-            new Avalonia.Point(0, 0),
+            new Avalonia.Point(16, 8),
             new MapIsometricFloorCameraTransform(1, 0, 0),
             pixelWidth: 8,
             pixelHeight: 6,
@@ -176,8 +175,8 @@ public sealed class MapObjectSpritePrototypeTests
     }
 
     [Theory]
-    [InlineData(5, 9, 30, 2)]
-    [InlineData(12, 4, 26, 7)]
+    [InlineData(5, 9, 14, 0)]
+    [InlineData(12, 4, 10, 5)]
     public void SpriteGeometry_UsesCeIntegerFrameDimensionAlignment(
         int pixelWidth,
         int pixelHeight,
@@ -185,7 +184,7 @@ public sealed class MapObjectSpritePrototypeTests
         int expectedTop)
     {
         var success = MapIsometricObjectSpriteGeometry.TryGetImageBounds(
-            new Avalonia.Point(0, 0),
+            new Avalonia.Point(16, 8),
             new MapIsometricFloorCameraTransform(1, 0, 0),
             pixelWidth,
             pixelHeight,
@@ -206,7 +205,7 @@ public sealed class MapObjectSpritePrototypeTests
         var direction3 = new FrmDirection(3, "SW", 7, -6, []);
 
         var firstDirectionSuccess = MapIsometricObjectSpriteGeometry.TryGetImageBounds(
-            new Avalonia.Point(0, 0),
+            new Avalonia.Point(16, 8),
             new MapIsometricFloorCameraTransform(1, 0, 0),
             pixelWidth: 5,
             pixelHeight: 9,
@@ -216,7 +215,7 @@ public sealed class MapObjectSpritePrototypeTests
             mapOffsetY: -1,
             out var firstDirectionBounds);
         var secondDirectionSuccess = MapIsometricObjectSpriteGeometry.TryGetImageBounds(
-            new Avalonia.Point(0, 0),
+            new Avalonia.Point(16, 8),
             new MapIsometricFloorCameraTransform(1, 0, 0),
             pixelWidth: 5,
             pixelHeight: 9,
@@ -228,8 +227,8 @@ public sealed class MapObjectSpritePrototypeTests
 
         Assert.True(firstDirectionSuccess);
         Assert.True(secondDirectionSuccess);
-        Assert.Equal(new Avalonia.Rect(27, 5, 5, 9), firstDirectionBounds);
-        Assert.Equal(new Avalonia.Rect(39, -5, 5, 9), secondDirectionBounds);
+        Assert.Equal(new Avalonia.Rect(11, 3, 5, 9), firstDirectionBounds);
+        Assert.Equal(new Avalonia.Rect(23, -7, 5, 9), secondDirectionBounds);
     }
 
     [Fact]
@@ -770,6 +769,189 @@ public sealed class MapObjectSpritePrototypeTests
             markers,
             out var spriteBounds));
         Assert.True(contentBounds.Contains(spriteBounds));
+    }
+
+    [Fact]
+    public void AssetLoadingDoesNotChangeCameraUntilFitIsRequested() =>
+        AvaloniaTestEnvironment.RunOnUiThread(CheckAssetLoadingCameraStabilityOnUiThread);
+
+    private void CheckAssetLoadingCameraStabilityOnUiThread()
+    {
+        EnsureAvaloniaInitialized();
+
+        const int viewportWidth = 640;
+        const int viewportHeight = 480;
+        var placement = CreatePlacement(1, rotation: 0, frame: 0);
+        using var tileBitmap = CreateSolidColorSprite(128, 256, 255, 0, 0);
+        using var spriteBitmap = CreateSolidColorSprite(1024, 768, 0, 0, 255);
+        var sprite = CreateRenderTestSprite(placement, spriteBitmap);
+        var view = new MapIsometricFloorView
+        {
+            Placements = [placement],
+            Elevation = 0,
+            ShowObjectMarkers = true,
+            ShowObjectSprites = true,
+            TileBitmaps = new Dictionary<uint, Bitmap>()
+        };
+        view.Measure(new Size(viewportWidth, viewportHeight));
+        view.Arrange(new Rect(0, 0, viewportWidth, viewportHeight));
+        view.FitToView();
+
+        var initialCamera = GetCamera(view);
+        var initialBounds = GetContentBounds(view);
+
+        view.TileBitmaps = new Dictionary<uint, Bitmap> { [1] = tileBitmap };
+        view.AssetRevision++;
+        var floorLoadedBounds = GetContentBounds(view);
+        Assert.NotEqual(initialBounds, floorLoadedBounds);
+        Assert.Equal(initialCamera, GetCamera(view));
+
+        view.ObjectSprites = [sprite];
+        var spritesLoadedBounds = GetContentBounds(view);
+        Assert.NotEqual(floorLoadedBounds, spritesLoadedBounds);
+        Assert.Equal(initialCamera, GetCamera(view));
+
+        view.SelectedRecordIndex = placement.RecordIndex;
+        view.SelectedObjectSprite = sprite;
+        Assert.Equal(initialCamera, GetCamera(view));
+
+        view.FitToView();
+        Assert.NotEqual(initialCamera, GetCamera(view));
+    }
+
+    [Fact]
+    public void InitialObjectMarkerZoom_AppliesOnceWhenMarkerLayerIsInitialized()
+    {
+        AvaloniaTestEnvironment.RunOnUiThread(() =>
+        {
+            EnsureAvaloniaInitialized();
+            const int viewportWidth = 640;
+            const int viewportHeight = 480;
+            var view = new MapIsometricFloorView
+            {
+                Values = new uint[MapTileGridDecoder.ValuesPerGrid],
+                MapIdentity = "maps/first.map"
+            };
+            view.Measure(new Size(viewportWidth, viewportHeight));
+            view.Arrange(new Rect(0, 0, viewportWidth, viewportHeight));
+            view.FitToView();
+
+            var fit = GetCamera(view);
+            var contentBounds = GetContentBounds(view);
+            Assert.True(MapIsometricFloorViewportGeometry.TryGetFitTransform(
+                contentBounds,
+                viewportWidth,
+                viewportHeight,
+                out var expectedFit));
+            Assert.Equal(expectedFit, fit);
+
+            view.ShowObjectMarkers = true;
+            var expectedInitialZoom = MapIsometricFloorViewportGeometry.ZoomAt(
+                fit,
+                viewportWidth / 2,
+                viewportHeight / 2,
+                view.InitialObjectMarkersZoomFactor,
+                contentBounds,
+                viewportWidth,
+                viewportHeight);
+            Assert.Equal(expectedInitialZoom, GetCamera(view));
+            Assert.Equal(fit.Scale * 1.2, expectedInitialZoom.Scale, 12);
+
+            view.FitToView();
+            Assert.Equal(fit, GetCamera(view));
+            view.ShowObjectMarkers = false;
+            view.ShowObjectMarkers = true;
+            Assert.Equal(fit, GetCamera(view));
+
+            view.MapIdentity = "maps/second.map";
+            view.Values = new uint[MapTileGridDecoder.ValuesPerGrid];
+            Assert.Equal(expectedInitialZoom, GetCamera(view));
+        });
+    }
+
+    [Fact]
+    public void InitialObjectMarkerZoom_PreservesAnExistingManualZoomAndPan()
+    {
+        AvaloniaTestEnvironment.RunOnUiThread(() =>
+        {
+            EnsureAvaloniaInitialized();
+            const int viewportWidth = 640;
+            const int viewportHeight = 480;
+            var view = new MapIsometricFloorView
+            {
+                Values = new uint[MapTileGridDecoder.ValuesPerGrid],
+                ShowObjectSprites = true
+            };
+            view.Measure(new Size(viewportWidth, viewportHeight));
+            view.Arrange(new Rect(0, 0, viewportWidth, viewportHeight));
+            view.FitToView();
+
+            var contentBounds = GetContentBounds(view);
+            var manualCamera = MapIsometricFloorViewportGeometry.ZoomAt(
+                GetCamera(view),
+                280,
+                220,
+                1.5,
+                contentBounds,
+                viewportWidth,
+                viewportHeight);
+            manualCamera = MapIsometricFloorViewportGeometry.Pan(
+                manualCamera,
+                -23,
+                14,
+                contentBounds,
+                viewportWidth,
+                viewportHeight);
+            SetCamera(view, manualCamera, isFitToView: false);
+
+            view.ShowObjectMarkers = true;
+
+            Assert.Equal(manualCamera, GetCamera(view));
+        });
+    }
+
+    [Fact]
+    public void InitialObjectMarkerZoom_RemainsStableAsAssetsComplete()
+    {
+        AvaloniaTestEnvironment.RunOnUiThread(() =>
+        {
+            EnsureAvaloniaInitialized();
+            const int viewportWidth = 640;
+            const int viewportHeight = 480;
+            var placement = CreatePlacement(1, rotation: 0, frame: 0);
+            using var tileBitmap = CreateSolidColorSprite(128, 256, 255, 0, 0);
+            using var spriteBitmap = CreateSolidColorSprite(1024, 768, 0, 0, 255);
+            var sprite = CreateRenderTestSprite(placement, spriteBitmap);
+            var view = new MapIsometricFloorView
+            {
+                Values = new uint[MapTileGridDecoder.ValuesPerGrid],
+                MapIdentity = "maps/initial-zoom.map",
+                Placements = [placement],
+                Elevation = 0,
+                ShowObjectMarkers = true,
+                ShowObjectSprites = true,
+                TileBitmaps = new Dictionary<uint, Bitmap>()
+            };
+            view.Measure(new Size(viewportWidth, viewportHeight));
+            view.Arrange(new Rect(0, 0, viewportWidth, viewportHeight));
+
+            var initialCamera = GetCamera(view);
+            var initialBounds = GetContentBounds(view);
+            Assert.True(MapIsometricFloorViewportGeometry.TryGetFitTransform(
+                initialBounds,
+                viewportWidth,
+                viewportHeight,
+                out var fit));
+            Assert.Equal(fit.Scale * view.InitialObjectMarkersZoomFactor, initialCamera.Scale, 12);
+
+            view.TileBitmaps = new Dictionary<uint, Bitmap> { [1] = tileBitmap };
+            view.AssetRevision++;
+            Assert.Equal(initialCamera, GetCamera(view));
+
+            view.ObjectSprites = [sprite];
+            Assert.NotEqual(initialBounds, GetContentBounds(view));
+            Assert.Equal(initialCamera, GetCamera(view));
+        });
     }
 
     [Fact]
@@ -1413,6 +1595,32 @@ public sealed class MapObjectSpritePrototypeTests
         Assert.NotNull(method);
         Assert.True((bool)method.Invoke(view, arguments)!);
         return Assert.IsType<Rect>(arguments[0]);
+    }
+
+    private static MapIsometricFloorCameraTransform GetCamera(MapIsometricFloorView view)
+    {
+        var field = typeof(MapIsometricFloorView).GetField(
+            "_cameraTransform",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(field);
+        return Assert.IsType<MapIsometricFloorCameraTransform>(field.GetValue(view));
+    }
+
+    private static void SetCamera(
+        MapIsometricFloorView view,
+        MapIsometricFloorCameraTransform camera,
+        bool isFitToView)
+    {
+        var cameraField = typeof(MapIsometricFloorView).GetField(
+            "_cameraTransform",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        var fitField = typeof(MapIsometricFloorView).GetField(
+            "_isFitToView",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+        Assert.NotNull(cameraField);
+        Assert.NotNull(fitField);
+        cameraField.SetValue(view, camera);
+        fitField.SetValue(view, isFitToView);
     }
 
     private static Task GetScheduledMapObjectSpritesTask(ArchiveBrowserViewModel viewModel)

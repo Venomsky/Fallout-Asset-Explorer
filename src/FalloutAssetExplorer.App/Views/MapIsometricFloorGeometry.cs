@@ -9,6 +9,8 @@ public static class MapIsometricFloorGeometry
     public const int DefaultCenterHexY = 100;
     public const int DefaultViewportWidth = 640;
     public const int DefaultViewportHeight = 480;
+    public const int SquareOriginToHexOriginX = 16;
+    public const int SquareOriginToHexOriginY = 2;
 
     public static bool TryCreateDefaultViewTransform(out MapIsometricFloorViewTransform transform) =>
         TryCreateViewTransform(

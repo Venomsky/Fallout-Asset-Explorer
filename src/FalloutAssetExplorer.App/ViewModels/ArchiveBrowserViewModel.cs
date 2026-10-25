@@ -31,6 +31,13 @@ public sealed class MsgArchiveFileItem
     public string ArchiveRelativePath { get; }
 }
 
+public sealed record MapSaveCandidate(
+    Guid SessionId,
+    long EditRevision,
+    string OriginalArchivePath,
+    string SuggestedFileName,
+    byte[] OutputBytes);
+
 public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposable
 {
     // App preview budget, not a MAP-format limit; keeps UI reads well below the archive reader's 512 MiB entry cap.
@@ -400,6 +407,14 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     }
 
     public string ArchivePathDisplay => _archivePath ?? "No archive selected";
+
+    public bool CanSaveMapAs =>
+        !string.IsNullOrWhiteSpace(_archivePath) && MapInspector.CanSaveMapAs;
+
+    public string MapSaveStatusDisplay =>
+        string.IsNullOrWhiteSpace(_archivePath)
+            ? "MAP Save As is unavailable until a MAP is loaded from an archive."
+            : MapInspector.MapSaveStatusDisplay;
 
     public string MsgFileBrowserStatus
     {
@@ -1269,6 +1284,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         _archive = null;
         _archivePath = null;
         SetEntries([]);
+        NotifyMapSaveStateChanged();
         OnPropertyChanged(nameof(ArchivePathDisplay));
         OnPropertyChanged(nameof(ArchiveFormatDisplay));
         OnPropertyChanged(nameof(CanOpenSelectedFrmInSpriteExplorer));
@@ -1284,6 +1300,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             _archivePath = archive.Path;
             SetEntries(archive.BrowserEntries);
             StatusMessage = $"Loaded {Entries.Count:N0} {GetArchiveFormatDisplay(archive)} entries.";
+            NotifyMapSaveStateChanged();
             OnPropertyChanged(nameof(ArchivePathDisplay));
             OnPropertyChanged(nameof(ArchiveFormatDisplay));
             OnPropertyChanged(nameof(CanOpenSelectedFrmInSpriteExplorer));
@@ -1301,6 +1318,129 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         {
             IsLoading = false;
         }
+    }
+
+    public MapSaveCandidate? CreateMapSaveCandidate()
+    {
+        if (!CanSaveMapAs
+            || string.IsNullOrWhiteSpace(_archivePath)
+            || MapInspector.EditSession is not { } session)
+        {
+            return null;
+        }
+
+        var result = MapInspector.CreateMapSaveOutput();
+        if (!result.IsSuccess || result.OutputBytes is not { } outputBytes)
+        {
+            MapInspector.ReportMapSaveAsFailure(result.Message);
+            return null;
+        }
+
+        var fileName = Path.GetFileNameWithoutExtension(SelectedEntry?.Path);
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            fileName = "edited-map";
+        }
+
+        return new MapSaveCandidate(
+            session.SessionId,
+            MapInspector.MapEditRevision,
+            _archivePath,
+            $"{fileName}.edited.map",
+            outputBytes);
+    }
+
+    public async Task<string?> SaveMapAsAsync(
+        MapSaveCandidate candidate,
+        string? destinationPath,
+        bool overwriteConfirmed,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        if (destinationPath is null)
+        {
+            return null;
+        }
+
+        if (!IsCurrentMapSaveCandidate(candidate))
+        {
+            ReportMapSaveAsFailure(
+                candidate,
+                "Start Save As again.");
+            return null;
+        }
+
+        try
+        {
+            var savedPath = await MapSaveAsService.SaveAsync(
+                candidate.OutputBytes,
+                destinationPath,
+                candidate.OriginalArchivePath,
+                overwriteConfirmed,
+                cancellationToken);
+            if (savedPath is null)
+            {
+                return null;
+            }
+
+            if (IsCurrentMapSaveCandidate(candidate))
+            {
+                MapInspector.MarkMapSaveAsSucceeded(
+                    candidate.SessionId,
+                    candidate.EditRevision,
+                    savedPath);
+            }
+            else
+            {
+                StatusMessage =
+                    $"Saved the previously selected MAP copy to {savedPath}; "
+                    + "the active MAP edit changed while saving.";
+            }
+
+            return savedPath;
+        }
+        catch (Exception exception) when (
+            exception is IOException
+            or UnauthorizedAccessException
+            or ArgumentException
+            or NotSupportedException
+            or System.Security.SecurityException)
+        {
+            ReportMapSaveAsFailure(candidate, exception.Message);
+            throw;
+        }
+    }
+
+    public void ReportMapSaveAsFailure(MapSaveCandidate candidate, string message)
+    {
+        ArgumentNullException.ThrowIfNull(candidate);
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+
+        if (IsCurrentMapSaveCandidate(candidate))
+        {
+            MapInspector.ReportMapSaveAsFailure(message);
+            return;
+        }
+
+        StatusMessage =
+            $"Could not save the previously selected MAP copy because the active MAP edit changed. {message}";
+    }
+
+    private bool IsCurrentMapSaveCandidate(MapSaveCandidate candidate)
+    {
+        if (string.IsNullOrWhiteSpace(_archivePath)
+            || !MapInspector.IsCurrentMapSave(candidate.SessionId, candidate.EditRevision))
+        {
+            return false;
+        }
+
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        return string.Equals(
+            Path.GetFullPath(_archivePath),
+            Path.GetFullPath(candidate.OriginalArchivePath),
+            comparison);
     }
 
     public async Task SelectMsgFileAsync(MsgArchiveFileItem? file)
@@ -1508,6 +1648,16 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                     objectPlacements is not null
                         ? new MapEditSession(metadata, objectPlacements)
                         : null);
+                if (objectPlacements is not null)
+                {
+                    MapInspector.SetMapSerializationContext(
+                        archive.Game,
+                        metadata,
+                        tileGrids,
+                        objectPlacements,
+                        archive.Path);
+                }
+
                 MapInspector.SetMapObjectPlacements(MapObjectPlacements);
                 MapInspector.ClearSelectedMapObject();
                 ScheduleMapObjectSpriteBatch();
@@ -3627,7 +3777,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     private static string FormatPrototypeDiagnosticDetails(Fallout2PrototypeDiagnostic diagnostic)
     {
         var fileName = diagnostic.VerifiedFileName is not null
-            ? $"Verified file: {diagnostic.VerifiedFileName}"
+            ? $"PID/file match: {diagnostic.VerifiedFileName}"
             : diagnostic.ListedFileName is not null
                 ? $"Listed file (unverified): {diagnostic.ListedFileName}"
                 : "File: unavailable";
@@ -3760,6 +3910,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
 
     private void MapInspector_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName is nameof(MapInspectorViewModel.CanSaveMapAs)
+            or nameof(MapInspectorViewModel.MapSaveStatusDisplay))
+        {
+            NotifyMapSaveStateChanged();
+        }
+
         var isIsometricLayerSwitch = false;
         if (e.PropertyName == nameof(MapInspectorViewModel.IsMapInspector))
         {
@@ -3808,6 +3964,12 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
                 ScheduleMapObjectSpriteBatch();
             }
         }
+    }
+
+    private void NotifyMapSaveStateChanged()
+    {
+        OnPropertyChanged(nameof(CanSaveMapAs));
+        OnPropertyChanged(nameof(MapSaveStatusDisplay));
     }
 
     private void MapInspector_SelectedMapObjectChanged(

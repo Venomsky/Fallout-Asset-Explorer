@@ -8,7 +8,7 @@ using FalloutAssetExplorer.Core;
 
 namespace FalloutAssetExplorer.App.Views;
 
-public sealed class MapIsometricFloorView : Control
+public sealed partial class MapIsometricFloorView : Control
 {
     private const double ZoomStep = 1.2;
 
@@ -38,6 +38,14 @@ public sealed class MapIsometricFloorView : Control
 
     public static readonly StyledProperty<int> AssetRevisionProperty =
         AvaloniaProperty.Register<MapIsometricFloorView, int>(nameof(AssetRevision));
+
+    public static readonly StyledProperty<double> InitialObjectMarkersZoomFactorProperty =
+        AvaloniaProperty.Register<MapIsometricFloorView, double>(
+            nameof(InitialObjectMarkersZoomFactor),
+            1.2);
+
+    public static readonly StyledProperty<string?> MapIdentityProperty =
+        AvaloniaProperty.Register<MapIsometricFloorView, string?>(nameof(MapIdentity));
 
     public static readonly StyledProperty<IReadOnlyList<MapObjectPlacement>?> PlacementsProperty =
         AvaloniaProperty.Register<MapIsometricFloorView, IReadOnlyList<MapObjectPlacement>?>(
@@ -75,11 +83,24 @@ public sealed class MapIsometricFloorView : Control
     private Point? _pointerPosition;
     private string? _hoveredPrototypeFileName;
     private bool _isFitToView = true;
+    private bool _hasAppliedInitialObjectMarkersZoom;
 
     public uint[]? Values
     {
         get => GetValue(ValuesProperty);
         set => SetValue(ValuesProperty, value);
+    }
+
+    public double InitialObjectMarkersZoomFactor
+    {
+        get => GetValue(InitialObjectMarkersZoomFactorProperty);
+        set => SetValue(InitialObjectMarkersZoomFactorProperty, value);
+    }
+
+    public string? MapIdentity
+    {
+        get => GetValue(MapIdentityProperty);
+        set => SetValue(MapIdentityProperty, value);
     }
 
     public IReadOnlyDictionary<uint, Bitmap>? TileBitmaps
@@ -146,7 +167,14 @@ public sealed class MapIsometricFloorView : Control
 
     public void FitToView()
     {
+        var diagnosticPairId = BeginViewDiagnostic("Fit", "explicit Fit");
         UpdateFitCamera();
+        if (ShowObjectMarkers)
+        {
+            _hasAppliedInitialObjectMarkersZoom = true;
+        }
+
+        EndViewDiagnostic("Fit", "explicit Fit", diagnosticPairId);
         RefreshHoverToolTip();
         InvalidateVisual();
     }
@@ -154,7 +182,8 @@ public sealed class MapIsometricFloorView : Control
     private void UpdateFitCamera()
     {
         _isFitToView = true;
-        _cameraTransform = TryGetContentBounds(out var contentBounds)
+        var hasContentBounds = TryGetContentBounds(out var contentBounds);
+        _cameraTransform = hasContentBounds
             && MapIsometricFloorViewportGeometry.TryGetFitTransform(
                 contentBounds,
                 Bounds.Width,
@@ -167,16 +196,22 @@ public sealed class MapIsometricFloorView : Control
     protected override void OnSizeChanged(SizeChangedEventArgs e)
     {
         base.OnSizeChanged(e);
+        var reason = FormattableString.Invariant(
+            $"{e.PreviousSize.Width:R}x{e.PreviousSize.Height:R}->{e.NewSize.Width:R}x{e.NewSize.Height:R}");
+        var diagnosticPairId = BeginViewDiagnostic("SizeChanged", reason);
         if (_isFitToView)
         {
             UpdateFitCamera();
+            TryApplyInitialObjectMarkersZoom();
+            EndViewDiagnostic("SizeChanged", reason, diagnosticPairId);
             RefreshHoverToolTip();
             InvalidateVisual();
             return;
         }
 
+        var hasContentBounds = TryGetContentBounds(out var contentBounds);
         if (_cameraTransform is MapIsometricFloorCameraTransform current
-            && TryGetContentBounds(out var contentBounds)
+            && hasContentBounds
             && MapIsometricFloorViewportGeometry.TryGetResizedTransform(
                 current,
                 e.PreviousSize.Width,
@@ -193,13 +228,23 @@ public sealed class MapIsometricFloorView : Control
             UpdateFitCamera();
         }
 
+        EndViewDiagnostic("SizeChanged", reason, diagnosticPairId);
         RefreshHoverToolTip();
         InvalidateVisual();
     }
 
     protected override void OnPropertyChanged(AvaloniaPropertyChangedEventArgs change)
     {
+        var shouldDiagnose = IsViewDiagnosticsEnabled && IsViewDiagnosticProperty(change.Property);
+        var diagnosticReason = shouldDiagnose
+            ? $"{change.Property.Name}:{FormatDiagnosticValue(change.OldValue)}->{FormatDiagnosticValue(change.NewValue)}"
+            : string.Empty;
+        var diagnosticPairId = shouldDiagnose
+            ? BeginViewDiagnostic("PropertyChanged", diagnosticReason)
+            : 0;
+
         base.OnPropertyChanged(change);
+
         if (change.Property == ObjectSpritesProperty
             || change.Property == SelectedObjectSpriteProperty
             || change.Property == SelectedRecordIndexProperty)
@@ -210,6 +255,7 @@ public sealed class MapIsometricFloorView : Control
         if (change.Property == ValuesProperty)
         {
             UpdateFitCamera();
+            TryApplyInitialObjectMarkersZoom();
         }
         else if (change.Property == TileBitmapsProperty || change.Property == AssetRevisionProperty)
         {
@@ -245,18 +291,28 @@ public sealed class MapIsometricFloorView : Control
             {
                 UpdateFitCamera();
             }
+
+            if (change.Property == ShowObjectMarkersProperty && ShowObjectMarkers)
+            {
+                TryApplyInitialObjectMarkersZoom();
+            }
+        }
+        else if (change.Property == MapIdentityProperty)
+        {
+            _hasAppliedInitialObjectMarkersZoom = false;
+        }
+        else if (change.Property == InitialObjectMarkersZoomFactorProperty)
+        {
+            TryApplyInitialObjectMarkersZoom();
         }
         else if (change.Property == SelectedRecordIndexProperty)
         {
             ValidateSelectedRecord();
         }
-        else if (change.Property == SelectedObjectSpriteProperty && _isFitToView)
+        else if (change.Property == SelectedObjectSpriteProperty
+            || change.Property == ObjectSpritesProperty)
         {
-            UpdateFitCamera();
-        }
-        else if (change.Property == ObjectSpritesProperty && _isFitToView)
-        {
-            UpdateFitCamera();
+            UpdateCameraForAssetChange();
         }
 
         if (change.Property == ValuesProperty
@@ -266,12 +322,18 @@ public sealed class MapIsometricFloorView : Control
             || change.Property == ElevationProperty
             || change.Property == ShowObjectMarkersProperty
             || change.Property == ShowObjectSpritesProperty
+            || change.Property == ShowRegistrationDiagnosticsProperty
             || change.Property == SelectedRecordIndexProperty
             || change.Property == SelectedObjectSpriteProperty
             || change.Property == ObjectSpritesProperty)
         {
             InvalidateVisual();
             RefreshHoverToolTip();
+        }
+
+        if (shouldDiagnose)
+        {
+            EndViewDiagnostic("PropertyChanged", diagnosticReason, diagnosticPairId);
         }
     }
 
@@ -465,8 +527,13 @@ public sealed class MapIsometricFloorView : Control
                         markerRadius + 2);
                 }
             }
-
         }
+
+        if (ShowRegistrationDiagnostics)
+        {
+            DrawRegistrationDiagnostics(context, projection, camera, markers);
+        }
+
     }
 
     private void SetSpriteRenderDiagnostic(string? message)
@@ -554,6 +621,7 @@ public sealed class MapIsometricFloorView : Control
         _cameraTransform = current;
         _panLastPosition = e.GetPosition(this);
         _isFitToView = false;
+        _viewDiagnosticPanPairId = BeginViewDiagnostic("Pan", "user pan");
         e.Pointer.Capture(this);
         e.Handled = true;
     }
@@ -589,6 +657,8 @@ public sealed class MapIsometricFloorView : Control
         }
 
         _panLastPosition = null;
+        EndViewDiagnostic("Pan", "user pan", _viewDiagnosticPanPairId);
+        _viewDiagnosticPanPairId = 0;
         e.Pointer.Capture(null);
         e.Handled = true;
     }
@@ -597,6 +667,8 @@ public sealed class MapIsometricFloorView : Control
     {
         base.OnPointerCaptureLost(e);
         _panLastPosition = null;
+        EndViewDiagnostic("Pan", "pointer capture lost", _viewDiagnosticPanPairId);
+        _viewDiagnosticPanPairId = 0;
     }
 
     protected override void OnPointerWheelChanged(PointerWheelEventArgs e)
@@ -610,6 +682,9 @@ public sealed class MapIsometricFloorView : Control
         }
 
         var position = e.GetPosition(this);
+        var diagnosticPairId = BeginViewDiagnostic(
+            "Zoom",
+            FormattableString.Invariant($"wheel delta={e.Delta.Y:R};at={position.X:R},{position.Y:R}"));
         _cameraTransform = MapIsometricFloorViewportGeometry.ZoomAt(
             current,
             position.X,
@@ -619,6 +694,10 @@ public sealed class MapIsometricFloorView : Control
             Bounds.Width,
             Bounds.Height);
         _isFitToView = false;
+        EndViewDiagnostic(
+            "Zoom",
+            FormattableString.Invariant($"wheel delta={e.Delta.Y:R};at={position.X:R},{position.Y:R}"),
+            diagnosticPairId);
         UpdateHoverToolTip(position);
         InvalidateVisual();
         e.Handled = true;
@@ -626,24 +705,9 @@ public sealed class MapIsometricFloorView : Control
 
     private void UpdateCameraForAssetChange()
     {
-        if (_isFitToView)
+        if (!TryGetCurrentCamera(out _))
         {
-            FitToView();
-            return;
-        }
-
-        if (_cameraTransform is MapIsometricFloorCameraTransform current
-            && TryGetContentBounds(out var contentBounds)
-            && MapIsometricFloorViewportGeometry.TryGetResizedTransform(
-                current,
-                Bounds.Width,
-                Bounds.Height,
-                Bounds.Width,
-                Bounds.Height,
-                contentBounds,
-                out var adjusted))
-        {
-            _cameraTransform = adjusted;
+            UpdateFitCamera();
         }
     }
 
@@ -652,7 +716,51 @@ public sealed class MapIsometricFloorView : Control
         if ((ShowObjectMarkers || ShowObjectSprites) && !TryGetCurrentCamera(out _))
         {
             UpdateFitCamera();
+            TryApplyInitialObjectMarkersZoom();
         }
+    }
+
+    private void TryApplyInitialObjectMarkersZoom()
+    {
+        if (_hasAppliedInitialObjectMarkersZoom
+            || !ShowObjectMarkers
+            || !TryGetCurrentCamera(out var current))
+        {
+            return;
+        }
+
+        if (!_isFitToView)
+        {
+            _hasAppliedInitialObjectMarkersZoom = true;
+            return;
+        }
+
+        if (!double.IsFinite(InitialObjectMarkersZoomFactor)
+            || InitialObjectMarkersZoomFactor <= 0
+            || !TryGetContentBounds(out var contentBounds)
+            || Bounds.Width <= 0
+            || Bounds.Height <= 0)
+        {
+            return;
+        }
+
+        _hasAppliedInitialObjectMarkersZoom = true;
+        var diagnosticPairId =
+            BeginViewDiagnostic("InitialMarkerZoom", "first marker-layer initialization");
+        _cameraTransform = MapIsometricFloorViewportGeometry.ZoomAt(
+            current,
+            Bounds.Width / 2,
+            Bounds.Height / 2,
+            InitialObjectMarkersZoomFactor,
+            contentBounds,
+            Bounds.Width,
+            Bounds.Height);
+        _isFitToView = false;
+        EndViewDiagnostic(
+            "InitialMarkerZoom",
+            "first marker-layer initialization",
+            diagnosticPairId);
+        RefreshHoverToolTip();
     }
 
     private IReadOnlyList<MapIsometricObjectMarker> GetObjectMarkers(
@@ -892,4 +1000,5 @@ public sealed class MapIsometricFloorView : Control
 
         return true;
     }
+
 }

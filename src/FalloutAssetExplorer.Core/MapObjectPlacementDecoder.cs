@@ -71,7 +71,8 @@ public static class MapObjectPlacementDecoder
         return decoded with
         {
             SourceData = source,
-            Provenance = header.Provenance
+            Provenance = header.Provenance,
+            SourceDecodedObjects = Array.AsReadOnly(decoded.Objects.ToArray())
         };
     }
 
@@ -141,6 +142,7 @@ public static class MapObjectPlacementDecoder
         var objects = new List<MapObjectPlacement>(totalObjectCount);
         var resolver = prototypeResolver ?? new Fallout2PrototypeResolver(archive);
         string? unsupportedReason = null;
+        var hasUnsupportedObjectPayload = false;
         for (var elevation = 0; elevation < objectCountsByElevation.Length; elevation++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -171,7 +173,10 @@ public static class MapObjectPlacementDecoder
                         objectCountsByElevation,
                         objects,
                         unsupportedReason,
-                        data.Length - offset);
+                        data.Length - offset)
+                    {
+                        HasUnsupportedObjectPayload = hasUnsupportedObjectPayload
+                    };
                 }
 
                 var objectResult = await ReadObjectTreeAsync(
@@ -183,9 +188,11 @@ public static class MapObjectPlacementDecoder
                     0,
                     null,
                     null,
+                    null,
                     new MapReadCursor(offset),
                     cancellationToken);
                 offset = objectResult.Offset;
+                hasUnsupportedObjectPayload |= objectResult.HasUnsupportedObjectPayload;
                 if (objectResult.UnsupportedReason is not null)
                 {
                     unsupportedReason = objectResult.UnsupportedReason;
@@ -195,7 +202,10 @@ public static class MapObjectPlacementDecoder
                         objectCountsByElevation,
                         objects,
                         unsupportedReason,
-                        data.Length - offset);
+                        data.Length - offset)
+                    {
+                        HasUnsupportedObjectPayload = hasUnsupportedObjectPayload
+                    };
                 }
             }
         }
@@ -212,7 +222,10 @@ public static class MapObjectPlacementDecoder
             objectCountsByElevation,
             objects,
             null,
-            data.Length - offset);
+            data.Length - offset)
+        {
+            HasUnsupportedObjectPayload = hasUnsupportedObjectPayload
+        };
     }
 
     private static void SkipScriptSection(ReadOnlySpan<byte> bytes, ref int offset)
@@ -265,7 +278,8 @@ public static class MapObjectPlacementDecoder
 
     private static async Task<(
         string? UnsupportedReason,
-        int Offset)> ReadObjectTreeAsync(
+        int Offset,
+        bool HasUnsupportedObjectPayload)> ReadObjectTreeAsync(
         ReadOnlyMemory<byte> data,
         int elevationGroup,
         MapHeaderMetadata header,
@@ -274,12 +288,14 @@ public static class MapObjectPlacementDecoder
         int inventoryDepth,
         int? parentRecordIndex,
         int? inventoryQuantity,
+        int? inventoryQuantityOffset,
         MapReadCursor cursor,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var recordIndex = objects.Count;
         var recordOffset = cursor.Offset;
+        var rawHexIndexOffset = checked(recordOffset + sizeof(int));
         var rawHeader = new int[ObjectBaseIntCount];
         for (var index = 0; index < rawHeader.Length; index++)
         {
@@ -295,6 +311,7 @@ public static class MapObjectPlacementDecoder
         var payloadWords = new List<int>();
         string? prototypeFileName = null;
         string? unsupportedReason = null;
+        var hasUnsupportedObjectPayload = false;
 
         if (unsupportedReason is null)
         {
@@ -310,6 +327,7 @@ public static class MapObjectPlacementDecoder
                     if (header.Game == FalloutGame.Fallout1)
                     {
                         unsupportedReason = $"Object record {recordIndex} PID type Item requires Fallout 2 PRO subtype data to determine its record layout.";
+                        hasUnsupportedObjectPayload = true;
                     }
                     else
                     {
@@ -334,12 +352,14 @@ public static class MapObjectPlacementDecoder
                         else
                         {
                             unsupportedReason = $"Object record {recordIndex} item PRO metadata is unavailable: {itemType.Status}";
+                            hasUnsupportedObjectPayload = true;
                         }
                     }
                 }
                 else if (pidType == 2 && header.Game == FalloutGame.Fallout1)
                 {
                     unsupportedReason = $"Object record {recordIndex} PID type Scenery requires PRO subtype data to determine its record layout.";
+                    hasUnsupportedObjectPayload = true;
                 }
                 else if (pidType == 2)
                 {
@@ -391,10 +411,12 @@ public static class MapObjectPlacementDecoder
                     else if (sceneryType.HasSupportedSubtype)
                     {
                         unsupportedReason = $"Object record {recordIndex} scenery subtype {resolvedSceneryType} is not supported.";
+                        hasUnsupportedObjectPayload = true;
                     }
                     else
                     {
                         unsupportedReason = $"Object record {recordIndex} scenery PRO metadata is unavailable: {sceneryType.Status}";
+                        hasUnsupportedObjectPayload = true;
                     }
                 }
                 else if (pidType == 5 && rawPid is >= 0x05000010 and <= 0x05000017)
@@ -404,6 +426,7 @@ public static class MapObjectPlacementDecoder
                 else if (pidType is < 0 or > 10)
                 {
                     unsupportedReason = $"Object record {recordIndex} has unsupported PID type identifier {pidType}.";
+                    hasUnsupportedObjectPayload = true;
                 }
             }
         }
@@ -483,16 +506,18 @@ public static class MapObjectPlacementDecoder
             warning,
             unsupportedReason)
         {
+            RawHexIndexOffset = rawHexIndexOffset,
             ParentRecordIndex = parentRecordIndex,
             InventoryDepth = inventoryDepth,
             InventoryQuantity = inventoryQuantity,
+            InventoryQuantityOffset = inventoryQuantityOffset,
             PrototypeFileName = pidType is 0 or 2 ? prototypeFileName : null
         };
         objects.Add(placement);
 
         if (unsupportedReason is not null || rawInventoryLength == 0)
         {
-            return (unsupportedReason, cursor.Offset);
+            return (unsupportedReason, cursor.Offset, hasUnsupportedObjectPayload);
         }
 
         for (var inventoryIndex = 0; inventoryIndex < rawInventoryLength; inventoryIndex++)
@@ -505,6 +530,7 @@ public static class MapObjectPlacementDecoder
                 break;
             }
 
+            var quantityOffset = cursor.Offset;
             int quantity;
             try
             {
@@ -521,7 +547,7 @@ public static class MapObjectPlacementDecoder
             }
 
             var childOffset = cursor.Offset;
-            (string? UnsupportedReason, int Offset) childResult;
+            (string? UnsupportedReason, int Offset, bool HasUnsupportedObjectPayload) childResult;
             try
             {
                 childResult = await ReadObjectTreeAsync(
@@ -533,6 +559,7 @@ public static class MapObjectPlacementDecoder
                     inventoryDepth + 1,
                     recordIndex,
                     quantity,
+                    quantityOffset,
                     cursor,
                     cancellationToken);
             }
@@ -546,11 +573,12 @@ public static class MapObjectPlacementDecoder
             if (childResult.UnsupportedReason is not null)
             {
                 unsupportedReason = childResult.UnsupportedReason;
+                hasUnsupportedObjectPayload |= childResult.HasUnsupportedObjectPayload;
                 break;
             }
         }
 
-        return (unsupportedReason, cursor.Offset);
+        return (unsupportedReason, cursor.Offset, hasUnsupportedObjectPayload);
     }
 
     private static void ReadInt32Words(
@@ -644,11 +672,15 @@ public sealed record MapObjectPlacement(
     string? Warning,
     string? UnsupportedReason)
 {
+    public int RawHexIndexOffset { get; init; }
+
     public int? ParentRecordIndex { get; init; }
 
     public int InventoryDepth { get; init; }
 
     public int? InventoryQuantity { get; init; }
+
+    public int? InventoryQuantityOffset { get; init; }
 
     public string? PrototypeFileName { get; init; }
 
@@ -718,6 +750,10 @@ public sealed record MapObjectPlacementData(
     public MapSourceData? SourceData { get; init; }
 
     public MapDecodeProvenance? Provenance { get; internal init; }
+
+    internal IReadOnlyList<MapObjectPlacement>? SourceDecodedObjects { get; init; }
+
+    public bool HasUnsupportedObjectPayload { get; internal init; }
 
     public int DecodedTopLevelObjectCount => Objects.Count(placement => placement.ParentRecordIndex is null);
 

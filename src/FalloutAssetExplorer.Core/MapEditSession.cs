@@ -6,6 +6,12 @@ public sealed record MapEditSessionObject(
     MapEditObjectId Id,
     MapObjectPlacement Placement);
 
+public sealed record MapInventoryQuantityEdit(
+    int RecordIndex,
+    int? ByteOffset,
+    int OriginalQuantity,
+    int Quantity);
+
 public sealed class MapEditSession
 {
     private sealed record SourceBoundData(
@@ -130,6 +136,31 @@ public sealed class MapEditSession
     public bool IsDirty =>
         _dirtyInventoryQuantityRecordIndexes.Count > 0
         || _dirtyHexTileIndexes.Count > 0;
+
+    public bool HasDirtyInventoryQuantityEdits =>
+        _dirtyInventoryQuantityRecordIndexes.Count > 0;
+
+    public bool HasDirtyHexTileIndexEdits =>
+        _dirtyHexTileIndexes.Count > 0;
+
+    public IReadOnlyList<MapInventoryQuantityEdit> GetDirtyInventoryQuantityEdits() =>
+        Array.AsReadOnly(
+            _dirtyInventoryQuantityRecordIndexes
+                .Order()
+                .Select(recordIndex =>
+                {
+                    var placement = _objectsByRecordIndex[recordIndex].Placement;
+                    return new MapInventoryQuantityEdit(
+                        recordIndex,
+                        placement.InventoryQuantityOffset,
+                        _initialInventoryQuantitiesByRecordIndex[recordIndex]
+                            ?? throw new InvalidOperationException(
+                                $"MAP record {recordIndex} has no original inventory quantity."),
+                        placement.InventoryQuantity
+                            ?? throw new InvalidOperationException(
+                                $"MAP record {recordIndex} has no current inventory quantity."));
+                })
+                .ToArray());
 
     public MapEditSessionObject? GetObject(MapEditObjectId id) =>
         id.SessionId == SessionId ? GetObject(id.RecordIndex) : null;

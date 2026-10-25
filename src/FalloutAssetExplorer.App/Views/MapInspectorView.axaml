@@ -46,6 +46,8 @@
                 Values="{Binding SelectedMapGridValues}"
                 TileBitmaps="{Binding MapFloorTileBitmaps}"
                 AssetRevision="{Binding MapFloorTilesRevision}"
+                InitialObjectMarkersZoomFactor="1.2"
+                MapIdentity="{Binding SelectedEntry.Path}"
                 Placements="{Binding MapInspector.FilteredMapObjectPlacements}"
                 Elevation="{Binding MapInspector.SelectedMapElevationIndex}"
                 ShowObjectMarkers="{Binding IsMapIsometricObjectMarkerLayerVisible}"
@@ -132,6 +134,13 @@
               IsVisible="{Binding IsMapIsometricViewVisible}"
               ToolTip.Tip="Fit the isometric floor tiles and object markers (wheel: zoom, right/middle drag: pan)"
               AutomationProperties.Name="Fit isometric view" />
+          <ToggleButton
+              Content="Coordinate overlay"
+              IsChecked="False"
+              Click="ToggleMapRegistrationDiagnostics_Click"
+              IsVisible="{Binding IsMapIsometricViewVisible}"
+              ToolTip.Tip="Show selected-object and nearby floor coordinates without changing rendering"
+              AutomationProperties.Name="Toggle MAP coordinate registration overlay" />
           <Button
               Content="Center"
               Click="MapHexCenter_Click"
@@ -197,6 +206,23 @@
                     Text="{Binding MapInspector.MapObjectDetailsDisplay}"
                     TextWrapping="Wrap" />
                 <StackPanel
+                    Orientation="Horizontal"
+                    Spacing="6">
+                  <Button
+                      x:Name="MapSaveAsButton"
+                      Content="Save As..."
+                      Click="SaveMapAs_Click"
+                      IsEnabled="{Binding MapInspector.CanSaveMapAs}"
+                      AutomationProperties.Name="Save edited MAP as a separate file" />
+                  <TextBlock
+                      Foreground="#AAB2BF"
+                      FontSize="10"
+                      Text="{Binding MapInspector.MapSaveStatusDisplay}"
+                      TextWrapping="Wrap"
+                      VerticalAlignment="Center"
+                      AutomationProperties.Name="MAP Save As status" />
+                </StackPanel>
+                <StackPanel
                     IsVisible="{Binding MapInspector.HasEditSession}"
                     Spacing="4">
                   <TextBlock
@@ -224,7 +250,7 @@
                     <TextBlock
                         Foreground="#AAB2BF"
                         FontSize="10"
-                        Text="Inventory quantity (in memory only)" />
+                          Text="Inventory quantity" />
                     <StackPanel
                         Orientation="Horizontal"
                         Spacing="4">

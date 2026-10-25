@@ -90,8 +90,10 @@ public static class MapObjectFloorSampleGeometry
 
         var squareCenterX = centerTileX / 2;
         var squareCenterY = centerTileY / 2;
-        var squareOffsetX = -16 - ((centerTileY & 1) != 0 ? 16 : 0);
-        var squareOffsetY = -2 - ((centerTileY & 1) != 0 ? 12 : 0);
+        var squareOffsetX = -MapIsometricFloorGeometry.SquareOriginToHexOriginX
+            - ((centerTileY & 1) != 0 ? 16 : 0);
+        var squareOffsetY = -MapIsometricFloorGeometry.SquareOriginToHexOriginY
+            - ((centerTileY & 1) != 0 ? 12 : 0);
         var relativeX = screenX - squareOffsetX;
         var relativeY = screenY - squareOffsetY - 12;
 

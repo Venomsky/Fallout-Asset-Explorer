@@ -105,13 +105,23 @@ public static class MapHeaderDecoder
         }
     }
 
-    private static bool IsSupportedVersion(FalloutGame game, int version) =>
+    internal static bool IsSupportedGameVersion(FalloutGame game, int version) =>
         game switch
         {
             FalloutGame.Fallout1 => version == 19,
             FalloutGame.Fallout2 => version is 19 or 20,
-            _ => throw new ArgumentOutOfRangeException(nameof(game), game, "Unknown Fallout game.")
+            _ => false
         };
+
+    private static bool IsSupportedVersion(FalloutGame game, int version)
+    {
+        if (game is not FalloutGame.Fallout1 and not FalloutGame.Fallout2)
+        {
+            throw new ArgumentOutOfRangeException(nameof(game), game, "Unknown Fallout game.");
+        }
+
+        return IsSupportedGameVersion(game, version);
+    }
 
     private static int GetGameNumber(FalloutGame game) =>
         game switch

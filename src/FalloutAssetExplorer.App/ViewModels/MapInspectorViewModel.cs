@@ -35,6 +35,17 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
     private MapObjectPlacement? _selectedMapObject;
     private MapEditObjectId? _selectedMapEditObjectId;
     private MapEditSession? _mapEditSession;
+    private FalloutGame? _mapSaveGame;
+    private MapHeaderMetadata? _mapSaveHeader;
+    private MapTileGridData? _mapSaveTileGrids;
+    private MapObjectPlacementData? _mapSaveObjectPlacements;
+    private string? _mapSaveSourceArchivePath;
+    private long _mapEditRevision;
+    private Guid? _savedMapSessionId;
+    private long? _savedMapEditRevision;
+    private string? _savedMapOutputPath;
+    private string? _mapSaveFailureMessage;
+    private long? _mapSaveFailureRevision;
     private string _inventoryQuantityInput = string.Empty;
     private string? _inventoryQuantityValidationError;
     private string _mapObjectDetailsDisplay = "Select a parsed object to inspect its raw fields.";
@@ -287,14 +298,61 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
 
     public bool IsMapEditSessionDirty => _mapEditSession?.IsDirty ?? false;
 
+    public bool CanSaveMapAs =>
+        !string.IsNullOrWhiteSpace(_mapSaveSourceArchivePath)
+        && IsMapEditSessionDirty
+        && GetMapSaveEligibility().IsEligible;
+
+    public long MapEditRevision => _mapEditRevision;
+
+    public string MapSaveStatusDisplay
+    {
+        get
+        {
+            var eligibility = GetMapSaveEligibility();
+            if (!eligibility.IsEligible)
+            {
+                return $"MAP Save As is unavailable: {eligibility.Message}";
+            }
+
+            if (string.IsNullOrWhiteSpace(_mapSaveSourceArchivePath))
+            {
+                return "MAP Save As is unavailable because the source archive path is not retained.";
+            }
+
+            if (!IsMapEditSessionDirty)
+            {
+                return "MAP Save As is disabled because there are no changed inventory quantities.";
+            }
+
+            if (_mapSaveFailureRevision == _mapEditRevision
+                && !string.IsNullOrWhiteSpace(_mapSaveFailureMessage))
+            {
+                return $"MAP Save As failed: {_mapSaveFailureMessage} The in-memory edit is still available.";
+            }
+
+            if (IsCurrentMapEditSaved)
+            {
+                return $"Saved MAP copy: {_savedMapOutputPath}. The original archive is unchanged.";
+            }
+
+            var previousSave = _savedMapOutputPath is null
+                ? string.Empty
+                : $" Last saved copy: {_savedMapOutputPath}.";
+            return eligibility.Message + previousSave;
+        }
+    }
+
     public bool CanUndoMapEdit => _mapEditSession?.CanUndo ?? false;
 
     public bool CanRedoMapEdit => _mapEditSession?.CanRedo ?? false;
 
     public string EditSessionDirtyDisplay =>
-        IsMapEditSessionDirty
-            ? "Unsaved in-memory MAP changes"
-            : "No unsaved in-memory MAP changes";
+        !IsMapEditSessionDirty
+            ? "No unsaved in-memory MAP changes"
+            : IsCurrentMapEditSaved
+                ? "Current changes are saved to a separate MAP copy"
+                : "Unsaved in-memory MAP changes";
 
     public MapEditSessionObject? SelectedEditObject =>
         _mapEditSession is { } session && _selectedMapEditObjectId is { } id
@@ -305,11 +363,13 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
         _mapEditSession is { } session
             ? string.Format(
                 CultureInfo.CurrentCulture,
-                "In-memory MAP session: {0:N0} parsed objects; {1:N0} source bytes retained. {2}. Changes are not saved to a MAP file.",
+                "MAP edit session: {0:N0} parsed objects; {1:N0} source bytes retained. {2}.",
                 session.Objects.Count,
                 session.SourceData.Length,
                 IsMapEditSessionDirty
-                    ? "There are unsaved changes"
+                    ? IsCurrentMapEditSaved
+                        ? $"Changes saved to {_savedMapOutputPath}; the original archive is unchanged"
+                        : "There are unsaved changes"
                     : "There are no unsaved changes")
             : string.Empty;
 
@@ -368,6 +428,77 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
         var succeeded = session.Redo(out var error);
         SetInventoryQuantityValidationError(error);
         return succeeded;
+    }
+
+    public void SetMapSerializationContext(
+        FalloutGame? game,
+        MapHeaderMetadata? header,
+        MapTileGridData? tileGrids,
+        MapObjectPlacementData? objectPlacements,
+        string? sourceArchivePath)
+    {
+        _mapSaveGame = game;
+        _mapSaveHeader = header;
+        _mapSaveTileGrids = tileGrids;
+        _mapSaveObjectPlacements = objectPlacements;
+        _mapSaveSourceArchivePath = sourceArchivePath;
+        NotifyMapSaveStateChanged();
+    }
+
+    public MapInventoryQuantityPatchResult CreateMapSaveOutput()
+    {
+        if (_mapEditSession is null
+            || _mapSaveGame is not FalloutGame game
+            || _mapSaveHeader is null
+            || _mapSaveTileGrids is null
+            || _mapSaveObjectPlacements is null)
+        {
+            return new MapInventoryQuantityPatchResult(
+                false,
+                "The complete source-bound MAP decode is not available.",
+                null);
+        }
+
+        return MapInventoryQuantityPatchBuilder.Create(
+            _mapEditSession.SourceData,
+            game,
+            _mapSaveHeader,
+            _mapSaveTileGrids,
+            _mapSaveObjectPlacements,
+            _mapEditSession);
+    }
+
+    public bool IsCurrentMapSave(Guid sessionId, long revision) =>
+        _mapEditSession?.SessionId == sessionId
+        && _mapEditRevision == revision;
+
+    public void MarkMapSaveAsSucceeded(
+        Guid sessionId,
+        long revision,
+        string destinationPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(destinationPath);
+        if (!IsCurrentMapSave(sessionId, revision))
+        {
+            return;
+        }
+
+        _savedMapSessionId = sessionId;
+        _savedMapEditRevision = revision;
+        _savedMapOutputPath = destinationPath;
+        _mapSaveFailureMessage = null;
+        _mapSaveFailureRevision = null;
+        NotifyMapSaveStateChanged();
+        OnPropertyChanged(nameof(EditSessionDirtyDisplay));
+        OnPropertyChanged(nameof(EditSessionStatusDisplay));
+    }
+
+    public void ReportMapSaveAsFailure(string message)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+        _mapSaveFailureMessage = message;
+        _mapSaveFailureRevision = _mapEditRevision;
+        NotifyMapSaveStateChanged();
     }
 
     public string MapObjectDetailsDisplay
@@ -505,16 +636,28 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
         }
 
         _mapEditSession = session;
+        _mapEditRevision++;
+        _savedMapSessionId = null;
+        _savedMapEditRevision = null;
+        _savedMapOutputPath = null;
+        _mapSaveFailureMessage = null;
+        _mapSaveFailureRevision = null;
         if (_mapEditSession is { } newSession)
         {
             newSession.ObjectsChanged += MapEditSession_ObjectsChanged;
         }
+        else
+        {
+            SetMapSerializationContext(null, null, null, null, null);
+        }
 
         OnPropertyChanged(nameof(EditSession));
         OnPropertyChanged(nameof(HasEditSession));
+        OnPropertyChanged(nameof(MapEditRevision));
         OnPropertyChanged(nameof(SelectedEditObject));
         OnPropertyChanged(nameof(EditSessionStatusDisplay));
         NotifyEditSessionStateChanged();
+        NotifyMapSaveStateChanged();
         RefreshInventoryQuantityEditor();
         MapObjectDetailsDisplay = FormatMapObjectDetailsDisplay(null);
         RefreshDisplayedMapObjectPlacements();
@@ -572,8 +715,13 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
     {
         if (sender is MapEditSession session && ReferenceEquals(_mapEditSession, session))
         {
+            _mapEditRevision++;
+            _mapSaveFailureMessage = null;
+            _mapSaveFailureRevision = null;
+            OnPropertyChanged(nameof(MapEditRevision));
             RefreshDisplayedMapObjectPlacements();
             NotifyEditSessionStateChanged();
+            NotifyMapSaveStateChanged();
             RefreshInventoryQuantityEditor();
         }
     }
@@ -862,6 +1010,41 @@ public sealed class MapInspectorViewModel : INotifyPropertyChanged
         OnPropertyChanged(nameof(CanUndoMapEdit));
         OnPropertyChanged(nameof(CanRedoMapEdit));
         OnPropertyChanged(nameof(EditSessionStatusDisplay));
+    }
+
+    private bool IsCurrentMapEditSaved =>
+        _mapEditSession is { } session
+        && _savedMapSessionId == session.SessionId
+        && _savedMapEditRevision == _mapEditRevision;
+
+    private MapInventoryQuantityPatchEligibility GetMapSaveEligibility()
+    {
+        if (_mapEditSession is null)
+        {
+            return new(false, "no MAP edit session is active.");
+        }
+
+        if (_mapSaveGame is not FalloutGame game
+            || _mapSaveHeader is null
+            || _mapSaveTileGrids is null
+            || _mapSaveObjectPlacements is null)
+        {
+            return new(false, "the complete source-bound MAP decode is not available.");
+        }
+
+        return MapInventoryQuantityPatchBuilder.Validate(
+            _mapEditSession.SourceData,
+            game,
+            _mapSaveHeader,
+            _mapSaveTileGrids,
+            _mapSaveObjectPlacements,
+            _mapEditSession);
+    }
+
+    private void NotifyMapSaveStateChanged()
+    {
+        OnPropertyChanged(nameof(CanSaveMapAs));
+        OnPropertyChanged(nameof(MapSaveStatusDisplay));
     }
 
     private void SetInventoryQuantityValidationError(string? error)

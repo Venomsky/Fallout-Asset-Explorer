@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Interactivity;
 using FalloutAssetExplorer.App.ViewModels;
 
@@ -18,6 +19,8 @@ public partial class MapInspectorView : UserControl
     public event EventHandler<RoutedEventArgs>? WorkspaceToggleRequested;
 
     public event EventHandler<RoutedEventArgs>? RecordsToggleRequested;
+
+    public event EventHandler<RoutedEventArgs>? MapSaveAsRequested;
 
     public (GridLength Workspace, GridLength Splitter) GetMapWorkspaceRows() =>
         (
@@ -95,6 +98,9 @@ public partial class MapInspectorView : UserControl
     private void ApplyInventoryQuantity_Click(object? sender, RoutedEventArgs e) =>
         ViewModel?.MapInspector.ApplyInventoryQuantity();
 
+    private void SaveMapAs_Click(object? sender, RoutedEventArgs e) =>
+        MapSaveAsRequested?.Invoke(this, e);
+
     private void UndoMapEdit_Click(object? sender, RoutedEventArgs e) =>
         ViewModel?.MapInspector.UndoMapEdit();
 
@@ -121,6 +127,14 @@ public partial class MapInspectorView : UserControl
 
     private void MapIsometricFloorFit_Click(object? sender, RoutedEventArgs e) =>
         MapIsometricFloorView.FitToView();
+
+    private void ToggleMapRegistrationDiagnostics_Click(object? sender, RoutedEventArgs e)
+    {
+        if (sender is ToggleButton toggleButton)
+        {
+            MapIsometricFloorView.ShowRegistrationDiagnostics = toggleButton.IsChecked == true;
+        }
+    }
 
     private void ToggleMapWorkspace_Click(object? sender, RoutedEventArgs e) =>
         WorkspaceToggleRequested?.Invoke(this, e);

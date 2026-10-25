@@ -27,7 +27,7 @@ public sealed class MapIsometricObjectMarkerFilterTests
 
         var marker = Assert.Single(markers);
         Assert.Equal(0, marker.Placement.RecordIndex);
-        Assert.Equal(new Point(288, 230), marker.WorldPosition);
+        Assert.Equal(new Point(320, 240), marker.WorldPosition);
     }
 
     [Fact]
@@ -342,13 +342,13 @@ public sealed class MapIsometricObjectMarkerFilterTests
             MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
                 markers,
                 camera,
-                new Point(288, 230),
+                new Point(320, 240),
                 640,
                 480));
         Assert.Null(MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
             markers,
             camera,
-            new Point(292, 230),
+            new Point(308, 238),
             640,
             480));
     }
@@ -369,7 +369,7 @@ public sealed class MapIsometricObjectMarkerFilterTests
         var resolvedFileName = MapIsometricObjectMarkerHitTest.GetPrototypeFileNameAtPosition(
             markers,
             new MapIsometricFloorCameraTransform(1, 0, 0),
-            new Point(288, 230),
+            new Point(320, 240),
             640,
             480);
 
@@ -390,7 +390,7 @@ public sealed class MapIsometricObjectMarkerFilterTests
         var resolvedFileName = MapIsometricObjectMarkerHitTest.GetPrototypeFileNameAtPosition(
             markers,
             new MapIsometricFloorCameraTransform(1, 0, 0),
-            new Point(288, 230),
+            new Point(320, 240),
             640,
             480);
 
@@ -417,13 +417,13 @@ public sealed class MapIsometricObjectMarkerFilterTests
             MapIsometricObjectMarkerHitTest.GetPrototypeFileNameAtPosition(
                 markers,
                 camera,
-                new Point(288, 230),
+                new Point(320, 240),
                 640,
                 480));
         Assert.Null(MapIsometricObjectMarkerHitTest.GetPrototypeFileNameAtPosition(
             markers,
             camera,
-            new Point(300, 230),
+            new Point(328, 240),
             640,
             480));
     }
@@ -443,13 +443,13 @@ public sealed class MapIsometricObjectMarkerFilterTests
             MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
                 markers,
                 camera,
-                new Point(680, 433),
+                new Point(740, 450),
                 800,
                 600));
         Assert.Null(MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
             markers,
             camera,
-            new Point(683, 430),
+            new Point(715, 446),
             800,
             600));
     }
@@ -507,14 +507,14 @@ public sealed class MapIsometricObjectMarkerFilterTests
             12,
             MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
                 markers,
-                new MapIsometricFloorCameraTransform(1, -290, 0),
-                new Point(0, 230),
+                new MapIsometricFloorCameraTransform(1, -322, 0),
+                new Point(0, 240),
                 640,
                 480));
         Assert.Null(MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
             markers,
-            new MapIsometricFloorCameraTransform(1, -300, 0),
-            new Point(0, 230),
+            new MapIsometricFloorCameraTransform(1, -328, 0),
+            new Point(0, 240),
             640,
             480));
 
@@ -525,7 +525,7 @@ public sealed class MapIsometricObjectMarkerFilterTests
         Assert.Null(MapIsometricObjectMarkerHitTest.GetRecordIndexAtPosition(
             filteredOutMarkers,
             new MapIsometricFloorCameraTransform(1, 0, 0),
-            new Point(288, 230),
+            new Point(304, 238),
             640,
             480));
     }

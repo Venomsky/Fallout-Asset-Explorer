@@ -8,14 +8,14 @@ namespace FalloutAssetExplorer.Core.Tests;
 public sealed class MapIsometricObjectMarkerGeometryTests
 {
     [Theory]
-    [InlineData(100, 100, 288, 230)]
-    [InlineData(101, 100, 320, 230)]
-    [InlineData(100, 101, 304, 242)]
-    [InlineData(101, 101, 336, 242)]
-    [InlineData(99, 100, 272, 242)]
-    [InlineData(99, 101, 288, 254)]
-    [InlineData(101, 99, 304, 218)]
-    [InlineData(99, 99, 256, 230)]
+    [InlineData(100, 100, 320, 240)]
+    [InlineData(101, 100, 352, 240)]
+    [InlineData(100, 101, 336, 252)]
+    [InlineData(101, 101, 368, 252)]
+    [InlineData(99, 100, 304, 252)]
+    [InlineData(99, 101, 320, 264)]
+    [InlineData(101, 99, 336, 228)]
+    [InlineData(99, 99, 288, 240)]
     public void TryGetWorldPosition_MatchesIndependentHexParityReferences(
         int hexX,
         int hexY,
@@ -33,10 +33,10 @@ public sealed class MapIsometricObjectMarkerGeometryTests
     }
 
     [Theory]
-    [InlineData(0, 0, -3712, -370)]
-    [InlineData(199, 0, 1072, -1558)]
-    [InlineData(0, 199, -528, 2018)]
-    [InlineData(199, 199, 4256, 830)]
+    [InlineData(0, 0, -3680, -360)]
+    [InlineData(199, 0, 1104, -1548)]
+    [InlineData(0, 199, -496, 2028)]
+    [InlineData(199, 199, 4288, 840)]
     public void TryGetWorldPosition_MatchesIndependentMapBoundaryReferences(
         int hexX,
         int hexY,
@@ -96,11 +96,43 @@ public sealed class MapIsometricObjectMarkerGeometryTests
         var unzoomedCamera = new MapIsometricFloorCameraTransform(1, 0, 0);
         var zoomedAndPannedCamera = new MapIsometricFloorCameraTransform(2, 100, -30);
 
-        Assert.Equal(new Point(320, 230), worldPosition);
-        Assert.Equal(new Point(320, 230), unzoomedCamera.ToScreen(worldPosition));
-        Assert.Equal(new Point(740, 430), zoomedAndPannedCamera.ToScreen(worldPosition));
+        Assert.Equal(new Point(352, 240), worldPosition);
+        Assert.Equal(new Point(352, 240), unzoomedCamera.ToScreen(worldPosition));
+        Assert.Equal(new Point(804, 450), zoomedAndPannedCamera.ToScreen(worldPosition));
         Assert.Equal(worldPosition, zoomedAndPannedCamera.ToWorld(
             zoomedAndPannedCamera.ToScreen(worldPosition)));
+    }
+
+    [Fact]
+    public void MarkerUsesHexAnchorAtViewportCenterWhileSpritePlacementRemainsUnchanged()
+    {
+        var projection = CreateProjection();
+        Assert.True(MapIsometricFloorGeometry.TryProjectSquareCoordinates(
+            50,
+            50,
+            projection,
+            out var squareOrigin));
+        Assert.True(MapIsometricObjectMarkerGeometry.TryGetWorldPosition(
+            CreatePlacement(100, 100),
+            projection,
+            out var markerPosition));
+
+        // CE's tileSetCenter puts the center hex's tile origin at ((W - 32) / 2, (H - 16) / 2) and the
+        // square origin 16 px left / 2 px above it; objects are anchored at tile origin + (16, 8),
+        // which is the exact center of the 640 x 480 viewport for the center hex.
+        Assert.Equal(new Point(288, 230), squareOrigin);
+        Assert.Equal(new Point(320, 240), markerPosition);
+        Assert.True(MapIsometricObjectSpriteGeometry.TryGetImageBounds(
+            markerPosition,
+            new MapIsometricFloorCameraTransform(1, 0, 0),
+            pixelWidth: 20,
+            pixelHeight: 30,
+            artShiftX: 0,
+            artShiftY: 0,
+            mapOffsetX: 0,
+            mapOffsetY: 0,
+            out var spriteBounds));
+        Assert.Equal(new Rect(310, 211, 20, 30), spriteBounds);
     }
 
     private static MapIsometricFloorViewTransform CreateProjection()

@@ -101,10 +101,9 @@ public static class MapIsometricObjectSpriteGeometry
     /// Places an FRM frame using the tile origin, direction art shift, and MAP offsets used by CE.
     /// </summary>
     /// <remarks>
-    /// The existing FAE marker is relative to the CE square origin, which is 16 pixels left and
-    /// 2 pixels above the CE tile origin. CE then adds (16, 8), so the object anchor is marker
-    /// plus (32, 10), the direction's FRM shift, and the MAP x/y offsets. The frame rectangle uses
-    /// CE's integer width/2 and height-1 alignment.
+    /// The marker is at the CE object anchor, i.e. the tile origin plus (16, 8). CE then adds the
+    /// direction's FRM shift and MAP x/y offsets. The frame rectangle uses CE's integer width/2
+    /// and height-1 alignment.
     /// </remarks>
     public static bool TryGetImageBounds(
         Point projectedHexMarker,
@@ -127,11 +126,9 @@ public static class MapIsometricObjectSpriteGeometry
             return false;
         }
 
-        // CE tileSetCenter defines square origin as tile origin - (16, 2);
-        // _obj_render_object adds (16, 8), then art shifts and MAP offsets.
         var objectAnchor = new Point(
-            projectedHexMarker.X + 32 + artShiftX + mapOffsetX,
-            projectedHexMarker.Y + 10 + artShiftY + mapOffsetY);
+            projectedHexMarker.X + artShiftX + mapOffsetX,
+            projectedHexMarker.Y + artShiftY + mapOffsetY);
         var screenAnchor = camera.ToScreen(objectAnchor);
         var width = pixelWidth * camera.Scale;
         var height = pixelHeight * camera.Scale;
