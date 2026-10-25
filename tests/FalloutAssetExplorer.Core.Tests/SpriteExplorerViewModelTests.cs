@@ -41,12 +41,13 @@ public sealed class SpriteExplorerViewModelTests
             try
             {
                 var tabs = Assert.IsType<TabControl>(window.FindControl<TabControl>("WorkspaceTabs"));
-                Assert.Equal(5, tabs.Items.Count);
+                Assert.Equal(6, tabs.Items.Count);
                 Assert.Equal("Archive Browser", Assert.IsType<TabItem>(tabs.Items[0]).Header);
                 Assert.Equal("Sprite Explorer", Assert.IsType<TabItem>(tabs.Items[1]).Header);
                 Assert.Equal("Map Editor", Assert.IsType<TabItem>(tabs.Items[2]).Header);
                 Assert.Equal("MSG Editor", Assert.IsType<TabItem>(tabs.Items[3]).Header);
-                Assert.Equal("Format Coverage", Assert.IsType<TabItem>(tabs.Items[4]).Header);
+                Assert.Equal("PRO Editor", Assert.IsType<TabItem>(tabs.Items[4]).Header);
+                Assert.Equal("Format Coverage", Assert.IsType<TabItem>(tabs.Items[5]).Header);
 
                 tabs.SelectedIndex = ArchiveBrowserViewModel.MsgEditorWorkspaceIndex;
                 Assert.Equal(ArchiveBrowserViewModel.MsgEditorWorkspaceIndex, viewModel.SelectedWorkspaceIndex);
