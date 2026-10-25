@@ -38,6 +38,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     public const int SpriteExplorerWorkspaceIndex = 1;
     public const int MapEditorWorkspaceIndex = 2;
     public const int MsgEditorWorkspaceIndex = 3;
+    public const int ProEditorWorkspaceIndex = 4;
 
     private const int MaximumIntIdentifierBytesDisplayed = 4096;
     private static readonly string[] SupportedExtensions = [".FRM", ".MAP", ".PRO", ".MSG", ".LST", ".INT"];
@@ -142,7 +143,10 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         MapInspector.SelectedMapObjectChanged += MapInspector_SelectedMapObjectChanged;
         MsgInspector.PropertyChanged += MsgInspector_PropertyChanged;
         SpriteExplorer = new SpriteExplorerViewModel();
+        ProEditor = new ProEditorViewModel();
     }
+
+    public ProEditorViewModel ProEditor { get; }
 
     public string MsgFileSearchText
     {
@@ -658,6 +662,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
         {
             if (SetProperty(ref _standaloneProInspection, value))
             {
+                ProEditor.SetInspection(value, StandaloneProRawByteLines);
                 OnPropertyChanged(nameof(CanExportStandaloneProReport));
                 OnPropertyChanged(nameof(CanExportStandaloneProRawBin));
             }
@@ -686,7 +691,13 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
     public string StandaloneProStatus
     {
         get => _standaloneProStatus;
-        private set => SetProperty(ref _standaloneProStatus, value);
+        private set
+        {
+            if (SetProperty(ref _standaloneProStatus, value))
+            {
+                ProEditor.SetStatus(value);
+            }
+        }
     }
 
     public string StandaloneProDetails

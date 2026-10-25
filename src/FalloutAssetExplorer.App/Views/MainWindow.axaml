@@ -856,6 +856,11 @@
         </Grid>
       </Grid>
     </TabItem>
+    <TabItem Header="PRO Editor">
+      <local:ProEditorView
+          x:Name="ProEditorControl"
+          DataContext="{Binding ProEditor}" />
+    </TabItem>
     <TabItem Header="Format Coverage">
       <local:FormatCoverageDashboardView />
     </TabItem>

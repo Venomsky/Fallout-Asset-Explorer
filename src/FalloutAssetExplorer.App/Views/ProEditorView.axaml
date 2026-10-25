@@ -1,0 +1,282 @@
+<UserControl
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    x:Class="FalloutAssetExplorer.App.Views.ProEditorView">
+  <Grid Margin="12" RowDefinitions="Auto,Auto,*" RowSpacing="12">
+    <Border Padding="12" Background="#20242B" CornerRadius="4">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <StackPanel Spacing="5">
+          <TextBlock FontSize="22" FontWeight="SemiBold" Text="PRO Editor" />
+          <TextBlock
+              Text="{Binding StatusMessage}"
+              TextWrapping="Wrap"
+              AutomationProperties.LiveSetting="Polite" />
+          <TextBlock
+              FontSize="11"
+              Foreground="#AAB2BF"
+              Text="{Binding VerificationDisplay}"
+              TextWrapping="Wrap" />
+        </StackPanel>
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+          <Button
+              x:Name="ProEditorUndoButton"
+              Content="Undo"
+              IsEnabled="{Binding CanUndo}"
+              Click="Undo_Click" />
+          <Button
+              x:Name="ProEditorRedoButton"
+              Content="Redo"
+              IsEnabled="{Binding CanRedo}"
+              Click="Redo_Click" />
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Expander
+        x:Name="StandaloneProSampleVerificationExpander"
+        Grid.Row="1"
+        Header="Verify one standalone PRO sample">
+      <Border Padding="10" Background="#20242B" CornerRadius="4">
+        <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+          <TextBox
+              x:Name="ProSampleSourceReference"
+              Grid.Row="0"
+              Watermark="Source URL or repository@immutable revision"
+              Text="{Binding SampleSourceReference}" />
+          <TextBox
+              x:Name="ProSampleGameEdition"
+              Grid.Row="0"
+              Grid.Column="1"
+              Watermark="Game edition / version (reported)"
+              Text="{Binding SampleGameEditionVersion}" />
+          <TextBox
+              x:Name="ProSampleRecordIdentity"
+              Grid.Row="1"
+              Watermark="Original record path or identifier (reported)"
+              Text="{Binding SampleRecordIdentity}" />
+          <TextBox
+              x:Name="ProSampleAcquisitionMethod"
+              Grid.Row="1"
+              Grid.Column="1"
+              Watermark="Acquisition / extraction method (reported)"
+              Text="{Binding SampleAcquisitionMethod}" />
+          <TextBox
+              x:Name="ProSampleExpectedPid"
+              Grid.Row="2"
+              Watermark="Expected PID in hexadecimal (optional)"
+              Text="{Binding SampleExpectedPidHex}" />
+          <TextBox
+              x:Name="ProSampleExpectedPidReference"
+              Grid.Row="2"
+              Grid.Column="1"
+              Watermark="Reference for expected PID (reported)"
+              Text="{Binding SampleExpectedPidReference}" />
+          <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8">
+            <Button
+                x:Name="VerifyStandaloneProSampleButton"
+                Content="Select and inspect .PRO"
+                Click="VerifyStandaloneProSample_Click" />
+            <TextBlock
+                VerticalAlignment="Center"
+                Text="{Binding SampleStatusMessage}"
+                TextWrapping="Wrap" />
+          </StackPanel>
+          <TextBlock
+              Grid.Row="4"
+              Grid.ColumnSpan="2"
+              FontSize="12"
+              FontWeight="SemiBold"
+              Text="Structure checks and validation messages" />
+          <TextBlock
+              Grid.Row="5"
+              Grid.ColumnSpan="2"
+              Text="{Binding SampleStructureDisplay}"
+              TextWrapping="Wrap" />
+          <TextBlock
+              Grid.Row="6"
+              Grid.ColumnSpan="2"
+              FontSize="12"
+              FontWeight="SemiBold"
+              Text="Observed file data (not proof of field semantics)" />
+          <TextBlock
+              Grid.Row="7"
+              Grid.ColumnSpan="2"
+              FontFamily="Consolas"
+              Text="{Binding SampleObservedDataDisplay}"
+              TextWrapping="Wrap" />
+          <TextBlock
+              Grid.Row="8"
+              Grid.ColumnSpan="2"
+              FontSize="12"
+              FontWeight="SemiBold"
+              Text="User-reported provenance (absent values marked Unknown)" />
+          <TextBlock
+              Grid.Row="9"
+              Grid.ColumnSpan="2"
+              FontSize="11"
+              Foreground="#AAB2BF"
+              Text="{Binding SampleProvenanceDisplay}"
+              TextWrapping="Wrap" />
+          <TextBlock
+              Grid.Row="10"
+              Grid.ColumnSpan="2"
+              FontSize="11"
+              Foreground="#AAB2BF"
+              Text="{Binding SampleUnresolvedClaimsDisplay}"
+              TextWrapping="Wrap" />
+        </Grid>
+      </Border>
+    </Expander>
+
+    <Border
+        Grid.Row="2"
+        Padding="12"
+        Background="#20242B"
+        CornerRadius="4"
+        IsVisible="{Binding HasNoInspection}">
+      <TextBlock
+          HorizontalAlignment="Center"
+          VerticalAlignment="Center"
+          MaxWidth="560"
+          Text="{Binding EmptyStateMessage}"
+          TextAlignment="Center"
+          TextWrapping="Wrap" />
+    </Border>
+
+    <Grid
+        Grid.Row="2"
+        ColumnDefinitions="2*,3*"
+        ColumnSpacing="12"
+        IsVisible="{Binding HasInspection}">
+      <Grid Grid.Column="0" RowDefinitions="Auto,*" RowSpacing="12">
+        <Border Padding="12" Background="#20242B" CornerRadius="4">
+          <Grid ColumnDefinitions="130,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" RowSpacing="6">
+            <TextBlock FontWeight="SemiBold" Text="Source" />
+            <TextBlock Grid.Column="1" Text="{Binding ArchiveSourceDisplay}" TextWrapping="Wrap" />
+            <TextBlock Grid.Row="1" FontWeight="SemiBold" Text="Entry" />
+            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding EntryPathDisplay}" TextWrapping="Wrap" />
+            <TextBlock Grid.Row="2" FontWeight="SemiBold" Text="Game / format" />
+            <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="6">
+              <TextBlock Text="{Binding GameDisplay}" />
+              <TextBlock Text="/" />
+              <TextBlock Text="{Binding FormatDisplay}" />
+            </StackPanel>
+            <TextBlock Grid.Row="3" FontWeight="SemiBold" Text="Embedded PID" />
+            <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding PrototypePidDisplay}" FontFamily="Consolas" />
+            <TextBlock Grid.Row="4" FontWeight="SemiBold" Text="PID type" />
+            <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding PidTypeDisplay}" />
+            <TextBlock Grid.Row="5" FontWeight="SemiBold" Text="Subtype" />
+            <TextBlock Grid.Row="5" Grid.Column="1" Text="{Binding SubtypeDisplay}" />
+            <TextBlock Grid.Row="6" FontWeight="SemiBold" Text="Outcome" />
+            <TextBlock Grid.Row="6" Grid.Column="1" Text="{Binding OutcomeDisplay}" />
+            <TextBlock Grid.Row="7" FontWeight="SemiBold" Text="Read status" />
+            <TextBlock Grid.Row="7" Grid.Column="1" Text="{Binding ReadCompletionDisplay}" />
+          </Grid>
+        </Border>
+
+        <Border Grid.Row="1" Padding="10" Background="#20242B" CornerRadius="4">
+          <Grid RowDefinitions="Auto,Auto,*" RowSpacing="6">
+            <TextBlock FontWeight="SemiBold" Text="Original bytes (hex preview)" />
+            <TextBlock
+                Grid.Row="1"
+                FontSize="11"
+                Foreground="#AAB2BF"
+                Text="{Binding RawByteTruncationNotice}"
+                TextWrapping="Wrap"
+                IsVisible="{Binding HasRawByteTruncationNotice}" />
+            <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Auto">
+              <ItemsControl
+                  x:Name="ProEditorRawBytes"
+                  ItemsSource="{Binding RawByteLines}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <TextBlock FontFamily="Consolas" FontSize="11" Text="{Binding}" />
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </Grid>
+        </Border>
+      </Grid>
+
+      <Border Grid.Column="1" Padding="10" Background="#20242B" CornerRadius="4">
+        <Grid RowDefinitions="Auto,*" RowSpacing="8">
+          <StackPanel Spacing="4">
+            <TextBlock FontSize="16" FontWeight="SemiBold" Text="Prototype fields" />
+            <TextBlock Text="{Binding SessionStatus}" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding IsDirtyDisplay}" TextWrapping="Wrap" />
+            <TextBlock
+                FontSize="11"
+                Foreground="#AAB2BF"
+                Text="{Binding SessionActionStatus}"
+                TextWrapping="Wrap" />
+            <TextBlock
+                IsVisible="{Binding HasFieldModelStatus}"
+                Text="{Binding FieldModelStatus}"
+                TextWrapping="Wrap" />
+          </StackPanel>
+          <TextBlock
+              Grid.Row="1"
+              HorizontalAlignment="Center"
+              VerticalAlignment="Center"
+              IsVisible="{Binding HasNoFields}"
+              Text="{Binding NoFieldsMessage}"
+              TextWrapping="Wrap" />
+          <ScrollViewer Grid.Row="1" IsVisible="{Binding HasFields}">
+            <ItemsControl ItemsSource="{Binding Fields}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Margin="0,0,0,8" Padding="10" Background="#292F39" CornerRadius="3">
+                    <StackPanel Spacing="6">
+                      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                        <StackPanel Spacing="2">
+                          <TextBlock FontWeight="SemiBold" Text="{Binding UiLabel}" />
+                          <TextBlock FontSize="11" Foreground="#AAB2BF" Text="{Binding Name}" />
+                        </StackPanel>
+                        <TextBlock
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            FontWeight="SemiBold"
+                            Text="{Binding EditabilityDisplay}" />
+                      </Grid>
+                      <Grid ColumnDefinitions="110,*,110,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto" RowSpacing="4">
+                        <TextBlock Grid.Row="0" FontSize="11" Text="Original value" />
+                        <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding OriginalValueDisplay}" />
+                        <TextBlock Grid.Row="0" Grid.Column="2" FontSize="11" Text="Current value" />
+                        <TextBlock Grid.Row="0" Grid.Column="3" Text="{Binding CurrentValueDisplay}" />
+                        <TextBlock Grid.Row="1" FontSize="11" Text="Value type" />
+                        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ValueKindDisplay}" />
+                        <TextBlock Grid.Row="1" Grid.Column="2" FontSize="11" Text="Offset / length" />
+                        <TextBlock Grid.Row="1" Grid.Column="3" Text="{Binding OffsetDisplay}" />
+                        <TextBlock Grid.Row="2" FontSize="11" Text="Rationale" />
+                        <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding EditabilityRationale}" TextWrapping="Wrap" />
+                        <TextBlock Grid.Row="3" FontSize="11" Text="Evidence" />
+                        <TextBlock Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding EvidenceDisplay}" TextWrapping="Wrap" />
+                        <TextBlock Grid.Row="4" FontSize="11" Text="Validation" />
+                        <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="3" Text="{Binding ValidationErrorDisplay}" TextWrapping="Wrap" />
+                      </Grid>
+                      <Border
+                          Padding="6"
+                          Background="#202630"
+                          CornerRadius="2"
+                          IsVisible="{Binding HasInterpretation}">
+                        <StackPanel Spacing="2">
+                          <TextBlock FontSize="11" FontWeight="SemiBold" Text="Interpretation (not raw value)" />
+                          <TextBlock
+                              FontStyle="Italic"
+                              Foreground="#B8C6D9"
+                              Text="{Binding InterpretationDisplay}"
+                              TextWrapping="Wrap" />
+                        </StackPanel>
+                      </Border>
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </Grid>
+      </Border>
+    </Grid>
+  </Grid>
+</UserControl>
