@@ -28,6 +28,7 @@ public sealed class Fallout2PrototypeResolverTests
         Assert.Equal(prototypeBytes.Length, result.FileSize);
         Assert.Equal(prototypeBytes, result.RawBytes.ToArray());
         Assert.True(result.HasSupportedSubtype);
+        Assert.True(result.HasExpectedSize);
     }
 
     [Fact]
@@ -84,7 +85,10 @@ public sealed class Fallout2PrototypeResolverTests
         Assert.Equal("Scenery", result.PidTypeName);
         Assert.Equal("Generic", result.SubtypeName);
         Assert.True(result.HasSupportedSubtype);
+        Assert.Equal(PrototypeInspectionOutcome.Success, result.Outcome);
+        Assert.True(result.IsReadComplete);
         Assert.Equal("Prototype PID type and subtype recognized.", result.Status);
+        Assert.Equal(prototypeBytes.Length, result.ActualSize);
         var genericField = Assert.Single(
             result.SceneryFields,
             field => field.Name == "generic.field_0");
@@ -215,7 +219,7 @@ public sealed class Fallout2PrototypeResolverTests
     }
 
     [Fact]
-    public async Task InspectStandaloneEntryAsync_ReportsLongItemAndAcceptsSceneryTrailingBytes()
+    public async Task InspectStandaloneEntryAsync_ReportsLongItemAndSceneryTrailingBytes()
     {
         const int itemPid = 0x00000001;
         var itemBytes = CreateItemPrototype(itemPid, subtype: 6, size: 0x3E);
@@ -247,8 +251,10 @@ public sealed class Fallout2PrototypeResolverTests
         var sceneryResult = await new Fallout2PrototypeResolver(sceneryArchive)
             .InspectStandaloneEntryAsync(sceneryEntry);
 
-        Assert.Equal("Prototype PID type and subtype recognized.", sceneryResult.Status);
+        Assert.Contains("longer than expected 45 bytes for subtype 5", sceneryResult.Status);
+        Assert.Contains("trailing bytes are preserved without interpretation", sceneryResult.Status);
         Assert.True(sceneryResult.HasSupportedSubtype);
+        Assert.Equal(PrototypeInspectionOutcome.Partial, sceneryResult.Outcome);
         Assert.Equal(sceneryBytes.Length, sceneryResult.FileSize);
         Assert.Equal(sceneryBytes, sceneryResult.RawBytes.ToArray());
     }
@@ -663,6 +669,7 @@ public sealed class Fallout2PrototypeResolverTests
 
         Assert.Contains("shorter than 49 bytes for subtype 2", result.Status);
         Assert.True(result.HasSupportedSubtype);
+        Assert.False(result.HasExpectedSize);
         Assert.Equal(48, result.FileSize);
         Assert.Contains(result.SceneryFields, field => field.Name == "elevator.type" && field.Value == 42);
         Assert.Contains(result.SceneryFields, field => field.Name == "field_34");
@@ -671,7 +678,7 @@ public sealed class Fallout2PrototypeResolverTests
     }
 
     [Fact]
-    public async Task ResolveAsync_AcceptsSceneryWithIgnoredTrailingBytes()
+    public async Task ResolveAsync_ReportsSceneryTrailingBytesWithoutInterpretingThem()
     {
         const int pid = 0x02000001;
         const int nominalSize = 0x2D;
@@ -691,11 +698,14 @@ public sealed class Fallout2PrototypeResolverTests
         var result = await new Fallout2PrototypeResolver(archive).ResolveAsync(pid);
 
         Assert.True(result.HasSupportedSubtype);
-        Assert.Equal("Prototype PID type and subtype recognized.", result.Status);
+        Assert.False(result.HasExpectedSize);
+        Assert.Contains("longer than expected 45 bytes for subtype 5", result.Status);
+        Assert.Contains("trailing bytes are preserved without interpretation", result.Status);
         Assert.Equal(nominalSize + 24, result.FileSize);
         Assert.Contains(
             result.SceneryFields,
             field => field.Name == "generic.field_0" && field.Value != 0);
+        Assert.DoesNotContain(result.SceneryFields, field => field.Offset >= nominalSize);
         Assert.Equal(prototypeBytes, result.RawBytes.ToArray());
     }
 

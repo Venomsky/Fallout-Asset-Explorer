@@ -659,13 +659,18 @@ public sealed class Fallout2PrototypeResolver
             ? SceneryTwoWordPrototypeSize
             : SceneryOneWordPrototypeSize;
         var sceneryFields = ReadSceneryFields(prototypeBytes.Span, subtype);
-        var status = prototypeBytes.Length < expectedScenerySize
-            ? $"the scenery prototype is shorter than {expectedScenerySize} bytes for subtype {subtype}"
-            : "Prototype PID type and subtype recognized.";
+        var sceneryStatus = prototypeBytes.Length switch
+        {
+            var size when size < expectedScenerySize =>
+                $"the scenery prototype is shorter than {expectedScenerySize} bytes for subtype {subtype}",
+            var size when size > expectedScenerySize =>
+                $"the scenery prototype is longer than expected {expectedScenerySize} bytes for subtype {subtype} (found {size}); trailing bytes are preserved without interpretation",
+            _ => "Prototype PID type and subtype recognized."
+        };
 
         return new Fallout2PrototypeDiagnostic(
             requestedPid,
-            status,
+            sceneryStatus,
             fileName,
             fileName,
             prototypePid,
@@ -674,7 +679,7 @@ public sealed class Fallout2PrototypeResolver
             prototypeBytes)
         {
             HasSupportedSubtype = true,
-            HasExpectedSize = prototypeBytes.Length >= expectedScenerySize,
+            HasExpectedSize = prototypeBytes.Length == expectedScenerySize,
             SceneryFields = sceneryFields
         };
     }
