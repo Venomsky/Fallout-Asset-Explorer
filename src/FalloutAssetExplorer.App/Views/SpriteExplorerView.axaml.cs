@@ -293,11 +293,8 @@ public partial class SpriteExplorerView : UserControl
             return;
         }
 
-        var zoom = viewModel.Zoom;
-        var transform = new MatrixTransform(
-            new Matrix(zoom.Zoom, 0, 0, zoom.Zoom, zoom.OffsetX, zoom.OffsetY));
-        SpriteImage.RenderTransform = transform;
-        SpriteSheetFrameOverlay.RenderTransform = new MatrixTransform(transform.Matrix);
+        SpriteContent.RenderTransform = new MatrixTransform(
+            SpriteViewportTransform.CreateMatrix(viewModel.Zoom));
     }
 
     private void ApplySpriteSheetOverlay()

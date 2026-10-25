@@ -20,6 +20,21 @@ public sealed class SpriteZoomModelTests
     }
 
     [Fact]
+    public void Fit_EnlargesSmallSpriteAndCentersItWithinTheViewport()
+    {
+        var zoom = new SpriteZoomModel();
+        zoom.SetViewportSize(640, 480);
+        zoom.SetImageSize(16, 24);
+
+        Assert.True(zoom.IsFit);
+        Assert.Equal(20, zoom.Zoom);
+        Assert.Equal(160, zoom.OffsetX);
+        Assert.Equal(0, zoom.OffsetY);
+        Assert.True(16 * zoom.Zoom <= 640);
+        Assert.True(24 * zoom.Zoom <= 480);
+    }
+
+    [Fact]
     public void Fit_UpdatesWithViewportAndImageDimensions()
     {
         var zoom = new SpriteZoomModel();

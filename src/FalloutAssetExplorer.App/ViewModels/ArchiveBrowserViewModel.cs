@@ -2038,7 +2038,7 @@ public sealed class ArchiveBrowserViewModel : INotifyPropertyChanged, IDisposabl
             return;
         }
 
-        SelectedWorkspaceIndex = 1;
+        SelectedWorkspaceIndex = SpriteExplorerWorkspaceIndex;
         await SpriteExplorer.OpenSourceAsync(archivePath, entry.Path, _gameDataDirectory);
     }
 

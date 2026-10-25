@@ -1,4 +1,5 @@
 using FalloutAssetExplorer.Core;
+using Avalonia;
 
 namespace FalloutAssetExplorer.App.ViewModels;
 
@@ -17,15 +18,16 @@ public static class SpriteSheetHitTester
             return null;
         }
 
-        var sheetX = (viewportX - zoom.OffsetX) / zoom.Zoom;
-        var sheetY = (viewportY - zoom.OffsetY) / zoom.Zoom;
+        var sheetPoint = SpriteViewportTransform.ToSheetSpace(
+            zoom,
+            new Point(viewportX, viewportY));
         foreach (var placement in layout.Placements.Values)
         {
             var rectangle = placement.Rectangle;
-            if (sheetX >= rectangle.X
-                && sheetX < (long)rectangle.X + rectangle.Width
-                && sheetY >= rectangle.Y
-                && sheetY < (long)rectangle.Y + rectangle.Height)
+            if (sheetPoint.X >= rectangle.X
+                && sheetPoint.X < (long)rectangle.X + rectangle.Width
+                && sheetPoint.Y >= rectangle.Y
+                && sheetPoint.Y < (long)rectangle.Y + rectangle.Height)
             {
                 return placement;
             }

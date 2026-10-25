@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Text;
 using Avalonia.Controls;
+using Avalonia.Media;
 using FalloutAssetExplorer.App;
 using FalloutAssetExplorer.App.ViewModels;
 using FalloutAssetExplorer.App.Views;
@@ -56,6 +57,57 @@ public sealed class SpriteExplorerViewModelTests
             {
                 window.Close();
             }
+        });
+    }
+
+    [Fact]
+    public void SpriteExplorerView_UsesResizablePanelsAndKeepsTimelineVisible()
+    {
+        AvaloniaTestEnvironment.RunOnUiThread(() =>
+        {
+            using var viewModel = new SpriteExplorerViewModel();
+            var view = new SpriteExplorerView
+            {
+                DataContext = viewModel
+            };
+
+            var workspace = Assert.IsType<Grid>(view.FindControl<Grid>("SpriteWorkspace"));
+            var assetPanel = Assert.IsType<Border>(view.FindControl<Border>("AssetBrowserPanel"));
+            var viewportPanel = Assert.IsType<Border>(view.FindControl<Border>("SpriteViewportPanel"));
+            var propertiesPanel = Assert.IsType<Border>(view.FindControl<Border>("PropertiesPanel"));
+            var timeline = Assert.IsType<Slider>(view.FindControl<Slider>("FrameTimelineSlider"));
+            var viewport = Assert.IsType<Grid>(view.FindControl<Grid>("SpriteViewport"));
+            var viewportBorder = Assert.IsType<Border>(view.FindControl<Border>("SpriteViewportBorder"));
+            var content = Assert.IsType<Grid>(view.FindControl<Grid>("SpriteContent"));
+            var sheetStatus = Assert.IsType<TextBlock>(
+                view.FindControl<TextBlock>("SpriteSheetStatusText"));
+            Assert.NotNull(view.FindControl<Image>("SpriteImage"));
+            Assert.NotNull(view.FindControl<SpriteSheetFrameOverlay>("SpriteSheetFrameOverlay"));
+
+            Assert.Equal(5, workspace.ColumnDefinitions.Count);
+            Assert.True(workspace.ColumnDefinitions[2].Width.IsStar);
+            Assert.Equal(200, assetPanel.MinWidth);
+            Assert.Equal(240, viewportPanel.MinWidth);
+            Assert.Equal(210, propertiesPanel.MinWidth);
+            Assert.NotNull(view.FindControl<GridSplitter>("AssetBrowserSplitter"));
+            Assert.NotNull(view.FindControl<GridSplitter>("PropertiesSplitter"));
+            Assert.True(timeline.IsSnapToTickEnabled);
+            Assert.NotNull(view.FindControl<Button>("ZoomFitButton"));
+            Assert.NotNull(view.FindControl<Button>("ExportFrameButton"));
+            Assert.NotNull(view.FindControl<Button>("ExportDirectionButton"));
+            Assert.NotNull(view.FindControl<Button>("ExportAllDirectionsButton"));
+            Assert.True(viewport.ClipToBounds);
+            Assert.True(viewportBorder.ClipToBounds);
+            Assert.Equal(TextWrapping.Wrap, sheetStatus.TextWrapping);
+
+            viewModel.Zoom.SetViewportSize(200, 150);
+            viewModel.Zoom.SetImageSize(80, 60);
+            viewModel.Zoom.ZoomBy(1.5, 75, 55);
+
+            var renderTransform = Assert.IsType<MatrixTransform>(content.RenderTransform);
+            Assert.Equal(
+                SpriteViewportTransform.CreateMatrix(viewModel.Zoom),
+                renderTransform.Matrix);
         });
     }
 
@@ -150,6 +202,93 @@ public sealed class SpriteExplorerViewModelTests
         Assert.Contains("Direction E | 2/2", viewModel.Preview.PreviewDetails);
         Assert.Contains("Frame 3 x 1", viewModel.Preview.PreviewDetails);
         Assert.Equal(3, viewModel.Preview.PreviewBitmap!.PixelSize.Width);
+    }
+
+    [Fact]
+    public void PreviewMetadataProperties_TrackSelectedFrameAndPreviewSettings()
+    {
+        using var viewModel = new SpriteExplorerViewModel();
+        viewModel.Preview.SetPreview(
+            new FrmDocument(
+                5,
+                12,
+                1,
+                2,
+                [
+                    new FrmDirection(
+                        0,
+                        "NE",
+                        10,
+                        -4,
+                        [
+                            new FrmFrame(16, 20, 2, -3, new byte[16 * 20]),
+                            new FrmFrame(12, 24, -1, 5, new byte[12 * 24])
+                        ])
+                ]),
+            palette: null,
+            resourcePath: "test.frm");
+
+        Assert.Equal("5", viewModel.Preview.FrmVersionDisplay);
+        Assert.Equal("12 FPS", viewModel.Preview.FrmRateMetadataDisplay);
+        Assert.Equal("1", viewModel.Preview.ActionFrameDisplay);
+        Assert.Equal("NE (0)", viewModel.Preview.CurrentDirectionDisplay);
+        Assert.Equal("16 × 20 px", viewModel.Preview.FrameDimensionsDisplay);
+        Assert.Equal("(2, -3)", viewModel.Preview.FrameOffsetDisplay);
+        Assert.Equal("(10, -4)", viewModel.Preview.DirectionShiftDisplay);
+        Assert.Equal(1, viewModel.Preview.FrameSliderMaximum);
+
+        viewModel.Preview.SelectedFrameIndex = 1;
+        viewModel.Preview.IsLoopEnabled = true;
+        viewModel.Preview.IsCheckerboardBackground = true;
+
+        Assert.Equal("Frame 2 / 2", viewModel.Preview.CurrentFrameDisplay);
+        Assert.Equal("12 × 24 px", viewModel.Preview.FrameDimensionsDisplay);
+        Assert.Equal("(-1, 5)", viewModel.Preview.FrameOffsetDisplay);
+        Assert.Equal("Enabled", viewModel.Preview.LoopStateDisplay);
+        Assert.Contains("checkerboard on", viewModel.Preview.TransparencyDisplay);
+    }
+
+    [Fact]
+    public void ChangingFrameAndDirection_PreservesManualZoom()
+    {
+        using var viewModel = new SpriteExplorerViewModel();
+        viewModel.Zoom.SetViewportSize(100, 100);
+        viewModel.Preview.SetPreview(
+            new FrmDocument(
+                5,
+                12,
+                1,
+                2,
+                [
+                    new FrmDirection(
+                        0,
+                        "NE",
+                        0,
+                        0,
+                        [
+                            new FrmFrame(16, 20, 0, 0, new byte[16 * 20]),
+                            new FrmFrame(12, 24, 0, 0, new byte[12 * 24])
+                        ]),
+                    new FrmDirection(
+                        1,
+                        "E",
+                        4,
+                        -2,
+                        [new FrmFrame(9, 12, 0, 0, new byte[9 * 12])])
+                ]),
+            palette: null,
+            resourcePath: "zoom.frm");
+
+        viewModel.Zoom.Set100Percent();
+        viewModel.Zoom.ZoomBy(2, 50, 50);
+        viewModel.Preview.SelectedFrameIndex = 1;
+        Assert.Equal(2, viewModel.Zoom.Zoom);
+        Assert.False(viewModel.Zoom.IsFit);
+
+        viewModel.Preview.SelectedDirectionIndex = 1;
+
+        Assert.Equal(2, viewModel.Zoom.Zoom);
+        Assert.False(viewModel.Zoom.IsFit);
     }
 
     [Fact]

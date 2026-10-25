@@ -149,6 +149,39 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         ? "Frame —"
         : $"Frame {_playback.CurrentFrameIndex + 1} / {_playback.CurrentDirectionFrameCount}";
 
+    public int FrameSliderMaximum =>
+        SelectedDirection is { } direction
+            ? Math.Max(0, direction.Frames.Count - 1)
+            : 0;
+
+    public string FrmVersionDisplay =>
+        _document is null ? "—" : _document.Version.ToString();
+
+    public string FrmRateMetadataDisplay =>
+        _document is null ? "—" : $"{_document.FramesPerSecond} FPS";
+
+    public string ActionFrameDisplay =>
+        _document is null ? "—" : _document.ActionFrame.ToString();
+
+    public string CurrentDirectionDisplay =>
+        SelectedDirection is { } direction
+            ? $"{direction.Name} ({direction.Index})"
+            : "—";
+
+    public string FrameDimensionsDisplay =>
+        SelectedFrame is { } frame ? $"{frame.Width} × {frame.Height} px" : "—";
+
+    public string FrameOffsetDisplay =>
+        SelectedFrame is { } frame ? $"({frame.OffsetX}, {frame.OffsetY})" : "—";
+
+    public string DirectionShiftDisplay =>
+        SelectedDirection is { } direction ? $"({direction.ShiftX}, {direction.ShiftY})" : "—";
+
+    public string LoopStateDisplay => IsLoopEnabled ? "Enabled" : "Disabled";
+
+    public string TransparencyDisplay =>
+        $"Palette index 0 is transparent; checkerboard {(IsCheckerboardBackground ? "on" : "off")}.";
+
     public FrmSpritesheetFrameKey? SelectedSpriteSheetFrameKey =>
         _document is not null
         && (uint)_selectedDirectionIndex < (uint)_document.Directions.Count
@@ -169,6 +202,7 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
 
             _playback.IsLoopEnabled = value;
             OnPropertyChanged();
+            OnPropertyChanged(nameof(LoopStateDisplay));
         }
     }
 
@@ -201,7 +235,13 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
     public bool IsCheckerboardBackground
     {
         get => _isCheckerboardBackground;
-        set => SetProperty(ref _isCheckerboardBackground, value);
+        set
+        {
+            if (SetProperty(ref _isCheckerboardBackground, value))
+            {
+                OnPropertyChanged(nameof(TransparencyDisplay));
+            }
+        }
     }
 
     public string PreviewDetails
@@ -273,6 +313,7 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         _selectedFrameIndex = _playback.CurrentFrameIndex;
 
         RefreshFrameOptions();
+        NotifyFrameMetadataChanged();
 
         OnPropertyChanged(nameof(SelectedDirectionIndex));
         OnPropertyChanged(nameof(SelectedFrameIndex));
@@ -618,6 +659,7 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
             PreviewDetails = DefaultPreviewDetails;
             OnPropertyChanged(nameof(CurrentFrameDisplay));
             OnPropertyChanged(nameof(SelectedSpriteSheetFrameKey));
+            NotifyFrameMetadataChanged();
             OnPropertyChanged(nameof(CanExportPng));
             OnPropertyChanged(nameof(CanExportCurrentDirectionSpritesheet));
             OnPropertyChanged(nameof(SuggestedPngFileName));
@@ -655,6 +697,7 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         PreviewDetails = BuildPreviewDetails(_document, _selectedDirectionIndex, _selectedFrameIndex);
         OnPropertyChanged(nameof(CurrentFrameDisplay));
         OnPropertyChanged(nameof(SelectedSpriteSheetFrameKey));
+        NotifyFrameMetadataChanged();
         OnPropertyChanged(nameof(CanExportPng));
         OnPropertyChanged(nameof(CanExportCurrentDirectionSpritesheet));
         OnPropertyChanged(nameof(SuggestedPngFileName));
@@ -739,6 +782,7 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         _selectedDirectionIndex = 0;
         OnPropertyChanged(nameof(SelectedFrameIndex));
         OnPropertyChanged(nameof(SelectedDirectionIndex));
+        NotifyFrameMetadataChanged();
         ReplacePreviewBitmap(null);
         PreviewDetails = DefaultPreviewDetails;
         NotifyPlaybackState();
@@ -769,6 +813,7 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         FrameOptions.Clear();
         if (_document is null || (uint)_selectedDirectionIndex >= (uint)_document.Directions.Count)
         {
+            OnPropertyChanged(nameof(FrameSliderMaximum));
             return;
         }
 
@@ -777,6 +822,8 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         {
             FrameOptions.Add(index);
         }
+
+        OnPropertyChanged(nameof(FrameSliderMaximum));
     }
 
     private void NotifyPlaybackState()
@@ -785,6 +832,32 @@ public sealed class FrmPreviewViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(IsPlaying));
         OnPropertyChanged(nameof(PlayPauseButtonText));
         OnPropertyChanged(nameof(CurrentFrameDisplay));
+    }
+
+    private FrmDirection? SelectedDirection =>
+        _document is not null
+        && (uint)_selectedDirectionIndex < (uint)_document.Directions.Count
+            ? _document.Directions[_selectedDirectionIndex]
+            : null;
+
+    private FrmFrame? SelectedFrame =>
+        SelectedDirection is { } direction
+        && (uint)_selectedFrameIndex < (uint)direction.Frames.Count
+            ? direction.Frames[_selectedFrameIndex]
+            : null;
+
+    private void NotifyFrameMetadataChanged()
+    {
+        OnPropertyChanged(nameof(FrameSliderMaximum));
+        OnPropertyChanged(nameof(FrmVersionDisplay));
+        OnPropertyChanged(nameof(FrmRateMetadataDisplay));
+        OnPropertyChanged(nameof(ActionFrameDisplay));
+        OnPropertyChanged(nameof(CurrentDirectionDisplay));
+        OnPropertyChanged(nameof(FrameDimensionsDisplay));
+        OnPropertyChanged(nameof(FrameOffsetDisplay));
+        OnPropertyChanged(nameof(DirectionShiftDisplay));
+        OnPropertyChanged(nameof(LoopStateDisplay));
+        OnPropertyChanged(nameof(TransparencyDisplay));
     }
 
     private async Task RunPngExportAsync(Action write, CancellationToken cancellationToken)
