@@ -77,8 +77,11 @@ public sealed class MapIsometricFloorRegistrationDiagnosticGeometryTests
     [Fact]
     public void RegistrationOverlayIsDisabledByDefault()
     {
-        var view = new MapIsometricFloorView();
+        AvaloniaTestEnvironment.RunOnUiThread(() =>
+        {
+            var view = new MapIsometricFloorView();
 
-        Assert.False(view.ShowRegistrationDiagnostics);
+            Assert.False(view.ShowRegistrationDiagnostics);
+        });
     }
 }
